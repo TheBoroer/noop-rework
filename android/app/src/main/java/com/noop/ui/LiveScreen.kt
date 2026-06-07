@@ -30,6 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
@@ -42,6 +49,23 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 fun LiveScreen(viewModel: AppViewModel) {
     val live by viewModel.live.collectAsStateWithLifecycle()
     val bpm by viewModel.bpm.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // The runtime Bluetooth permission gates scanning. If it isn't granted, the Connect
+    // button REQUESTS it (rather than silently doing nothing), then connects once allowed.
+    val blePerms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+    else
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    val blePermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { viewModel.connect() }   // granted -> scans; denied -> connect() shows the permission note
+    fun requestConnect() {
+        val granted = blePerms.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (granted) viewModel.connect() else blePermLauncher.launch(blePerms)
+    }
 
     // Start the realtime HR stream when bonded and on-screen; stop on leave.
     LaunchedEffect(live.bonded) {
@@ -104,7 +128,7 @@ fun LiveScreen(viewModel: AppViewModel) {
         // Controls.
         Row(horizontalArrangement = Arrangement.spacedBy(Metrics.gap), modifier = Modifier.fillMaxWidth()) {
             Button(
-                onClick = { viewModel.connect() },
+                onClick = { requestConnect() },
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Palette.accent,
