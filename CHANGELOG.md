@@ -17,6 +17,19 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 1.14 — Android Today: clearer empty states for stale imports
+
+- **Android Today now renders missing current-day metrics as explicit "No Data" instead of raw dashes**,
+  and the recovery ring no longer shows a `0% / depleted` state when there's simply no recovery row for
+  today — so after a historical import, Today reads as "no score for today yet," not a broken-looking zero.
+  Added a Mac-style Today footer for provenance: recent 14-day workouts (when present) plus Data Sources
+  counts, so imported history is clearly labelled as history. No change for a user who has today's data —
+  values render normally; only genuinely-absent values show "No Data." Brings Android to parity with the
+  Mac Today screen and completes the stale-import work from v1.11/v1.12. Android-only (TodayScreen,
+  TrendsScreen comment); reimplemented as NOOP from @Brechard's PR #31 (refs #23).
+
+---
+
 ## 1.13 — WHOOP 5/MG heart rate on Android
 
 - **Fixed (Android, WHOOP 5/MG): bonded but no heart rate.** Android brought the strap to "Bonded —
