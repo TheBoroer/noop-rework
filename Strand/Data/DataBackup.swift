@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import SQLite3
 import UniformTypeIdentifiers
 import WhoopStore
@@ -54,6 +58,7 @@ enum DataBackup {
         // Flush the WAL so the single .sqlite carries everything. Best-effort.
         let checkpointed = await checkpoint()
 
+        #if os(macOS)
         // Ask where to save.
         let panel = NSSavePanel()
         panel.title = "Export NOOP backup"
@@ -86,6 +91,25 @@ enum DataBackup {
         } catch {
             return .failure("Export failed: \(error.localizedDescription)")
         }
+        #else
+        // iOS: DocumentPicker.export only carries a single file, so we cannot fall back to copying
+        // the -wal/-shm sidecars the way macOS does. If the checkpoint above didn't fold the WAL
+        // into the main file, the staged copy would silently omit everything written since the last
+        // automatic checkpoint. Fail loudly instead of producing a partial backup.
+        guard checkpointed else {
+            return .failure("Couldn't safely export right now — recent changes are still in the database's write-ahead log. Close any in-flight sync, then try again.")
+        }
+        let fm = FileManager.default
+        let staged = fm.temporaryDirectory.appendingPathComponent(defaultBackupName())
+        do {
+            if fm.fileExists(atPath: staged.path) { try fm.removeItem(at: staged) }
+            try fm.copyItem(at: dbURL, to: staged)
+        } catch {
+            return .failure("Export failed: \(error.localizedDescription)")
+        }
+        guard let dest = await DocumentPicker.export(staged) else { return .cancelled }
+        return .exported(dest)
+        #endif
     }
 
     // MARK: - Import
@@ -99,6 +123,7 @@ enum DataBackup {
         do { dbPath = try StorePaths.defaultDatabasePath() }
         catch { return .failure("Couldn't locate the NOOP database. \(error.localizedDescription)") }
 
+        #if os(macOS)
         let panel = NSOpenPanel()
         panel.title = "Import NOOP backup"
         panel.prompt = "Import"
@@ -111,6 +136,11 @@ enum DataBackup {
 
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        #else
+        // iOS: pick the backup through the system document picker (asCopy gives us a readable local
+        // copy in our temp dir, so no security-scoped bookkeeping is needed).
+        guard let source = await DocumentPicker.importFile(sqliteContentTypes()) else { return .cancelled }
+        #endif
 
         // Validate: must be a real SQLite database (magic header "SQLite format 3\0").
         guard isSQLiteFile(at: source) else {

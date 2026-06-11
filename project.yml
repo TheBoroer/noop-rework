@@ -123,6 +123,12 @@ targets:
           - "Resources/Assets.xcassets"
           - "App/StrandApp.swift"
           - "App/RootView.swift"
+          # ContentView embeds RootView() (the macOS NavigationSplitView sidebar shell), which is
+          # excluded above — so ContentView cannot compile on iOS. The iOS shell is RootTabView,
+          # wired in StrandiOS/App/StrandiOSApp.swift (which reproduces ContentView's onboarding/
+          # Terms/What's-New gates around the TabView). Without this exclude the iOS target fails to
+          # resolve RootView().
+          - "App/ContentView.swift"
           - "MenuBar"
           - "Data/NotificationSettingsStore.swift"
           - "Screens/NotificationSettingsView.swift"

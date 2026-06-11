@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(AppKit)
 import AppKit
+#endif
 
 /// What a strap double-tap (or a wrist-off trigger) does on the Mac.
 enum MacActionKind: String, Codable, CaseIterable, Identifiable {
@@ -38,6 +40,7 @@ enum MacActions {
     /// so callers can fall back to a "Lock Screen" Shortcut.
     @discardableResult
     static func lockScreen() -> Bool {
+        #if os(macOS)
         let path = "/System/Library/PrivateFrameworks/login.framework/login"
         guard let handle = dlopen(path, RTLD_NOW) else { return false }
         defer { dlclose(handle) }
@@ -46,15 +49,20 @@ enum MacActions {
         let fn = unsafeBitCast(sym, to: LockFn.self)
         _ = fn()
         return true
+        #else
+        return false   // a third-party app cannot lock an iPhone — callers fall back to a Shortcut
+        #endif
     }
 
-    /// Run a macOS Shortcut by name via the `shortcuts://` URL scheme. Anything the user can build in
-    /// Shortcuts (lock, mute, set Focus, open an app, automations) is reachable this way.
+    /// Run a Shortcut by name via the `shortcuts://` URL scheme. Anything the user can build in
+    /// Shortcuts (lock, mute, set Focus, open an app, automations) is reachable this way. Opens via the
+    /// platform handler (`NSWorkspace` on macOS, `UIApplication` on iOS) through `PlatformOpen`.
+    @MainActor
     static func runShortcut(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "shortcuts://run-shortcut?name=\(encoded)") else { return }
-        NSWorkspace.shared.open(url)
+        PlatformOpen.url(url)
     }
 }

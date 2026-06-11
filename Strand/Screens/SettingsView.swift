@@ -1,5 +1,7 @@
 import SwiftUI
+#if os(macOS)
 import AppKit
+#endif
 import UniformTypeIdentifiers
 import StrandDesign
 import WhoopStore
@@ -379,6 +381,7 @@ struct SettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(StrandPalette.accent)
 
+                        #if os(macOS)
                         Button {
                             revealPuffinCaptures()
                         } label: {
@@ -387,6 +390,7 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.bordered)
                         .tint(StrandPalette.accent)
+                        #endif
                         Spacer(minLength: 0)
                     }
                 }
@@ -394,10 +398,12 @@ struct SettingsView: View {
         }
     }
 
-    /// Flush the in-flight capture, then copy it to a user-chosen location via a save panel.
+    /// Flush the in-flight capture, then copy it to a user-chosen location (save panel on macOS) or
+    /// hand it to the system share sheet (iOS).
     private func exportPuffinCaptures() {
         model.ble.flushPuffinCaptures()
         guard let src = live.puffinCaptureURL else { return }
+        #if os(macOS)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = src.lastPathComponent
@@ -412,14 +418,19 @@ struct SettingsView: View {
             backupAlertMessage = error.localizedDescription
             showBackupAlert = true
         }
+        #else
+        FileExport.exportFile(at: src)
+        #endif
     }
 
+    #if os(macOS)
     /// Flush, then reveal the capture file in Finder so the user can grab it directly.
     private func revealPuffinCaptures() {
         model.ble.flushPuffinCaptures()
         guard let url = live.puffinCaptureURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
+    #endif
 
     private var backupCard: some View {
         SettingsSection(

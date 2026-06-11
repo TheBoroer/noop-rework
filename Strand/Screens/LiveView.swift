@@ -1,5 +1,7 @@
 import SwiftUI
+#if os(macOS)
 import AppKit
+#endif
 import StrandDesign
 import WhoopProtocol
 import WhoopStore
@@ -402,22 +404,22 @@ struct LiveView: View {
 
     private func strapLogText() -> String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let header = "NOOP strap log — macOS\nApp: \(v)\nmacOS: "
+        #if os(iOS)
+        let osName = "iOS"
+        #else
+        let osName = "macOS"
+        #endif
+        let header = "NOOP strap log — \(osName)\nApp: \(v)\n\(osName): "
             + ProcessInfo.processInfo.operatingSystemVersionString + "\n"
             + String(repeating: "-", count: 40) + "\n"
         return header + live.log.joined(separator: "\n")
     }
 
     private func copyStrapLog() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(strapLogText(), forType: .string)
+        PlatformPasteboard.copy(strapLogText())
     }
 
     private func saveStrapLog() {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "noop-strap-log.txt"
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? strapLogText().write(to: url, atomically: true, encoding: .utf8)
+        FileExport.exportText(strapLogText(), suggestedName: "noop-strap-log.txt")
     }
 }

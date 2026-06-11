@@ -59,7 +59,9 @@ struct TermsGateView: View {
                             .foregroundStyle(StrandPalette.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .toggleStyle(.checkbox)
+                    #if os(macOS)
+                    .toggleStyle(.checkbox)   // iOS falls back to the default switch toggle
+                    #endif
 
                     Button(action: onAccept) {
                         Text("Accept & Continue")
