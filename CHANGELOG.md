@@ -17,6 +17,19 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 2.6.3 — Universal Mac build + iPhone import fix
+
+- **Fixed (Mac):** the download was accidentally an Apple-Silicon-only build, so it couldn't launch on
+  Intel Macs at all (`Bad CPU type in executable`). It now ships as a true **universal binary** (x86_64 +
+  arm64) that runs natively on both Intel and Apple Silicon. Thanks @stnnnts. (#177, #165)
+- **Fixed (iPhone):** importing a WHOOP export or Apple Health `.zip` on a sideloaded build — the file
+  picker was greying out the `.zip` (the `UTType.folder` option, a Mac-only "pick an unzipped folder"
+  affordance, blocked file selection in the iOS Files picker). iOS now offers only the file types it can
+  actually open, so the `.zip` is selectable again. Thanks @adrnxq. (#179)
+- **New (iPhone):** an **AltStore / SideStore source** for one-tap updates on sideloaded installs — add
+  `https://raw.githubusercontent.com/NoopApp/noop/main/altstore-source.json` as a source. Reimplemented
+  from @RazvanRex. (#178)
+
 ## 2.6.2 — iPhone button-label polish
 
 - **Fixed (iPhone):** action buttons that wrapped mid-word on a narrow screen — the **Live** screen's

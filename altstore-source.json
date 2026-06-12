@@ -1,0 +1,50 @@
+{
+  "name": "NOOP",
+  "subtitle": "A standalone WHOOP app — your strap, your device, fully offline.",
+  "description": "An AltStore / SideStore source for NOOP, the independent open-source WHOOP companion. Add this source to get one-tap updates for the sideloaded iOS build.\n\nNOOP is not affiliated with WHOOP. It reads a strap you own, directly over Bluetooth, on your own device — no WHOOP app, no subscription, no cloud.",
+  "iconURL": "https://raw.githubusercontent.com/NoopApp/noop/main/Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png",
+  "website": "https://github.com/NoopApp/noop",
+  "tintColor": "44E2B0",
+  "apps": [
+    {
+      "name": "NOOP",
+      "bundleIdentifier": "com.noopapp.noop",
+      "developerName": "NoopApp",
+      "subtitle": "Read your own WHOOP strap, fully offline.",
+      "localizedDescription": "NOOP talks to a WHOOP 4.0 / 5.0 / MG strap you own directly over Bluetooth — no WHOOP app, no subscription, no cloud. Live heart rate, history sync, and NOOP's own Charge / Effort / Rest scores, all computed on-device and stored only on your iPhone.\n\nIndependent and experimental; not affiliated with WHOOP. Source: https://github.com/NoopApp/noop",
+      "iconURL": "https://raw.githubusercontent.com/NoopApp/noop/main/Strand/Resources/Assets.xcassets/AppIcon.appiconset/icon_512x512.png",
+      "tintColor": "44E2B0",
+      "category": "healthcare-fitness",
+      "screenshotURLs": [],
+      "versions": [
+        {
+          "version": "2.6.3",
+          "buildVersion": "34",
+          "date": "2026-06-12",
+          "localizedDescription": "Universal Mac build (Intel + Apple Silicon); iPhone import .zip fix; AltStore source added.",
+          "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.3/NOOP-v2.6.3-ios.ipa",
+          "size": 5557963,
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.developer.healthkit"
+        ],
+        "privacy": {
+          "NSBluetoothAlwaysUsageDescription": "NOOP connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device.",
+          "NSHealthShareUsageDescription": "NOOP reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device.",
+          "NSHealthUpdateUsageDescription": "NOOP writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
+        }
+      },
+      "version": "2.6.3",
+      "buildVersion": "34",
+      "versionDate": "2026-06-12",
+      "versionDescription": "Universal Mac build (Intel + Apple Silicon); iPhone import .zip fix; AltStore source added.",
+      "downloadURL": "https://github.com/NoopApp/noop/releases/download/v2.6.3/NOOP-v2.6.3-ios.ipa",
+      "size": 5557963,
+      "minOSVersion": "17.0"
+    }
+  ],
+  "news": []
+}

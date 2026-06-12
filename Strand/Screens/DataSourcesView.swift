@@ -160,11 +160,23 @@ struct DataSourcesView: View {
         case nutrition
 
         var allowedContentTypes: [UTType] {
+            // `.folder` lets macOS users point at an *unzipped* export directory. On iOS the Files
+            // picker can't meaningfully pick a folder here, and including `UTType.folder` in the type
+            // list greys out the .zip itself — so the picker opens but nothing is selectable
+            // (issue #179). iOS therefore offers only the concrete file types.
             switch self {
             case .whoop:
+                #if os(macOS)
                 return [.zip, .folder]
+                #else
+                return [.zip]
+                #endif
             case .appleHealth:
+                #if os(macOS)
                 return [.zip, .xml, .folder]
+                #else
+                return [.zip, .xml]
+                #endif
             case .nutrition:
                 return [.commaSeparatedText, .plainText]
             }

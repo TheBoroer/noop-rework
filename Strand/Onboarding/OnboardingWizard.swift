@@ -824,11 +824,22 @@ private struct ImportStep: View {
         case appleHealth
 
         var allowedContentTypes: [UTType] {
+            // See DataSourcesView: `.folder` is a macOS-only affordance (pick an unzipped export
+            // directory). On iOS it greys out the .zip in the Files picker (issue #179), so iOS
+            // offers only the concrete file types.
             switch self {
             case .whoop:
+                #if os(macOS)
                 return [.zip, .folder]
+                #else
+                return [.zip]
+                #endif
             case .appleHealth:
+                #if os(macOS)
                 return [.zip, .xml, .folder]
+                #else
+                return [.zip, .xml]
+                #endif
             }
         }
     }

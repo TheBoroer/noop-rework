@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "2.6.2"
+    const val CURRENT_VERSION = "2.6.3"
 
     data class Release(
         val version: String,
@@ -36,6 +36,16 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "2.6.3",
+            title = "Universal Mac build + iPhone import fix",
+            date = "June 2026",
+            items = listOf(
+                "Fixed (Mac): the download was accidentally an Apple-Silicon-only build, so it could not launch on Intel Macs at all. It now ships as a true universal binary that runs natively on both Intel and Apple Silicon. Thanks @stnnnts (#177, #165).",
+                "Fixed (iPhone): importing a WHOOP export or Apple Health .zip on a sideloaded build — the file picker was greying out the .zip so nothing could be selected. iOS now offers only the file types it can actually open, so the .zip is selectable again. Thanks @adrnxq (#179).",
+                "New (iPhone): an AltStore / SideStore source for one-tap updates on sideloaded installs — add https://raw.githubusercontent.com/NoopApp/noop/main/altstore-source.json as a source in AltStore or SideStore. Reimplemented from @RazvanRex (#178).",
+            ),
+        ),
         Release(
             version = "2.6.2",
             title = "iPhone button-label polish",
