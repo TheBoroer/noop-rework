@@ -82,9 +82,14 @@ final class IntelligenceEngine: ObservableObject {
         var nightlyRespByDay: [String: Double?] = [:]
         var nightlySkinByDay: [String: Double?] = [:]
 
+        // Floor `now` to LOCAL midnight (#277) so each `dayStart` lands on a local-day boundary and the
+        // day keys are LOCAL calendar days, consistent with the dashboard's local "today" lookup. A
+        // west-of-UTC user's evening crosses midnight UTC; bucketing by UTC put it in the next UTC day,
+        // which the local read never found (Toronto/UTC-4 report).
+        let nowLocalMidnight = Self.midnightLocal(now, offsetSec: tzOffset)
         for offset in 0..<maxDays {
-            let dayStart = now - offset * 86_400
-            let day = AnalyticsEngine.dayString(dayStart)
+            let dayStart = nowLocalMidnight - offset * 86_400
+            let day = AnalyticsEngine.dayString(dayStart, offsetSec: tzOffset)
             // Read a generous window around the night that ends on `day`; the stager finds the span.
             let from = dayStart - 30 * 3_600
             let to = dayStart + 12 * 3_600
@@ -98,12 +103,13 @@ final class IntelligenceEngine: ObservableObject {
             let skin = (try? await store.skinTempSamples(deviceId: deviceId, from: from, to: to, limit: 200_000)) ?? []
 
             // Calendar-day window for the ADDITIVE daily totals (steps + calories). The night window
-            // above is anchored to the current UTC time-of-day and ends at dayStart+12h, so for a PAST
+            // above is anchored to the current time-of-day and ends at dayStart+12h, so for a PAST
             // day whose late hours sit after that bound those hours are never read and the totals
-            // undercount. Read exactly [midnightUtc(day), midnightUtc(day)+86400) and hand it to
-            // analyzeDay's dayHr/daySteps, which use it ONLY for those totals. (floorMod so the
-            // midnight floor is correct for any sign; the store range is inclusive, so end at -1 s.)
-            let dayMid = dayStart - ((dayStart % 86_400) + 86_400) % 86_400
+            // undercount. Read exactly [localMidnight(day), localMidnight(day)+86400) and hand it to
+            // analyzeDay's dayHr/daySteps, which use it ONLY for those totals. `dayStart` is already a
+            // LOCAL midnight; midnightLocal is idempotent on it (the store range is inclusive, so end
+            // at -1 s). (#277 — local-day bucketing.)
+            let dayMid = Self.midnightLocal(dayStart, offsetSec: tzOffset)
             let dayEnd = dayMid + 86_400 - 1
             let dayHr = (try? await store.hrSamples(deviceId: deviceId, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
             let daySteps = (try? await store.stepSamples(deviceId: deviceId, from: dayMid, to: dayEnd, limit: 200_000)) ?? []
@@ -209,6 +215,19 @@ final class IntelligenceEngine: ObservableObject {
             }
         }
 
+        // #277 migration: the loop now keys days by the LOCAL calendar day. A prior run (before this
+        // fix) wrote the SAME period under UTC-day keys, so without a cleanup an off-by-one UTC row and
+        // the new local row would coexist as duplicate days. Delete the COMPUTED ("-noop") daily rows
+        // across the recompute window [oldest enumerated local day, newest] BEFORE re-upserting, then
+        // re-insert the local-keyed rows. Scoped to the computed source only — imported "my-whoop" rows
+        // are never touched (a BLE-only WHOOP 4.0 user has no import fallback). Rows older than the
+        // window keep their old keys (cosmetic off-by-one, acceptable). yyyy-MM-dd sorts
+        // chronologically, so the string range IS a date range.
+        let oldestDay = AnalyticsEngine.dayString(nowLocalMidnight - (maxDays - 1) * 86_400,
+                                                  offsetSec: tzOffset)
+        let newestDay = AnalyticsEngine.dayString(nowLocalMidnight, offsetSec: tzOffset)
+        _ = try? await store.deleteDailyMetrics(deviceId: computedId, from: oldestDay, to: newestDay)
+
         // Persist the computed scores under a dedicated "-noop" source so the WHOLE dashboard
         // (Today / Recovery / Strain / Sleep / Trends), not just this screen, reads them. The
         // Repository merges these UNDER any imported "my-whoop" rows, so a real WHOOP import
@@ -289,6 +308,27 @@ final class IntelligenceEngine: ObservableObject {
     private func recomputeSkinTempDev(_ nightly: Double?, _ base: BaselineState?) -> Double? {
         guard let v = nightly, let b = base, b.usable else { return nil }
         return (Baselines.deviation(v, state: b).delta * 100.0).rounded() / 100.0
+    }
+
+    /// Floor a unix-seconds timestamp to 00:00:00 of its UTC calendar day. Mirrors the Android
+    /// IntelligenceEngine.midnightUtc; the floorMod form is correct for any sign.
+    static func midnightUtc(_ ts: Int) -> Int { ts - floorMod(ts, 86_400) }
+
+    /// Floor a unix-seconds timestamp to 00:00:00 of its LOCAL calendar day (#277). `offsetSec` is
+    /// seconds EAST of UTC. Shift into local time, floor to the local day, shift back:
+    /// `ts - floorMod(ts + offsetSec, 86400)`. floorMod keeps the floor correct for negative offsets
+    /// and negative timestamps. `offsetSec == 0` reduces exactly to `midnightUtc`. Mirrors the
+    /// Android IntelligenceEngine.midnightLocal byte-for-byte.
+    static func midnightLocal(_ ts: Int, offsetSec: Int) -> Int {
+        ts - floorMod(ts + offsetSec, 86_400)
+    }
+
+    /// Euclidean modulo (result has the sign of the divisor) — matches Kotlin/Java Math.floorMod, so
+    /// the LOCAL-midnight floor is identical across platforms for any sign of ts/offset. Swift's `%`
+    /// is a remainder (sign of the dividend), which would mis-floor negative inputs.
+    private static func floorMod(_ a: Int, _ b: Int) -> Int {
+        let r = a % b
+        return (r != 0 && (r < 0) != (b < 0)) ? r + b : r
     }
 }
 

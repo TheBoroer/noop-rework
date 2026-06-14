@@ -204,6 +204,16 @@ interface WhoopDao {
     )
     suspend fun dailyMetricsRange(deviceId: String, from: String, to: String): List<DailyMetric>
 
+    /**
+     * Delete a source's cached daily rows whose day-key is in [from, to] (inclusive, yyyy-MM-dd
+     * lexicographic = chronological). The #277 local-day re-bucketing migration uses this to drop the
+     * computed ("-noop") UTC-keyed rows across the recompute window before re-upserting the LOCAL-keyed
+     * rows, so a UTC/local duplicate day can't linger. Source-scoped, so imported "my-whoop" rows are
+     * never touched. Mirrors WhoopStore MetricsCache.deleteDailyMetrics.
+     */
+    @Query("DELETE FROM dailyMetric WHERE deviceId = :deviceId AND day >= :from AND day <= :to")
+    suspend fun deleteDailyMetricsInRange(deviceId: String, from: String, to: String)
+
     /** All cached daily metrics for a device, oldest first. Convenience for analytics windows. */
     @Query("SELECT * FROM dailyMetric WHERE deviceId = :deviceId ORDER BY day ASC")
     suspend fun days(deviceId: String): List<DailyMetric>

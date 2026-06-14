@@ -17,6 +17,16 @@ approximate; downloads are on the [Releases](https://github.com/NoopApp/noop/rel
 
 ---
 
+## 2.11.1 — Your day now follows your timezone, not UTC
+
+- **Fixed:** on phones away from UTC (most of the world), the dashboard could appear to **freeze partway
+  through the day** — new steps and readings stopped showing even though the strap was syncing perfectly.
+  NOOP was filing each day by UTC midnight instead of *your* local midnight, so once your clock crossed
+  the UTC boundary, fresh data landed in the next day's bucket where the screen wasn't looking. NOOP now
+  buckets every day by your local day, everywhere. Thanks @Meriquium (#277).
+
+---
+
 ## 2.11.0 — A smart wake alarm, live workout mode, an editable Today, and lifting imports
 
 - **New (Android):** a **smart wake alarm** — set a wake window and NOOP wakes you on a lighter sleep

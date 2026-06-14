@@ -31,6 +31,7 @@ class SmartAlarmBootReceiver : BroadcastReceiver() {
                         WindDownScheduler.schedule(context, wind, wake)
                     }
                 }
+            }
         }
     }
 }

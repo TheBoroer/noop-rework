@@ -25,7 +25,7 @@ object AppChangelog {
      * Bump this when you add a release below. The "What's New" sheet shows automatically when the
      * stored last-seen version is behind this. (Decoupled from the bundle version on purpose.)
      */
-    const val CURRENT_VERSION = "2.11.0"
+    const val CURRENT_VERSION = "2.11.1"
 
     data class Release(
         val version: String,
@@ -36,6 +36,14 @@ object AppChangelog {
 
     /** Newest first. */
     val releases: List<Release> = listOf(
+        Release(
+            version = "2.11.1",
+            title = "Fix: your day now follows your timezone, not UTC",
+            date = "June 2026",
+            items = listOf(
+                "Fixed: on phones away from UTC — most of the world — the dashboard could appear to **freeze partway through the day**: new steps and readings stopped showing even though the strap was syncing perfectly. NOOP was filing each day by UTC midnight instead of your local midnight, so once your clock crossed the UTC boundary, fresh data landed in the next day's bucket where the screen wasn't looking. NOOP now buckets every day by your local day, everywhere. Thanks @Meriquium (#277).",
+            ),
+        ),
         Release(
             version = "2.11.0",
             title = "A smart wake alarm, live workout mode, an editable Today, and lifting imports",

@@ -262,7 +262,8 @@ object LiftingImporter {
         val sessions = ArrayList<Session>(history.length())
         var skipped = 0
         for (i in 0 until history.length()) {
-            val record = history.optJSONObject(i) ?: run { skipped++; continue }
+            val record = history.optJSONObject(i)
+            if (record == null) { skipped++; continue }
             val s = liftosaurSession(record)
             if (s != null) sessions.add(s) else skipped++
         }

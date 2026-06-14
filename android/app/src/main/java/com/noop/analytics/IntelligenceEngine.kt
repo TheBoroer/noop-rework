@@ -140,9 +140,14 @@ object IntelligenceEngine {
         // resp baseline the recovery composite's wResp=0.05 term scores against.
         val nightlyRespByDay = LinkedHashMap<String, Double?>()
 
+        // Floor `now` to LOCAL midnight (#277) so each `dayStart` lands on a local-day boundary and the
+        // day keys are LOCAL calendar days, consistent with the dashboard's local "today" lookup. A
+        // west-of-UTC user's evening crosses midnight UTC; bucketing by UTC put it in the next UTC day,
+        // which the local read never found (Toronto/UTC-4 report).
+        val nowLocalMidnight = midnightLocal(nowSeconds, tzOffsetSeconds)
         for (offset in 0 until maxDays) {
-            val dayStart = nowSeconds - offset * SECONDS_PER_DAY
-            val day = AnalyticsEngine.dayString(dayStart)
+            val dayStart = nowLocalMidnight - offset * SECONDS_PER_DAY
+            val day = AnalyticsEngine.dayString(dayStart, tzOffsetSeconds)
             // Read a generous window around the night that ends on `day`; the stager finds
             // the span. (30 h before, 12 h after — matches the Swift window.)
             val from = dayStart - 30 * 3_600L
@@ -157,13 +162,14 @@ object IntelligenceEngine {
             val skin = repo.skinTempSamples(importedDeviceId, from, to, STREAM_LIMIT)
 
             // Calendar-day window for the ADDITIVE daily totals (steps + calories). The night window
-            // above is anchored to the current UTC time-of-day and ends at dayStart+12h, so for a PAST
+            // above is anchored to the current time-of-day and ends at dayStart+12h, so for a PAST
             // day whose late hours sit after that bound those hours are never read and the totals
-            // undercount. Read exactly [midnightUtc(day), midnightUtc(day)+86400) and hand it to
+            // undercount. Read exactly [localMidnight(day), localMidnight(day)+86400) and hand it to
             // analyzeDay's dayHr/daySteps, which use it ONLY for those totals. Same STREAM_LIMIT; the
             // MIN_HR_SAMPLES gate above stays on the night window so empty days are still skipped.
-            // (the DAO range is inclusive, so end at +86400-1s; analyzeDay also filters to the day.)
-            val dayMidnight = midnightUtc(dayStart)
+            // `dayStart` is already a LOCAL midnight; midnightLocal is idempotent on it (the DAO range
+            // is inclusive, so end at +86400-1s; analyzeDay also filters to the day). (#277)
+            val dayMidnight = midnightLocal(dayStart, tzOffsetSeconds)
             val dayEnd = dayMidnight + SECONDS_PER_DAY - 1
             val dayHr = repo.hrSamples(importedDeviceId, dayMidnight, dayEnd, STREAM_LIMIT)
             val daySteps = repo.stepSamples(importedDeviceId, dayMidnight, dayEnd, STREAM_LIMIT)
@@ -320,6 +326,20 @@ object IntelligenceEngine {
             }
         }
 
+        // #277 migration: the loop now keys days by the LOCAL calendar day. A prior run (before this
+        // fix) wrote the SAME period under UTC-day keys, so without a cleanup an off-by-one UTC row and
+        // the new local row would coexist as duplicate days. Delete the COMPUTED ("-noop") daily rows
+        // across the recompute window [oldest enumerated local day, newest] BEFORE re-upserting, then
+        // re-insert the local-keyed rows. Scoped to the computed source only — imported "my-whoop" rows
+        // are never touched (a BLE-only WHOOP 4.0 user has no import fallback). Rows older than the
+        // window keep their old keys (cosmetic off-by-one, acceptable). yyyy-MM-dd sorts
+        // chronologically, so the string range IS a date range.
+        val oldestDay = AnalyticsEngine.dayString(
+            nowLocalMidnight - (maxDays - 1) * SECONDS_PER_DAY, tzOffsetSeconds,
+        )
+        val newestDay = AnalyticsEngine.dayString(nowLocalMidnight, tzOffsetSeconds)
+        repo.deleteComputedDailyInRange(computedId, oldestDay, newestDay)
+
         // Persist the computed scores under the dedicated "-noop" source so the WHOLE
         // dashboard (Today / Recovery / Strain / Sleep / Trends) reads them. The repository
         // merges these UNDER any imported "my-whoop" rows, so a real WHOOP import always wins;
@@ -419,4 +439,14 @@ object IntelligenceEngine {
      * uses UTC, so UTC midnight = ts - floorMod(ts, 86400). floorMod is correct for any sign.
      */
     internal fun midnightUtc(ts: Long): Long = ts - Math.floorMod(ts, SECONDS_PER_DAY)
+
+    /**
+     * Floor a unix-seconds timestamp to 00:00:00 of its LOCAL calendar day (#277). [offsetSec] is
+     * seconds EAST of UTC. Shift into local time, floor to the local day, shift back:
+     * `ts - floorMod(ts + offsetSec, 86400)`. Math.floorMod keeps the floor correct for negative
+     * offsets and negative timestamps. [offsetSec] == 0 reduces exactly to [midnightUtc]. Mirrors the
+     * Swift IntelligenceEngine.midnightLocal byte-for-byte.
+     */
+    internal fun midnightLocal(ts: Long, offsetSec: Long): Long =
+        ts - Math.floorMod(ts + offsetSec, SECONDS_PER_DAY)
 }

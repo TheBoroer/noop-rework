@@ -161,6 +161,12 @@ class WhoopRepository(private val dao: WhoopDao) {
     suspend fun upsertDailyMetrics(days: List<DailyMetric>) = dao.upsertDailyMetrics(days)
     suspend fun upsertSleepSessions(sessions: List<SleepSession>) = dao.upsertSleepSessions(sessions)
 
+    /** Delete the computed source's cached daily rows whose day-key is in [from, to] (inclusive,
+     *  yyyy-MM-dd). The #277 local-day re-bucketing migration clears the computed UTC-keyed rows over
+     *  the recompute window before re-upserting LOCAL-keyed rows. Imported rows are never touched. */
+    suspend fun deleteComputedDailyInRange(deviceId: String, from: String, to: String) =
+        dao.deleteDailyMetricsInRange(deviceId, from, to)
+
     /** Adjust the start/end of an existing sleep session. startTs is part of the primary key, so
      *  this deletes the old row and re-inserts a copy at the new window — every other field
      *  (efficiency, restingHr, avgHrv, stagesJSON) is preserved via [SleepSession.copy]. */

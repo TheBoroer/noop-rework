@@ -93,6 +93,20 @@ public enum AnalyticsEngine {
         isoDay.string(from: Date(timeIntervalSince1970: TimeInterval(ts)))
     }
 
+    /// Format a unix-seconds timestamp as the device's LOCAL YYYY-MM-DD day string (#277).
+    ///
+    /// The day key is the core aggregation key for daily metrics; the dashboard reads "today" by
+    /// the device's LOCAL calendar day, so the bucket must be the LOCAL day too. A west-of-UTC
+    /// user's evening (which crosses midnight UTC) would otherwise flow into the next UTC bucket
+    /// and the local "today" read would never find it — freezing the dashboard (Toronto/UTC-4
+    /// report). `offsetSec` is seconds EAST of UTC (TimeZone.current.secondsFromGMT()). The local
+    /// date is the UTC date of `(ts + offsetSec)`: shifting the instant by the offset turns the
+    /// fixed-UTC formatter into a local-calendar formatter. `offsetSec == 0` is byte-identical to
+    /// the UTC `dayString(_:)` above, so pure-function callers/tests on UTC are unchanged.
+    public static func dayString(_ ts: Int, offsetSec: Int) -> String {
+        dayString(ts + offsetSec)
+    }
+
     /// JSON-encode stage segments to the verbatim array shape CachedSleepSession stores.
     static func encodeStages(_ stages: [StageSegment]) -> String? {
         guard let data = try? JSONEncoder().encode(stages) else { return nil }
@@ -153,8 +167,9 @@ public enum AnalyticsEngine {
         // ── Sleep detection + staging ─────────────────────────────────────────
         let allSessions = SleepStager.detectSleep(hr: hr, rr: rr, resp: resp, gravity: gravity,
                                                   tzOffsetSeconds: tzOffsetSeconds)
-        // Sessions attributed to `day` = those whose end falls on `day` (UTC).
-        let matched = allSessions.filter { dayString($0.end) == day }
+        // Sessions attributed to `day` = those whose end falls on `day` (LOCAL day, #277). `day` is
+        // the caller's local-day key; attribute by the same offset so the bucket and the key agree.
+        let matched = allSessions.filter { dayString($0.end, offsetSec: tzOffsetSeconds) == day }
 
         // ── Daily sleep aggregates (AASM, in-bed weighted) ────────────────────
         var deepS = 0.0, remS = 0.0, lightS = 0.0, tstS = 0.0
@@ -260,13 +275,13 @@ public enum AnalyticsEngine {
         // ── Steps (APPROXIMATE) ───────────────────────────────────────────────
         // step_motion_counter@57 is a CUMULATIVE u16 running counter. The daily total is the SUM of
         // positive consecutive deltas across the day's samples. u16 wraparound: a negative delta
-        // means the counter rolled past 65535, so add 65536. The day's ~42h read window may include
-        // adjacent-day samples, so filter to dayString(ts)==day first. ESTIMATE only — not
-        // cloud/clinical parity.
+        // means the counter rolled past 65535, so add 65536. The day's read window may include
+        // adjacent-day samples, so filter to the LOCAL-day key dayString(ts, tzOffset)==day first
+        // (#277). ESTIMATE only — not cloud/clinical parity.
         let stepsTotal: Int? = {
             // Prefer the full-calendar-day stream for the additive total; fall back to the
             // night-window stream when the caller didn't supply one (pure-function callers/tests).
-            let sorted = (daySteps ?? steps).filter { dayString($0.ts) == day }.sorted { $0.ts < $1.ts }
+            let sorted = (daySteps ?? steps).filter { dayString($0.ts, offsetSec: tzOffsetSeconds) == day }.sorted { $0.ts < $1.ts }
             if sorted.count < 2 { return nil }
             // A firmware reboot resets the counter and is byte-indistinguishable from a u16 wrap.
             // A genuine wrap yields a SMALL corrected delta (the steps since the last record); a
@@ -293,12 +308,14 @@ public enum AnalyticsEngine {
         // per-second model the per-workout estimate uses (resting BMR below activeThreshold, Keytel
         // active above). effMaxHR + restingHRDaily are the same effective HRmax / resting baseline
         // strain uses. Nil when there is no HR. A heart-rate ESTIMATE — not cloud/clinical parity.
-        // Whole-day additive totals (steps above, calories here) are summed over the full UTC
+        // Whole-day additive totals (steps above, calories here) are summed over the full LOCAL
         // calendar day supplied by the caller (dayHr / daySteps), NOT the ~42h sleep-detection
         // window — which, anchored to the current time-of-day, would drop a past day's late hours
-        // and double-count seconds shared with adjacent days. Fall back to the night-window hr for
-        // pure-function callers that don't supply dayHr. Strain keeps the full window (bounded log).
-        let dayHrFiltered = (dayHr ?? hr).filter { dayString($0.ts) == day }
+        // and double-count seconds shared with adjacent days. The filter uses the LOCAL-day key
+        // (dayString(ts, tzOffset)) so it agrees with the bucket (#277). Fall back to the
+        // night-window hr for pure-function callers that don't supply dayHr. Strain keeps the full
+        // window (bounded log).
+        let dayHrFiltered = (dayHr ?? hr).filter { dayString($0.ts, offsetSec: tzOffsetSeconds) == day }
         let activeKcalEst: Double? = dayHrFiltered.isEmpty ? nil : Calories.estimateDayCalories(
             dayHrFiltered, profile: profile, hrmax: effMaxHR,
             restingHR: restingHRDaily.map(Double.init))

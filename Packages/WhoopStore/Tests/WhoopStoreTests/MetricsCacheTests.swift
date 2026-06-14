@@ -86,6 +86,36 @@ final class MetricsCacheTests: XCTestCase {
         XCTAssertEqual(rows.map { $0.day }, ["2026-05-20"])
     }
 
+    // MARK: - windowed computed-daily delete (#277 local-day re-bucketing migration)
+
+    func testDeleteDailyMetricsInRangeKeepsImportedAndOutOfRange() async throws {
+        let store = try await WhoopStore.inMemory()
+        let bare: (String) -> DailyMetric = { day in
+            DailyMetric(day: day, totalSleepMin: nil, efficiency: nil, deepMin: nil, remMin: nil,
+                        lightMin: nil, disturbances: nil, restingHr: nil, avgHrv: nil,
+                        recovery: nil, strain: nil, exerciseCount: nil)
+        }
+        // Computed source ("my-whoop-noop"): four days, three inside [2026-05-10, 2026-05-12].
+        try await store.upsertDailyMetrics(
+            [bare("2026-05-09"), bare("2026-05-10"), bare("2026-05-11"), bare("2026-05-12")],
+            deviceId: "my-whoop-noop")
+        // Imported source ("my-whoop"): a day INSIDE the range that must survive.
+        try await store.upsertDailyMetrics([bare("2026-05-11")], deviceId: "my-whoop")
+
+        let deleted = try await store.deleteDailyMetrics(
+            deviceId: "my-whoop-noop", from: "2026-05-10", to: "2026-05-12")
+        XCTAssertEqual(deleted, 3, "only the 3 in-range computed rows are removed")
+
+        // Computed: only the out-of-range 2026-05-09 row remains.
+        let computed = try await store.dailyMetrics(
+            deviceId: "my-whoop-noop", from: "2026-05-01", to: "2026-05-31")
+        XCTAssertEqual(computed.map { $0.day }, ["2026-05-09"])
+        // Imported row inside the range is untouched (BLE-only users keep no fallback, imports win).
+        let imported = try await store.dailyMetrics(
+            deviceId: "my-whoop", from: "2026-05-01", to: "2026-05-31")
+        XCTAssertEqual(imported.map { $0.day }, ["2026-05-11"])
+    }
+
     // MARK: - v7 in-sleep signal columns (spo2Pct / skinTempDevC / respRateBpm)
 
     func testV7ColumnsRoundTrip() async throws {
