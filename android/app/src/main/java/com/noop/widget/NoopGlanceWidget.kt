@@ -44,7 +44,20 @@ class NoopGlanceWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         // A corrupt pref must degrade to the empty-state widget, not throw mid-provide.
         val snap = runCatching { WidgetSnapshotStore.load(context) }.getOrDefault(WidgetSnapshot())
-        provideContent { WidgetContent(snap) }
+        // Follow the app's Light/Dark/System theme (read straight from noop_prefs; the widget runs in a
+        // separate process so it can't see the in-app snapshot state). System resolves off the device's
+        // night-mode config. Any failure degrades to dark (the historical default).
+        val dark = runCatching {
+            when (context.getSharedPreferences("noop_prefs", Context.MODE_PRIVATE)
+                .getString("theme.appearance", "system")) {
+                "light" -> false
+                "dark" -> true
+                else -> (context.resources.configuration.uiMode and
+                    android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                    android.content.res.Configuration.UI_MODE_NIGHT_YES
+            }
+        }.getOrDefault(true)
+        provideContent { WidgetContent(snap, dark) }
     }
 
     /** Defence-in-depth, NOT a crash fix: Glance 1.1.0's default already contains composition errors
@@ -64,21 +77,26 @@ class NoopGlanceWidget : GlanceAppWidget() {
     }
 }
 
-private val surface = ColorProvider(Color(0xFF0A1322))
-private val textPrimary = ColorProvider(Color(0xFFF4F6F8))
-private val textSecondary = ColorProvider(Color(0xFF8A94A4))
+// Per-scheme widget colours (mirror the app palette; deepened gold/amber/orange on light for contrast
+// on the warm-paper card). The widget is a separate surface, so these are local — not Palette reads.
+private fun widgetSurface(dark: Boolean) = ColorProvider(if (dark) Color(0xFF0A1322) else Color(0xFFF4F1EA))
+private fun widgetTextPrimary(dark: Boolean) = ColorProvider(if (dark) Color(0xFFF4F6F8) else Color(0xFF1A2230))
+private fun widgetTextSecondary(dark: Boolean) = ColorProvider(if (dark) Color(0xFF8A94A4) else Color(0xFF7C8696))
 
-/** Recovery-band colour, the app-wide 67 / 34 cuts (RecoveryScorer.band). */
-private fun bandColor(recovery: Int): ColorProvider = ColorProvider(
+/** Recovery-band colour, the app-wide 67 / 34 cuts (RecoveryScorer.band); deepened on light. */
+private fun bandColor(recovery: Int, dark: Boolean): ColorProvider = ColorProvider(
     when {
-        recovery >= 67 -> Color(0xFFE8B84B)
-        recovery >= 34 -> Color(0xFFD98A3D)
-        else -> Color(0xFFE0662F)
+        recovery >= 67 -> if (dark) Color(0xFFE8B84B) else Color(0xFFB07D17)
+        recovery >= 34 -> if (dark) Color(0xFFD98A3D) else Color(0xFFC2792E)
+        else -> if (dark) Color(0xFFE0662F) else Color(0xFFC84E1E)
     },
 )
 
 @Composable
-private fun WidgetContent(snap: WidgetSnapshot) {
+private fun WidgetContent(snap: WidgetSnapshot, dark: Boolean) {
+    val surface = widgetSurface(dark)
+    val textPrimary = widgetTextPrimary(dark)
+    val textSecondary = widgetTextSecondary(dark)
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
@@ -95,7 +113,7 @@ private fun WidgetContent(snap: WidgetSnapshot) {
         Text(
             text = snap.recoveryPct?.let { "$it%" } ?: "—",
             style = TextStyle(
-                color = snap.recoveryPct?.let { bandColor(it) } ?: textSecondary,
+                color = snap.recoveryPct?.let { bandColor(it, dark) } ?: textSecondary,
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
             ),

@@ -69,6 +69,10 @@ class MainActivity : ComponentActivity() {
             requestBlePermissions()
         }
 
+        // Load the Light/Dark/System preference before first composition so the theme is correct
+        // from the very first frame (no flash).
+        AppearancePrefs.load(this)
+
         setContent {
             NoopTheme {
                 NoopRoot()

@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -87,7 +88,15 @@ fun Modifier.frostedCardSurface(
     tint: Color? = null,
     cornerRadius: Dp = Metrics.cardRadius,
     washStrength: Float = 1f,
-): Modifier = this.drawBehind {
+): Modifier = this
+    // Elevation idiom: DARK is flat (the hairline + hue carry the edge). LIGHT raises the white card
+    // off the warm-paper canvas with a soft drop shadow — the hairline alone is too faint on paper.
+    .then(
+        if (Palette.isLight)
+            Modifier.shadow(elevation = 4.dp, shape = RoundedCornerShape(cornerRadius), clip = false)
+        else Modifier
+    )
+    .drawBehind {
     val wash = tint ?: Palette.accent
     val radiusPx = cornerRadius.toPx()
     val corner = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx)
@@ -622,7 +631,9 @@ fun BevelGauge(
                     )
 
                     // Outer bloom — a soft, lower-opacity wide arc (drawn first, under the track).
-                    if (animatedFraction > 0.001f) {
+                    // A glow only reads on the dark canvas; on the white light card it just smears the
+                    // edge, so it's suppressed there (the deepened arc carries the ring on its own).
+                    if (animatedFraction > 0.001f && !Palette.isLight) {
                         drawArc(
                             brush = sweep,
                             startAngle = startDeg,
@@ -665,7 +676,7 @@ fun BevelGauge(
                             center.y + radius * sin(tipAngle).toFloat(),
                         )
                         drawCircle(color = tipColor, radius = stroke * 0.7f, center = bead)
-                        drawCircle(color = Color.White, radius = stroke * 0.3f, center = bead)
+                        drawCircle(color = Palette.tipCore, radius = stroke * 0.3f, center = bead)
                     }
 
                     // Brand glyph core: a small solid gold dot at the very centre — but ONLY in the
@@ -848,19 +859,23 @@ fun ScenicHeroBackground(
                 )
             }
 
-            // Deterministic starfield — fixed positions/sizes so it can't flicker.
-            val wi = maxOf(1, w.toInt())
-            val topBand = maxOf(1, (h * 0.55f).toInt())
-            for (i in 0 until starCount) {
-                val x = ((i * 73 + 31) % wi).toFloat()
-                val y = (18 + ((i * 41) % topBand)).toFloat()
-                val r = if (i % 9 == 0) 1.3f else 0.7f
-                val alpha = if (i % 5 == 0) 0.34f else 0.18f
-                drawCircle(
-                    color = Palette.scenicStar.copy(alpha = alpha),
-                    radius = r,
-                    center = Offset(x, y),
-                )
+            // Deterministic starfield — fixed positions/sizes so it can't flicker. A night-sky field
+            // only belongs on the dark hero; on the warm-paper light field it reads as dirt, so it's
+            // suppressed there (the radial + domain bloom carry the light hero alone).
+            if (!Palette.isLight) {
+                val wi = maxOf(1, w.toInt())
+                val topBand = maxOf(1, (h * 0.55f).toInt())
+                for (i in 0 until starCount) {
+                    val x = ((i * 73 + 31) % wi).toFloat()
+                    val y = (18 + ((i * 41) % topBand)).toFloat()
+                    val r = if (i % 9 == 0) 1.3f else 0.7f
+                    val alpha = if (i % 5 == 0) 0.34f else 0.18f
+                    drawCircle(
+                        color = Palette.scenicStar.copy(alpha = alpha),
+                        radius = r,
+                        center = Offset(x, y),
+                    )
+                }
             }
 
             // Bottom fade so a hero number / card reads cleanly over the field.

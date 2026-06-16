@@ -9,9 +9,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import android.app.Activity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -34,169 +43,141 @@ import androidx.compose.ui.unit.sp
 
 object Palette {
 
-    // Surfaces — deep navy canvas, tinted frosted cards (NOT pure black).
-    val surfaceBase = Color(0xFF070C16)    // deep navy canvas
-    val surfaceRaised = Color(0xFF111B2A)  // frosted card fill
-    val surfaceOverlay = Color(0xFF15243C) // popovers / sheets / tooltips
-    val surfaceInset = Color(0xFF16202F)   // wells / chart insets / segmented track
-    val hairline = Color(0xFF21304A)       // soft navy 1px border (≈ white 6%)
-    val hairlineStrong = Color(0xFF2E3C57) // hover / emphasis border
+    // The active scheme's tokens — snapshot state, so a flip re-resolves every read below (in
+    // composables AND Canvas DrawScopes) with no call-site changes. Set by NoopTheme.
+    internal var active by mutableStateOf(DarkTokens)
+    /** True when the light scheme is active (surface code uses this for the per-scheme idiom). */
+    val isLight: Boolean get() = active === LightTokens
 
-    // Text — cool off-white scale on the navy.
-    val textPrimary = Color(0xFFF4F6F8)
-    val textSecondary = Color(0xFFC8CFD8)
-    val textTertiary = Color(0xFF8A94A4)
+    // Surfaces.
+    val surfaceBase get() = active.surfaceBase
+    val surfaceRaised get() = active.surfaceRaised
+    val surfaceOverlay get() = active.surfaceOverlay
+    val surfaceInset get() = active.surfaceInset
+    val hairline get() = active.hairline
+    val hairlineStrong get() = active.hairlineStrong
 
-    // Glow — ambient bloom behind heroes / charts (warm gold hero bloom).
-    val glowAmbient = Color(0xFF3A2D0A)
+    // Text.
+    val textPrimary get() = active.textPrimary
+    val textSecondary get() = active.textSecondary
+    val textTertiary get() = active.textTertiary
 
-    // Accent — GOLD brand anchor (chrome + the Charge world). Flips most chrome.
-    val accent = Color(0xFFE8B84B)       // brand gold
-    val accentHover = Color(0xFFFCEBA8)
-    val accentMuted = Color(0xFF2A2210)  // dark-gold tint (selected rows)
-    val focusRing = Color(0xFFE8B84B)
+    // Glow.
+    val glowAmbient get() = active.glowAmbient
+
+    // Accent — GOLD brand anchor.
+    val accent get() = active.accent
+    val accentHover get() = active.accentHover
+    val accentMuted get() = active.accentMuted
+    val focusRing get() = active.focusRing
     const val disabledOpacity = 0.45f
 
-    // Recovery / Charge gradient — the GOLD "Charge" colour world.
-    // 0.00 deep gold → 0.30 → 0.55 gold → 0.78 → 1.00 pale gold.
-    val recovery000 = Color(0xFFC8902F) // depleted — deep gold
-    val recovery030 = Color(0xFFD9A23E) // low — warm gold
-    val recovery055 = Color(0xFFE8B84B) // moderate — gold
-    val recovery078 = Color(0xFFF2CE6E) // primed — light gold
-    val recovery100 = Color(0xFFFCEBA8) // peak — pale gold
+    // Recovery / Charge gradient.
+    val recovery000 get() = active.recovery000
+    val recovery030 get() = active.recovery030
+    val recovery055 get() = active.recovery055
+    val recovery078 get() = active.recovery078
+    val recovery100 get() = active.recovery100
 
     /** Ordered gradient stops (position 0..1 → color) for the recovery scale. */
-    val recoveryStops: List<Pair<Float, Color>> = listOf(
-        0.00f to recovery000,
-        0.30f to recovery030,
-        0.55f to recovery055,
-        0.78f to recovery078,
-        1.00f to recovery100,
-    )
+    val recoveryStops: List<Pair<Float, Color>>
+        get() = listOf(0.00f to recovery000, 0.30f to recovery030, 0.55f to recovery055, 0.78f to recovery078, 1.00f to recovery100)
 
-    // Strain / Effort ramp — the amber "Effort" colour world.
-    // Deep ember → warm amber → bright amber → hot amber peak.
-    val strain000 = Color(0xFF9C5A14) // deep ember
-    val strain033 = Color(0xFFC2762A) // warm amber
-    val strain066 = Color(0xFFD98A3D) // bright amber
-    val strain100 = Color(0xFFF0A85A) // hot amber peak
+    // Strain / Effort ramp.
+    val strain000 get() = active.strain000
+    val strain033 get() = active.strain033
+    val strain066 get() = active.strain066
+    val strain100 get() = active.strain100
 
-    val strainStops: List<Pair<Float, Color>> = listOf(
-        0.00f to strain000,
-        0.33f to strain033,
-        0.66f to strain066,
-        1.00f to strain100,
-    )
+    val strainStops: List<Pair<Float, Color>>
+        get() = listOf(0.00f to strain000, 0.33f to strain033, 0.66f to strain066, 1.00f to strain100)
 
-    // Sleep stages — the blue "Rest" colour world (now clearly distinct, fixes #345).
-    val sleepAwake = Color(0xFFC2CCDA) // pale slate (out of bed)
-    val sleepLight = Color(0xFF4A90E2) // blue
-    val sleepDeep = Color(0xFF2F6FCB)  // deep blue (clearly darker than Light)
-    val sleepREM = Color(0xFF6FA8E8)   // light blue (glows)
+    // Sleep stages.
+    val sleepAwake get() = active.sleepAwake
+    val sleepLight get() = active.sleepLight
+    val sleepDeep get() = active.sleepDeep
+    val sleepREM get() = active.sleepREM
 
-    // HR zones — cool→warm ramp tuned to the Titanium & Gold worlds.
-    val zone1 = Color(0xFF4A90E2) // easy — blue
-    val zone2 = Color(0xFF3FA9C9) // teal
-    val zone3 = Color(0xFFE8B84B) // gold
-    val zone4 = Color(0xFFD98A3D) // amber
-    val zone5 = Color(0xFFE0662F) // max — burnt orange
+    // HR zones.
+    val zone1 get() = active.zone1
+    val zone2 get() = active.zone2
+    val zone3 get() = active.zone3
+    val zone4 get() = active.zone4
+    val zone5 get() = active.zone5
 
     /** HR zones indexed 1..5; index 0 mirrors zone1 for convenience. */
-    val hrZones: List<Color> = listOf(zone1, zone1, zone2, zone3, zone4, zone5)
+    val hrZones: List<Color> get() = listOf(zone1, zone1, zone2, zone3, zone4, zone5)
 
-    // Status — never reused as recovery colors.
-    val statusPositive = Color(0xFFE8B84B)
-    val statusWarning = Color(0xFFD98A3D)
-    val statusCritical = Color(0xFFE0662F)
+    // Status.
+    val statusPositive get() = active.statusPositive
+    val statusWarning get() = active.statusWarning
+    val statusCritical get() = active.statusCritical
 
-    // Per-metric accents — HRV / SpO₂ / energy / risk, on-brand for Titanium & Gold.
-    val metricCyan = Color(0xFF3FA9C9)   // SpO₂ / steps / Apple Health (teal)
-    val metricPurple = Color(0xFF4A90E2) // HRV (shares the Rest world — blue)
-    val metricAmber = Color(0xFFD98A3D)  // calories (shares the Effort world)
-    val metricRose = Color(0xFFE0662F)   // risk / heart rate / low recovery
+    // Per-metric accents.
+    val metricCyan get() = active.metricCyan
+    val metricPurple get() = active.metricPurple
+    val metricAmber get() = active.metricAmber
+    val metricRose get() = active.metricRose
 
-    // MARK: - Titanium & Gold domain "colour worlds" (NEW)
-    //
-    // Each daily score owns a two-stop accent gradient (deep → bright) plus a glow.
-    // These drive the layered gauges, frosted-card tints and scenic heroes. Charge
-    // re-uses the brand gold; Effort the amber ramp; Rest the blue scale; Stress is
-    // a blue → gold → burnt-orange ramp.
+    // Domain "colour worlds".
+    val chargeColor get() = active.chargeColor
+    val chargeDeep get() = active.chargeDeep
+    val chargeBright get() = active.chargeBright
+    val chargeGlow get() = active.chargeGlow
 
-    // Charge (recovery) — gold world.
-    val chargeColor = Color(0xFFE8B84B)
-    val chargeDeep = Color(0xFFC8902F)
-    val chargeBright = Color(0xFFFCEBA8)
-    val chargeGlow = Color(0xFFE8B84B)
+    val effortColor get() = active.effortColor
+    val effortDeep get() = active.effortDeep
+    val effortBright get() = active.effortBright
+    val effortGlow get() = active.effortGlow
 
-    // Effort (strain) — amber world.
-    val effortColor = Color(0xFFD98A3D)
-    val effortDeep = Color(0xFF9C5A14)
-    val effortBright = Color(0xFFF0A85A)
-    val effortGlow = Color(0xFFD98A3D)
+    val restColor get() = active.restColor
+    val restDeep get() = active.restDeep
+    val restBright get() = active.restBright
+    val restGlow get() = active.restGlow
 
-    // Rest (sleep) — blue world.
-    val restColor = Color(0xFF4A90E2)
-    val restDeep = Color(0xFF2F6FCB)
-    val restBright = Color(0xFF6FA8E8)
-    val restGlow = Color(0xFF4A90E2)
-
-    // Stress — blue → gold → burnt-orange world (used by StressScreen's accents).
-    val stressColor = Color(0xFFE8B84B)
-    val stressDeep = Color(0xFF4A90E2)
-    val stressBright = Color(0xFFE0662F)
-    val stressGlow = Color(0xFFE8B84B)
+    val stressColor get() = active.stressColor
+    val stressDeep get() = active.stressDeep
+    val stressBright get() = active.stressBright
+    val stressGlow get() = active.stressGlow
 
     /** Deep → bright accent pairs (gauge stroke + diagonal card wash) per domain. */
-    val chargeGradientStops: List<Pair<Float, Color>> = listOf(0.0f to chargeDeep, 1.0f to chargeBright)
-    val effortGradientStops: List<Pair<Float, Color>> = listOf(0.0f to effortDeep, 1.0f to effortBright)
-    val restGradientStops: List<Pair<Float, Color>> = listOf(0.0f to restDeep, 1.0f to restBright)
+    val chargeGradientStops: List<Pair<Float, Color>> get() = listOf(0.0f to chargeDeep, 1.0f to chargeBright)
+    val effortGradientStops: List<Pair<Float, Color>> get() = listOf(0.0f to effortDeep, 1.0f to effortBright)
+    val restGradientStops: List<Pair<Float, Color>> get() = listOf(0.0f to restDeep, 1.0f to restBright)
     // Stress is a 3-stop ramp (calm blue → gold → burnt orange) per the README gauge.
-    val stressGradientStops: List<Pair<Float, Color>> = listOf(
-        0.0f to Color(0xFF4A90E2),
-        0.5f to Color(0xFFE8B84B),
-        1.0f to Color(0xFFE0662F),
-    )
+    val stressGradientStops: List<Pair<Float, Color>>
+        get() = listOf(0.0f to stressDeep, 0.5f to stressColor, 1.0f to stressBright)
 
-    // MARK: Scenic background (NEW) — detail-screen hero gradient + starfield.
-    // Radial canvas: warm-lit center → deep edge. Used by ScenicHeroBackground.
-    val scenicCenter = Color(0xFF15243C)
-    val scenicEdge = Color(0xFF0A1322)
-    val scenicStar = Color(0xFFC8CFD8)
+    // Scenic background.
+    val scenicCenter get() = active.scenicCenter
+    val scenicEdge get() = active.scenicEdge
+    val scenicStar get() = active.scenicStar
 
-    /** Frosted-card tint endpoints (a subtle dark fill the accent wash sits over). */
-    val cardFillTop = Color(0xFF15243C)
-    val cardFillBottom = Color(0xFF0B1424)
+    /** Frosted-card tint endpoints (the accent wash sits over them). */
+    val cardFillTop get() = active.cardFillTop
+    val cardFillBottom get() = active.cardFillBottom
 
-    // MARK: - Gold & Titanium ramps (NEW) — brand metal surfaces.
-    //
-    // Gold = brand/recovery/Charge. Titanium = neutral metal for tiles, avatars and
-    // icon chrome. Hexes are identical to the Apple StrandPalette so all three
-    // platforms match.
-    val gold = Color(0xFFE8B84B)
-    val goldLight = Color(0xFFFCEBA8)
-    val goldDeep = Color(0xFFC8902F)
-    val goldDeepText = Color(0xFF3A2708)   // text / icons ON gold surfaces
-    val signalYellow = Color(0xFFFFD63D)
+    // Gold & Titanium ramps.
+    val gold get() = active.gold
+    val goldLight get() = active.goldLight
+    val goldDeep get() = active.goldDeep
+    val goldDeepText get() = active.goldDeepText
+    val signalYellow get() = active.signalYellow
 
     /** Gold gradient stops (light → gold → deep) — buttons, ring fills, FAB (135–155°). */
-    val goldGradient: List<Pair<Float, Color>> = listOf(
-        0.0f to goldLight,
-        0.5f to gold,
-        1.0f to goldDeep,
-    )
+    val goldGradient: List<Pair<Float, Color>> get() = listOf(0.0f to goldLight, 0.5f to gold, 1.0f to goldDeep)
 
-    val titaniumTop = Color(0xFFF1F3F5)
-    val titaniumMid = Color(0xFFC9CFD4)
-    val titaniumLow = Color(0xFF969DA4)
-    val titaniumDeep = Color(0xFF6B737B)
+    val titaniumTop get() = active.titaniumTop
+    val titaniumMid get() = active.titaniumMid
+    val titaniumLow get() = active.titaniumLow
+    val titaniumDeep get() = active.titaniumDeep
 
     /** Titanium gradient stops (top → mid → low → deep) — tiles / avatars / icon (150°). */
-    val titaniumGradient: List<Pair<Float, Color>> = listOf(
-        0.0f to titaniumTop,
-        0.40f to titaniumMid,
-        0.75f to titaniumLow,
-        1.0f to titaniumDeep,
-    )
+    val titaniumGradient: List<Pair<Float, Color>>
+        get() = listOf(0.0f to titaniumTop, 0.40f to titaniumMid, 0.75f to titaniumLow, 1.0f to titaniumDeep)
+
+    /** Gauge-tip / sparkline-head core — white on dark, deep ink on light. */
+    val tipCore get() = active.tipCore
 
     // MARK: - Sampling helpers (mirror StrandPalette.sample / recoveryColor)
 
@@ -473,24 +454,30 @@ object NoopType {
 
 // MARK: - Material3 bridge
 
-private val NoopColorScheme = darkColorScheme(
-    primary = Palette.accent,
-    onPrimary = Palette.surfaceBase,
-    primaryContainer = Palette.accentMuted,
-    onPrimaryContainer = Palette.accentHover,
-    secondary = Palette.metricPurple,
-    onSecondary = Palette.surfaceBase,
-    background = Palette.surfaceBase,
-    onBackground = Palette.textPrimary,
-    surface = Palette.surfaceRaised,
-    onSurface = Palette.textPrimary,
-    surfaceVariant = Palette.surfaceOverlay,
-    onSurfaceVariant = Palette.textSecondary,
-    outline = Palette.hairline,
-    outlineVariant = Palette.hairlineStrong,
-    error = Palette.statusCritical,
-    onError = Palette.surfaceBase,
-)
+/** Build the Material3 colour scheme from a token set. Dark/light differ only in the builder used
+ *  (which sets sensible defaults for the slots we don't override); the NOOP surfaces are all driven
+ *  by `Palette.*` directly, so this only feeds Material components (text fields, switches, etc.). */
+private fun noopColorScheme(t: PaletteTokens, dark: Boolean): ColorScheme {
+    val base = if (dark) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = t.accent,
+        onPrimary = if (dark) t.surfaceBase else t.goldDeepText,
+        primaryContainer = t.accentMuted,
+        onPrimaryContainer = if (dark) t.accentHover else t.accent,
+        secondary = t.metricPurple,
+        onSecondary = if (dark) t.surfaceBase else Color(0xFFFFFFFF),
+        background = t.surfaceBase,
+        onBackground = t.textPrimary,
+        surface = t.surfaceRaised,
+        onSurface = t.textPrimary,
+        surfaceVariant = t.surfaceOverlay,
+        onSurfaceVariant = t.textSecondary,
+        outline = t.hairline,
+        outlineVariant = t.hairlineStrong,
+        error = t.statusCritical,
+        onError = if (dark) t.surfaceBase else Color(0xFFFFFFFF),
+    )
+}
 
 private val NoopMaterialTypography = Typography(
     displayLarge = NoopType.display(72f),
@@ -514,18 +501,36 @@ private val NoopShapes = Shapes(
 )
 
 /**
- * NoopTheme — dark, instrument-grade. Always dark regardless of system setting
- * (the design system is dark-only), but `isSystemInDarkTheme` is read so the
- * status-bar contract is satisfied on devices that key off it.
+ * NoopTheme — instrument-grade, now System / Light / Dark. The chosen mode (default System) drives
+ * both `Palette.active` (so every `Palette.*` read re-resolves) and the Material scheme. The write to
+ * `Palette.active` is guarded + idempotent, and happens before children compose, so there's no flash
+ * and no recomposition loop (NoopTheme itself never reads `active`).
  */
 @Composable
 fun NoopTheme(content: @Composable () -> Unit) {
-    // The design system is dark-only; we always apply the dark scheme regardless of
-    // the system setting. `isSystemInDarkTheme` is referenced so status-bar tooling
-    // that keys off it stays satisfied.
-    isSystemInDarkTheme()
+    val dark = when (AppearancePrefs.mode) {
+        AppearanceMode.LIGHT -> false
+        AppearanceMode.DARK -> true
+        AppearanceMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    val tokens = if (dark) DarkTokens else LightTokens
+    if (Palette.active !== tokens) Palette.active = tokens
+
+    // Status-/nav-bar icon appearance: light icons on the dark theme, dark icons on the warm-paper
+    // light theme (otherwise the icons are invisible). Edge-to-edge keeps the bars transparent.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            (view.context as? Activity)?.window?.let { window ->
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
+
     MaterialTheme(
-        colorScheme = NoopColorScheme,
+        colorScheme = noopColorScheme(tokens, dark),
         typography = NoopMaterialTypography,
         shapes = NoopShapes,
         content = content,

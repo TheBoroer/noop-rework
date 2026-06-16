@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Palette
@@ -321,6 +322,9 @@ fun SettingsScreen(vm: AppViewModel) {
     // SharedPreferences isn't reactive, so the segmented control drives this local mirror; flipping it
     // enables exactly one launcher alias via PackageManager (see setAppIcon below).
     var appIconNavy by remember { mutableStateOf(NoopPrefs.appIconNavy(context)) }
+
+    // Theme (System / Light / Dark) — drives NoopTheme; AppearancePrefs mirrors it in snapshot state.
+    var themeMode by remember { mutableStateOf(AppearancePrefs.mode) }
 
     // SAF launchers — CreateDocument for export, OpenDocument for import.
     val exportLauncher = rememberLauncherForActivityResult(
@@ -664,6 +668,25 @@ fun SettingsScreen(vm: AppViewModel) {
                         },
                     )
                 }
+            }
+        }
+
+        // --- Appearance (Theme) ---
+        SettingsSection(
+            icon = Icons.Filled.Brightness6,
+            title = "Appearance",
+            blurb = "Choose Light, Dark, or follow your system. Light keeps NOOP's gold on warm paper; Dark is the signature navy.",
+        ) {
+            FormRow(label = "Theme") {
+                SegmentedPillControl(
+                    items = listOf(AppearanceMode.SYSTEM, AppearanceMode.LIGHT, AppearanceMode.DARK),
+                    selection = themeMode,
+                    label = { it.label },
+                    onSelect = { mode ->
+                        themeMode = mode
+                        AppearancePrefs.set(context, mode)
+                    },
+                )
             }
         }
 
