@@ -338,7 +338,7 @@ private struct BreathingContent: View {
                         Circle().strokeBorder(StrandPalette.restBright.opacity(0.50), lineWidth: 1)
                     )
                     .frame(width: diameter, height: diameter)
-                    .shadow(color: StrandPalette.restGlow.opacity(0.40 * orbProgress), radius: 26)
+                    .shadow(color: StrandPalette.restGlow.opacity(0.18 * orbProgress), radius: 12)
 
                 VStack(spacing: 2) {
                     Text(model.bpm.map(String.init) ?? "—")

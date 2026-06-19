@@ -95,7 +95,9 @@ public enum AppearanceMode: String, CaseIterable, Identifiable, Sendable {
 private struct AdditiveBloom: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     func body(content: Content) -> some View {
-        if scheme == .dark { content.blendMode(.plusLighter) }
+        // Dialed back (0.55) — the full-strength additive bloom read as too much glow against the
+        // crisper design language. Still present on dark for depth, just restrained.
+        if scheme == .dark { content.blendMode(.plusLighter).opacity(0.55) }
         else { content.opacity(0) }
     }
 }

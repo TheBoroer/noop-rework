@@ -310,8 +310,6 @@ public struct SegmentedPillControl<T: Hashable>: View {
                                              ? AnyShapeStyle(StrandPalette.accent)
                                              : AnyShapeStyle(LinearGradient(gradient: StrandPalette.goldGradient, startPoint: .top, endPoint: .bottom)))
                                           : AnyShapeStyle(Color.clear))
-                                .shadow(color: sel ? (scheme == .light ? StrandPalette.accent.opacity(0.3) : StrandPalette.gold.opacity(0.4)) : .clear,
-                                        radius: sel ? 6 : 0, y: 1)
                         )
                         // On iOS guarantee the ≥44pt touch target (height only — width is
                         // already ≥54pt) without bloating the denser Mac control, then make
@@ -401,8 +399,9 @@ public struct NoopPrimaryButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(LinearGradient(gradient: StrandPalette.goldGradient, startPoint: .topLeading, endPoint: .bottomTrailing))
             )
-            // The signature gold cast-shadow (0 10px 22px -8px gold@.6).
-            .shadow(color: StrandPalette.gold.opacity(pressed ? 0.25 : 0.6), radius: 14, x: 0, y: 8)
+            // A crisp, subtle NEUTRAL elevation — the gold cast-glow read as too much against the
+            // clean design, so it's a soft dark lift now, no bloom.
+            .shadow(color: .black.opacity(pressed ? 0.08 : 0.16), radius: 6, x: 0, y: 3)
             .opacity(pressed ? 0.9 : 1)
             .scaleEffect(pressed ? 0.98 : 1)
             .animation(StrandMotion.interactive, value: pressed)
