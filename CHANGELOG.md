@@ -17,6 +17,16 @@ approximate; downloads are on the [Releases](https://noop.fans/NoopApp/noop/rele
 
 ---
 
+## 5.1.0 — a cleaner home: refreshed design, a new inbox, your photo (all platforms)
+
+A design-refresh release. Same NOOP underneath — a tidier, crisper home, somewhere for everything new to land, and a touch of you on the screen.
+
+- **A cleaner home.** The bottom bar is now four tidy tabs — **Today · Trends · Sleep · More** — and the quick-action **+** has moved up to the top-right of your home screen, balancing your profile on the left. Same actions (start a workout, log your journal, breathe), much less clutter.
+- **A new Updates inbox.** Tap the **bell** in the top-right to see what's new — fresh readings and history that landed, what's-new notes, and any home cards you've tucked away. A small gold badge shows when there's something unread. Hit the **×** on a home card to send it to the inbox, and pull it back any time with **Restore to Today**.
+- **Make it yours — a profile photo.** Tap your profile (top-left) → **Settings → Profile photo** and choose a picture. It shows on your home screen and stays **only on your device** — NOOP is offline, so it's never uploaded.
+- **Cleaner, crisper design.** We blended the glass-and-material look, dialled back the glow across the whole app for sharper lines, evened up the spacing around the little pill toggles, and onboarding now shows up front that you can switch **Light · Dark · System** whenever you like (**Settings → Appearance**).
+- **Same look on every device.** The refreshed layout and approach land on Mac, iPhone and Android together.
+
 ## 5.0.1 — stability & polish for v5 (all platforms)
 
 A refinement release that hardens the big v5 update — no behaviour changes, just making sure everything renders and reaches you cleanly.
