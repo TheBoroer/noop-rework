@@ -25,9 +25,20 @@ object TestBundleAssembler {
      */
     fun redactEntries(entries: List<Pair<String, ByteArray>>): List<Pair<String, ByteArray>> =
         entries.map { (name, data) ->
-            val scrubbed = redactStrapLogPii(String(data))
-            name to scrubbed.toByteArray()
+            // BINARY entries (the Display mode's screenshot.png) must NOT be decoded as text and re-encoded
+            // - that would corrupt the PNG. Redaction scrubs text identifiers, not pixels, so a binary
+            // entry passes through untouched (the Swift twin guards the same way via the UTF-8 decode
+            // returning nil). Only text entries are scrubbed.
+            if (isBinaryEntry(name)) {
+                name to data
+            } else {
+                name to redactStrapLogPii(String(data)).toByteArray()
+            }
         }
+
+    /** A bundle entry that is binary (image bytes), never text to scrub. screenshot.png is the only one
+     *  today; raw-capture.jsonl stays text (JSON lines) and is still scrubbed. */
+    private fun isBinaryEntry(name: String): Boolean = name == DisplayScreenshot.BUNDLE_NAME
 
     /**
      * Hard cap the bundle at [capBytes] (20 MB default, under GitHub's 25 MB; spec section 5.4). The
@@ -95,6 +106,20 @@ object TestBundleAssembler {
         val redacted = redactEntries(entries)
         val (capped, truncated) = capEntries(redacted)
         val out = ArrayList(capped)
+
+        // 2b. Display & Performance: capture a screenshot for the DISPLAY profile (or any mode that
+        //     declares includesScreenshot) and add it as screenshot.png AFTER the redact + cap pass, so
+        //     the binary PNG never runs through the text scrub (redaction scrubs identifiers, not pixels).
+        //     The screenshot is still covered by the mandatory review-before-share gate, which names the
+        //     attachment. A capture only happens for the gated profile, so a non-display report never
+        //     grabs a shot. Mirrors the Swift assembler.
+        val wantsShot = profile == TestDomain.DISPLAY ||
+            (TestModeRegistry.mode(profile)?.includesScreenshot == true)
+        if (wantsShot) {
+            DisplayScreenshot.capturePNG(context)?.let { png ->
+                out += DisplayScreenshot.BUNDLE_NAME to png
+            }
+        }
 
         // 3. meta.json: the machine-readable tie. Answers + startedAt come off the single TestCentre
         //    surface. Storage is left zeroed in Phase 1 (the DB-size probe is a later wire-up); we never

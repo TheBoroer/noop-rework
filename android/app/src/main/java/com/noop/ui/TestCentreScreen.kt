@@ -21,6 +21,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,7 @@ import com.noop.BuildConfig
 import com.noop.analytics.Baselines
 import com.noop.ble.PuffinExperiment
 import com.noop.ble.WhoopModel
+import com.noop.testcentre.DisplayPerformanceMonitor
 import com.noop.testcentre.ReportReviewGate
 import com.noop.testcentre.TestBundleAssembler
 import com.noop.testcentre.TestCentre
@@ -69,6 +71,20 @@ fun TestCentreScreen(vm: AppViewModel) {
     // review dialog; confirming runs TestReportFlow.run.
     var pendingReport by remember { mutableStateOf<PendingReport?>(null) }
 
+    // The Display frame monitor follows the screen: if the Display mode was already on when the screen
+    // appears, (re)start it; always tear it down when the screen leaves so no Choreographer callback
+    // survives a navigation away. The mode flag stays on (the user's test is still active); the monitor
+    // resumes next time this screen is shown. This keeps the perpetual-callback contract: a callback
+    // exists only while the Test Centre is on screen with the Display mode on.
+    DisposableEffect(Unit) {
+        if (testCentre.active(TestDomain.DISPLAY)) {
+            DisplayPerformanceMonitor.start(context) { line ->
+                vm.ble.externalLog(line, TestDomain.DISPLAY)
+            }
+        }
+        onDispose { DisplayPerformanceMonitor.stop() }
+    }
+
     ScreenScaffold(
         title = "Test Centre",
         subtitle = "Turn on a test for the thing that's wrong, wear the strap, then tap Report. Everything stays on this phone.",
@@ -87,6 +103,19 @@ fun TestCentreScreen(vm: AppViewModel) {
                         startedAtSeconds = testCentre.startedAt(mode.domain),
                         onToggle = { on ->
                             if (on) testCentre.activate(mode.domain) else testCentre.deactivate(mode.domain)
+                            // Display & Performance owns a live frame monitor. It must run ONLY while the
+                            // mode is on: start it on toggle-on (wiring its sink to the redacting DISPLAY
+                            // log), tear it down on toggle-off so no Choreographer callback survives.
+                            // Zero-cost when off.
+                            if (mode.domain == TestDomain.DISPLAY) {
+                                if (on) {
+                                    DisplayPerformanceMonitor.start(context) { line ->
+                                        vm.ble.externalLog(line, TestDomain.DISPLAY)
+                                    }
+                                } else {
+                                    DisplayPerformanceMonitor.stop()
+                                }
+                            }
                         },
                         onReport = { pendingReport = buildPending(context, mode, vm.ble.exportLogText()) },
                     )

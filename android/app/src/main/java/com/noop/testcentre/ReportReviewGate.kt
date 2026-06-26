@@ -19,9 +19,22 @@ class ReportReviewGate(private val entries: List<Pair<String, ByteArray>>) {
      * is already PII-scrubbed by the assembler. "" if there is nothing text-decodable to show. Mirrors Swift.
      */
     val previewText: String
-        get() = entries
-            .filter { it.first != "raw-capture.jsonl" }
-            .joinToString("\n\n") { (name, data) -> "=== $name ===\n${String(data)}" }
+        get() {
+            // Text files shown inline; the bounded raw-capture stream and any binary attachment (the
+            // Display mode's screenshot.png) are excluded from the inline text. Mirrors Swift.
+            val textBlocks = entries
+                .filter { it.first != "raw-capture.jsonl" && !isBinaryEntry(it.first) }
+                .joinToString("\n\n") { (name, data) -> "=== $name ===\n${String(data)}" }
+            // Name the binary attachments so the review is HONEST about everything in the bundle: the user
+            // sees that a screenshot is attached and can cancel if they don't want to share it.
+            val binaryNames = entries.map { it.first }.filter { isBinaryEntry(it) }
+            if (binaryNames.isEmpty()) return textBlocks
+            val note = "=== attached (not shown above) ===\n" + binaryNames.joinToString("\n")
+            return if (textBlocks.isEmpty()) note else textBlocks + "\n\n" + note
+        }
+
+    /** A bundle entry that is binary image bytes (not text to show inline). screenshot.png is the only one. */
+    private fun isBinaryEntry(name: String): Boolean = name == DisplayScreenshot.BUNDLE_NAME
 
     /** Explicit user confirmation: the only way the gate clears. */
     fun confirm() { isCleared = true }

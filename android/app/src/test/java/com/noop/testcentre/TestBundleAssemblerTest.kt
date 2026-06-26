@@ -48,4 +48,30 @@ class TestBundleAssemblerTest {
         assertEquals(1, capped.size)
         assertArrayEquals("tiny".toByteArray(), capped.first().second)
     }
+
+    @Test fun redactLeavesScreenshotPngBytesUntouched() {
+        // The Display screenshot is BINARY: redactEntries must NOT decode it as text and re-encode (that
+        // would corrupt the PNG). It passes through byte-identical; only text entries are scrubbed.
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02, 0xFF.toByte())
+        val entries = listOf(
+            "report.txt" to "connected to WHOOP 4C1594026 ok".toByteArray(),
+            DisplayScreenshot.BUNDLE_NAME to png,
+        )
+        val scrubbed = TestBundleAssembler.redactEntries(entries)
+        val outPng = scrubbed.first { it.first == DisplayScreenshot.BUNDLE_NAME }.second
+        assertArrayEquals("the PNG must pass through redaction byte-identical", png, outPng)
+        // The text entry was still scrubbed (the serial is gone).
+        assertFalse(String(scrubbed.first { it.first == "report.txt" }.second).contains("4C1594026"))
+    }
+
+    @Test fun reviewGateNamesAttachedScreenshot() {
+        // The mandatory review gate must be HONEST about a binary attachment it cannot show inline.
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val gate = com.noop.testcentre.ReportReviewGate(
+            listOf("report.txt" to "hello".toByteArray(), DisplayScreenshot.BUNDLE_NAME to png),
+        )
+        assertTrue(gate.previewText.contains("=== report.txt ==="))
+        assertTrue(gate.previewText.contains(DisplayScreenshot.BUNDLE_NAME))
+        assertFalse("the gate must start uncleared (nothing ships until Share)", gate.isCleared)
+    }
 }
