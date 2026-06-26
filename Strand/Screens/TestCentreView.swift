@@ -362,6 +362,9 @@ private struct TestModeRow: View {
             if on, mode.domain == .battery {
                 BatteryReadoutPanel(live: live)
             }
+            if on, mode.domain == .connection {
+                ConnectionReadoutPanel(live: live)
+            }
             if on, mode.domain == .recovery {
                 RecoveryReadoutPanel(live: live)
             }
@@ -413,6 +416,34 @@ private struct BatteryReadoutPanel: View {
             ReadoutRow(label: "Current charge", value: live.batteryReadout("currentSoc"))
             ReadoutRow(label: "Estimated runtime left", value: live.batteryReadout("estimateDaysLeft"))
             ReadoutRow(label: "Slope source", value: live.batteryReadout("slopeSource"))
+        }
+        .padding(.top, 2)
+    }
+}
+
+/// The Connection & Sync live-readout panel: connection uptime, the involuntary-reconnect count this run,
+/// and the last offload result, all parsed from the `.connection`-tagged log tail (plus the live connection
+/// state for the up/down headline) by the pure `ConnectionReadout`. Binding off the tagged tail mirrors the
+/// Recovery / HRV panels, so the BLE layer needs no new published properties. No hardcoded colours; uses the
+/// same ReadoutRow tokens as the other panels. No em-dash in any string here.
+private struct ConnectionReadoutPanel: View {
+    @ObservedObject var live: LiveState
+
+    var body: some View {
+        let tail = live.taggedTail(domain: .connection)
+        let now = Int(Date().timeIntervalSince1970)
+        // Trust the live link state for the up/down headline; fall back to the tagged tail for the
+        // since-when. Once disconnected, the link state is the source of truth (the tail may still hold a
+        // stale uptimeStart from the last connect).
+        let uptime = live.connected
+            ? ConnectionReadout.uptimeLabel(taggedTail: tail, nowUnix: now)
+            : "not connected"
+        let reconnects = ConnectionReadout.reconnectCount(taggedTail: tail)
+        let lastOffload = ConnectionReadout.lastOffloadResult(taggedTail: tail)
+        VStack(alignment: .leading, spacing: 4) {
+            ReadoutRow(label: "Connection uptime", value: uptime)
+            ReadoutRow(label: "Reconnects this run", value: String(reconnects))
+            ReadoutRow(label: "Last offload result", value: lastOffload ?? "no offload yet")
         }
         .padding(.top, 2)
     }

@@ -126,6 +126,14 @@ final class Backfiller {
     /// user their strap isn't banking, without false-positiving a normal caught-up sync.
     private let onChunk: ((_ decoded: Bool, _ console: Bool) -> Void)?
 
+    /// Connection & Sync test mode (Test Centre): the cheap gate + tagged sink for the .connection
+    /// diagnostic lines (offload progress / firmware layout / trim sentinel). `connectionActive` is one
+    /// UserDefaults bool read; we ALWAYS check it BEFORE building any connection line, so the Backfiller
+    /// pays nothing when the mode is off. `connectionLog` appends the already-built line tagged .connection.
+    /// Both default inert (always-off / nil) so tests + non-prod inits get the byte-identical untraced path.
+    private let connectionActive: () -> Bool
+    private let connectionLog: ((String) -> Void)?
+
     init(store: BackfillStoreWriting,
          deviceId: String,
          ackTrim: @escaping (_ trim: UInt32, _ endData: [UInt8]) -> Void,
@@ -133,6 +141,8 @@ final class Backfiller {
          log: ((String) -> Void)? = nil,
          rejectedSink: ((_ frames: [[UInt8]], _ trim: UInt32, _ family: DeviceFamily) -> Bool)? = nil,
          onChunk: ((_ decoded: Bool, _ console: Bool) -> Void)? = nil,
+         connectionActive: @escaping () -> Bool = { false },
+         connectionLog: ((String) -> Void)? = nil,
          extract: @escaping Extractor = { extractHistoricalStreams($0, deviceClockRef: $1, wallClockRef: $2,
                                                                     sessionOldestUnix: $3, sessionNewestUnix: $4) }) {
         self.store = store
@@ -142,7 +152,17 @@ final class Backfiller {
         self.log = log
         self.rejectedSink = rejectedSink
         self.onChunk = onChunk
+        self.connectionActive = connectionActive
+        self.connectionLog = connectionLog
         self.extract = extract
+    }
+
+    /// Emit one Connection & Sync test-mode line iff the mode is on. The cheap `connectionActive()` gate is
+    /// checked BEFORE `build()` runs, so the line string is never constructed when the mode is off (the
+    /// @autoclosure defers it). Diagnostic only - it never changes the offload path.
+    private func emitConnection(_ build: @autoclosure () -> String) {
+        guard connectionActive(), let connectionLog else { return }
+        connectionLog(build())
     }
 
     /// Called by BLEManager when the strap signals a historical offload is beginning.
@@ -237,6 +257,8 @@ final class Backfiller {
         if trim == 0xFFFFFFFF, !loggedNoCursor {
             loggedNoCursor = true
             log?("Backfill: strap reported no flash cursor (trim=0xFFFFFFFF) — it has no banked history to offload. This is a clock/charge state on the strap, not a decode problem; fully charge it and reconnect so it starts banking.")
+            // Connection test mode: the no-cursor sentinel as a compact tagged line (gated zero-cost).
+            emitConnection(ConnectionTrace.noCursorLine())
         }
 
         let frames = chunk
@@ -257,6 +279,16 @@ final class Backfiller {
             if let v = parsed.lazy.compactMap({ $0.parsed["hist_version"]?.intValue }).first,
                loggedLayoutVersions.insert(v).inserted {
                 log?("Backfill: historical records use layout v\(v)")
+                // Connection test mode: the firmware layout as a compact tagged line. A layout that decoded
+                // a signature field (heart_rate / gravity_x / ppg_waveform) is decodable; otherwise the
+                // unmapped-version path below fires too. Gated zero-cost.
+                emitConnection({
+                    let decodable = parsed.contains {
+                        $0.parsed["heart_rate"] != nil || $0.parsed["gravity_x"] != nil
+                            || $0.parsed["ppg_waveform"] != nil
+                    }
+                    return ConnectionTrace.firmwareLine(version: v, decodable: decodable)
+                }())
             }
             // Diagnostic (#30): a historical record whose firmware version we don't have a field map for
             // bails out of decode entirely — no HR, no R-R, no GRAVITY — so sleep (which is gravity/
@@ -338,6 +370,11 @@ final class Backfiller {
             sessionMotionRows += tally.motion
             sessionSkinTempRows += counts.skinTemp
             sessionNightKeys.formUnion(tally.nights)
+
+            // Connection test mode: per-chunk offload PROGRESS (running session totals), so a report shows
+            // the offload advancing rather than only its final outcome. Gated zero-cost.
+            emitConnection("offload progress trim=\(trim) chunkRows=\(tally.rows) "
+                + "sessionRows=\(sessionRowsPersisted) sessionMotion=\(sessionMotionRows) nights=\(sessionNights)")
 
             // #77 / #91: any genuinely-undecodable type-47 record in this chunk must be ARCHIVED
             // before we ack — the ack frees the strap's copy, so the archive is the only remaining
