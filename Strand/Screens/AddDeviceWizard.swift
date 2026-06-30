@@ -325,6 +325,9 @@ struct AddDeviceWizard: View {
             // actually read; none fabricates data.
             Text("Experimental").strandOverline().padding(.top, 8)
             experimentalTierNote
+            typeRow(.oura, icon: "circle.circle",
+                    title: "Oura ring",
+                    subtitle: "Take over your ring locally. Beta. This replaces the Oura app.")
             typeRow(.amazfit, icon: "waveform.path.ecg.rectangle",
                     title: "Amazfit / Zepp",
                     subtitle: "Incl. Helio. Live heart rate where the band exposes it. Help us test.")
@@ -334,9 +337,6 @@ struct AddDeviceWizard: View {
             typeRow(.garmin, icon: "applewatch",
                     title: "Garmin watch",
                     subtitle: "Uses the watch's Broadcast Heart Rate. We'll show you how.")
-            typeRow(.oura, icon: "circle.circle",
-                    title: "Oura ring",
-                    subtitle: "Take over your ring locally. Beta. This replaces the Oura app.")
 
             whoopFirstNote
         }

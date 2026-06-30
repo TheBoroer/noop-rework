@@ -687,6 +687,9 @@ private fun TypeStep(onPick: (DeviceType) -> Unit) {
         // actually read; none fabricates data.
         Overline("Experimental", modifier = Modifier.padding(top = 8.dp))
         ExperimentalTierNote()
+        TypeRow(Icons.Filled.Circle, DeviceType.Oura.title, "Take over your ring locally. Beta. This replaces the Oura app.") {
+            onPick(DeviceType.Oura)
+        }
         TypeRow(Icons.Filled.GraphicEq, DeviceType.Amazfit.title, "Incl. Helio. Live heart rate where the band exposes it. Help us test.") {
             onPick(DeviceType.Amazfit)
         }
@@ -695,9 +698,6 @@ private fun TypeStep(onPick: (DeviceType) -> Unit) {
         }
         TypeRow(Icons.Filled.Watch, DeviceType.Garmin.title, "Uses the watch's Broadcast Heart Rate. We'll show you how.") {
             onPick(DeviceType.Garmin)
-        }
-        TypeRow(Icons.Filled.Circle, DeviceType.Oura.title, "Take over your ring locally. Beta. This replaces the Oura app.") {
-            onPick(DeviceType.Oura)
         }
 
         WhoopFirstNote()
