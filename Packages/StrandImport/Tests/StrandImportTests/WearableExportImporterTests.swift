@@ -150,6 +150,116 @@ final class WearableExportImporterTests: XCTestCase {
         XCTAssertTrue(r.sleeps.isEmpty)
     }
 
+    func testOuraRealSchemaSemicolonPerCategoryCSVs() {
+        // The REAL Oura account export (issue #862): SEPARATE per-category CSVs, each `;`-delimited, each
+        // carrying ONLY its own category's columns (no combined daily-summary). Field names are taken
+        // verbatim from the real schema: sleepmodel (total_sleep_duration/.../average_breath/type),
+        // dailyreadiness (score + temperature_deviation + contributors), dailyactivity (steps/active_
+        // calories/equivalent_walking_distance), dailyspo2 (spo2_percentage), vo2max (vo2_max). A `deleted`
+        // sleep row, a women's-health file, and an unknown ring-config column must all be ignored.
+        let sleepCsv = """
+        id;average_breath;average_heart_rate;average_hrv;awake_time;bedtime_end;bedtime_start;day;deep_sleep_duration;efficiency;light_sleep_duration;lowest_heart_rate;rem_sleep_duration;total_sleep_duration;type
+        a1;14.2;54;65;900;2026-06-01T06:30:00+00:00;2026-05-31T23:15:00+00:00;2026-06-01;5400;92;13800;48;6000;25200;long_sleep
+        a2;0;0;0;0;2026-06-02T01:00:00+00:00;2026-06-02T00:30:00+00:00;2026-06-02;0;0;0;0;0;0;deleted
+        """
+        let readinessCsv = """
+        id;contributors;day;score;temperature_deviation;timestamp
+        b1;{};2026-06-01;81;-0.2;2026-06-01T07:00:00+00:00
+        """
+        let activityCsv = """
+        id;active_calories;day;equivalent_walking_distance;score;steps;total_calories
+        c1;520;2026-06-01;6200;88;8421;2450
+        """
+        let spo2Csv = """
+        id;breathing_disturbance_index;day;spo2_percentage
+        d1;3;2026-06-01;97.4
+        """
+        let vo2Csv = """
+        id;day;timestamp;vo2_max
+        e1;2026-06-01;2026-06-01T07:00:00+00:00;44.6
+        """
+        // A health type NOOP does not model + a device file: must be ignored gracefully, never an error.
+        let glucoseCsv = """
+        timestamp;value
+        2026-06-01T12:00:00+00:00;5.4
+        """
+        let ringCsv = """
+        id;color;design;firmware_version;hardware_type;set_up_at;size
+        f1;titanium;horizon;3.4.3;gen3;2026-01-01T00:00:00+00:00;10
+        """
+        let files: [String: Data] = [
+            "sleep.csv": bytes(sleepCsv),
+            "dailyreadiness.csv": bytes(readinessCsv),
+            "dailyactivity.csv": bytes(activityCsv),
+            "dailyspo2.csv": bytes(spo2Csv),
+            "vo2max.csv": bytes(vo2Csv),
+            "bloodglucose.csv": bytes(glucoseCsv),
+            "ringconfiguration.csv": bytes(ringCsv),
+        ]
+        XCTAssertEqual(WearableExportImporter.detectBrand(files), .oura)
+
+        let r = WearableExportImporter.parse(brand: .oura, files: files)
+        // The deleted sleep period is dropped; only the real night survives.
+        XCTAssertEqual(r.sleeps.count, 1)
+        let s = r.sleeps[0]
+        XCTAssertEqual(s.totalSleepMin!, 420, accuracy: 1e-6)   // 25200s → 420 min
+        XCTAssertEqual(s.deepMin!, 90, accuracy: 1e-6)
+        XCTAssertEqual(s.remMin!, 100, accuracy: 1e-6)
+        XCTAssertEqual(s.efficiencyPct!, 92, accuracy: 1e-6)
+        XCTAssertEqual(s.avgHrvMs!, 65, accuracy: 1e-6)
+        XCTAssertEqual(s.lowestHr, 48)
+        XCTAssertEqual(s.respRateBpm!, 14.2, accuracy: 1e-6)    // average_breath
+
+        let d = r.days.first { $0.day == "2026-06-01" }!
+        XCTAssertEqual(d.restingHr, 48)                          // sleep lowest HR ≈ resting (no RHR col)
+        XCTAssertEqual(d.skinTempDevC!, -0.2, accuracy: 1e-6)    // readiness temperature_deviation
+        XCTAssertEqual(d.readinessScore, 81)                     // bare `score` in the readiness CSV
+        XCTAssertNil(d.sleepScore)                               // no dailysleep CSV here → stays nil
+        XCTAssertEqual(d.steps, 8421)                            // activity CSV
+        XCTAssertEqual(d.activeKcal!, 520, accuracy: 1e-6)
+        XCTAssertEqual(d.totalKcal!, 2450, accuracy: 1e-6)
+        XCTAssertEqual(d.distanceM!, 6200, accuracy: 1e-6)       // equivalent_walking_distance (m)
+        XCTAssertEqual(d.spo2Pct!, 97.4, accuracy: 1e-6)         // dailyspo2 spo2_percentage
+        XCTAssertEqual(d.vo2max!, 44.6, accuracy: 1e-6)          // vo2max vo2_max → Fitness Age
+        // The deleted sleep row left NO fabricated sleep metrics on the day (durations came from the night).
+        XCTAssertEqual(d.totalSleepMin!, 420, accuracy: 1e-6)
+    }
+
+    func testOuraNestedSpo2AndVo2FromJSON() {
+        // The JSON variant carries SpO2 as a NESTED object spo2_percentage:{average} (not a flat number)
+        // and vo2max under `vo2_max`. Both must be picked up, plus a `deleted` sleep skipped (#862).
+        let json = """
+        {
+          "sleep": [
+            { "day": "2026-06-05", "type": "deleted", "bedtime_start": "2026-06-04T23:00:00+00:00",
+              "bedtime_end": "2026-06-05T06:00:00+00:00", "total_sleep_duration": 21600 } ],
+          "daily_spo2": [ { "day": "2026-06-05", "spo2_percentage": { "average": 96.8 } } ],
+          "vo2max":     [ { "day": "2026-06-05", "vo2_max": 41.2 } ],
+          "daily_activity": [ { "day": "2026-06-05", "steps": 5000,
+                                "equivalent_walking_distance": 3800 } ]
+        }
+        """
+        let r = WearableExportImporter.parse(brand: .oura, files: ["oura.json": bytes(json)])
+        XCTAssertEqual(r.sleeps.count, 0)                        // the only sleep was `deleted`
+        let d = r.days.first { $0.day == "2026-06-05" }!
+        XCTAssertEqual(d.spo2Pct!, 96.8, accuracy: 1e-6)         // nested spo2_percentage.average
+        XCTAssertEqual(d.vo2max!, 41.2, accuracy: 1e-6)
+        XCTAssertEqual(d.distanceM!, 3800, accuracy: 1e-6)       // equivalent_walking_distance
+        XCTAssertEqual(d.steps, 5000)
+    }
+
+    func testSemicolonDelimiterDetection() {
+        // The CSV reader sniffs the delimiter per file: a `;`-delimited header splits into real columns,
+        // a `,`-delimited one stays comma (so the WHOOP path is unchanged).
+        XCTAssertEqual(CSVTable.detectDelimiter("a;b;c\n1;2;3"), ";")
+        XCTAssertEqual(CSVTable.detectDelimiter("a,b,c\n1,2,3"), ",")
+        // A quoted value containing the other separator must not flip the detection.
+        XCTAssertEqual(CSVTable.detectDelimiter("\"x,y\";b;c\n1;2;3"), ";")
+        let t = CSVTable(text: "day;score\n2026-06-01;81")
+        XCTAssertEqual(t.normalizedHeaders, ["day", "score"])
+        XCTAssertEqual(t.rows.first?["score"], "81")
+    }
+
     func testImportErrorIsHonestNotOpaqueErreur4() {
         // The honest-message fix (#857): ImportError now conforms to LocalizedError, so the surfaced
         // localizedDescription is a real sentence, not the positional NSError "…ImportError erreur 4".

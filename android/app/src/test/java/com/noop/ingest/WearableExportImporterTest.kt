@@ -125,6 +125,111 @@ class WearableExportImporterTest {
         assertTrue(p.sleeps.isEmpty())
     }
 
+    @Test
+    fun ouraRealSchemaSemicolonPerCategoryCsvs() {
+        // The REAL Oura account export (issue #862): SEPARATE per-category CSVs, each `;`-delimited, each
+        // carrying ONLY its own category's columns. Field names verbatim from the real schema. A `deleted`
+        // sleep row, a women's-health file, and an unknown ring-config column are all ignored gracefully.
+        val sleepCsv = """
+            id;average_breath;average_heart_rate;average_hrv;awake_time;bedtime_end;bedtime_start;day;deep_sleep_duration;efficiency;light_sleep_duration;lowest_heart_rate;rem_sleep_duration;total_sleep_duration;type
+            a1;14.2;54;65;900;2026-06-01T06:30:00+00:00;2026-05-31T23:15:00+00:00;2026-06-01;5400;92;13800;48;6000;25200;long_sleep
+            a2;0;0;0;0;2026-06-02T01:00:00+00:00;2026-06-02T00:30:00+00:00;2026-06-02;0;0;0;0;0;0;deleted
+        """
+        val readinessCsv = """
+            id;contributors;day;score;temperature_deviation;timestamp
+            b1;{};2026-06-01;81;-0.2;2026-06-01T07:00:00+00:00
+        """
+        val activityCsv = """
+            id;active_calories;day;equivalent_walking_distance;score;steps;total_calories
+            c1;520;2026-06-01;6200;88;8421;2450
+        """
+        val spo2Csv = """
+            id;breathing_disturbance_index;day;spo2_percentage
+            d1;3;2026-06-01;97.4
+        """
+        val vo2Csv = """
+            id;day;timestamp;vo2_max
+            e1;2026-06-01;2026-06-01T07:00:00+00:00;44.6
+        """
+        val glucoseCsv = """
+            timestamp;value
+            2026-06-01T12:00:00+00:00;5.4
+        """
+        val ringCsv = """
+            id;color;design;firmware_version;hardware_type;set_up_at;size
+            f1;titanium;horizon;3.4.3;gen3;2026-01-01T00:00:00+00:00;10
+        """
+        val files = mapOf(
+            "sleep.csv" to bytes(sleepCsv),
+            "dailyreadiness.csv" to bytes(readinessCsv),
+            "dailyactivity.csv" to bytes(activityCsv),
+            "dailyspo2.csv" to bytes(spo2Csv),
+            "vo2max.csv" to bytes(vo2Csv),
+            "bloodglucose.csv" to bytes(glucoseCsv),
+            "ringconfiguration.csv" to bytes(ringCsv),
+        )
+        assertEquals(WearableExportImporter.Brand.OURA, WearableExportImporter.detectBrand(files))
+
+        val p = WearableExportImporter.parseOura(files)
+        // The deleted sleep period is dropped; only the real night survives.
+        assertEquals(1, p.sleeps.size)
+        val s = p.sleeps[0]
+        assertEquals(420.0, s.totalSleepMin!!, 1e-6)    // 25200s → 420 min
+        assertEquals(90.0, s.deepMin!!, 1e-6)
+        assertEquals(100.0, s.remMin!!, 1e-6)
+        assertEquals(92.0, s.efficiencyPct!!, 1e-6)
+        assertEquals(65.0, s.avgHrvMs!!, 1e-6)
+        assertEquals(48, s.lowestHr)
+
+        val d = p.days.first { it.day == "2026-06-01" }
+        assertEquals(48, d.restingHr)                    // sleep lowest HR ≈ resting (no RHR column)
+        assertEquals(-0.2, d.skinTempDevC!!, 1e-6)       // readiness temperature_deviation
+        assertEquals(81, d.readinessScore)               // bare `score` in the readiness CSV
+        assertNull(d.sleepScore)                         // no dailysleep CSV here → stays null
+        assertEquals(8421, d.steps)                      // activity CSV
+        assertEquals(520.0, d.activeKcal!!, 1e-6)
+        assertEquals(2450.0, d.totalKcal!!, 1e-6)
+        assertEquals(6200.0, d.distanceM!!, 1e-6)        // equivalent_walking_distance (m)
+        assertEquals(97.4, d.spo2Pct!!, 1e-6)            // dailyspo2 spo2_percentage
+        assertEquals(44.6, d.vo2max!!, 1e-6)             // vo2max vo2_max → Fitness Age
+    }
+
+    @Test
+    fun ouraNestedSpo2AndVo2FromJson() {
+        // JSON variant: SpO2 NESTED as spo2_percentage:{average} (not flat); vo2max under `vo2_max`; a
+        // `deleted` sleep skipped (#862).
+        val json = """
+            {
+              "sleep": [
+                { "day": "2026-06-05", "type": "deleted", "bedtime_start": "2026-06-04T23:00:00+00:00",
+                  "bedtime_end": "2026-06-05T06:00:00+00:00", "total_sleep_duration": 21600 } ],
+              "daily_spo2": [ { "day": "2026-06-05", "spo2_percentage": { "average": 96.8 } } ],
+              "vo2max":     [ { "day": "2026-06-05", "vo2_max": 41.2 } ],
+              "daily_activity": [ { "day": "2026-06-05", "steps": 5000,
+                                    "equivalent_walking_distance": 3800 } ]
+            }
+        """
+        val p = WearableExportImporter.parseOura(mapOf("oura.json" to bytes(json)))
+        assertEquals(0, p.sleeps.size)                   // the only sleep was `deleted`
+        val d = p.days.first { it.day == "2026-06-05" }
+        assertEquals(96.8, d.spo2Pct!!, 1e-6)            // nested spo2_percentage.average
+        assertEquals(41.2, d.vo2max!!, 1e-6)
+        assertEquals(3800.0, d.distanceM!!, 1e-6)        // equivalent_walking_distance
+        assertEquals(5000, d.steps)
+    }
+
+    @Test
+    fun semicolonDelimiterDetection() {
+        // The CSV reader sniffs the delimiter per file: `;` splits into real columns, `,` stays comma so
+        // the WHOOP path is unchanged. A quoted value with the other separator must not flip detection.
+        assertEquals(';', CsvTable.detectDelimiter("a;b;c\n1;2;3"))
+        assertEquals(',', CsvTable.detectDelimiter("a,b,c\n1,2,3"))
+        assertEquals(';', CsvTable.detectDelimiter("\"x,y\";b;c\n1;2;3"))
+        val t = CsvTable.fromText("day;score\n2026-06-01;81")
+        assertEquals(listOf("day", "score"), t.normalizedHeaders)
+        assertEquals("81", t.rows.first()["score"])
+    }
+
     // ---------------- Fitbit ----------------
 
     @Test

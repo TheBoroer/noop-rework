@@ -24,8 +24,13 @@ import java.util.zip.ZipInputStream
  *   (+ OuraExportParser / FitbitExportParser / GarminExportParser)
  * so the three brands decode the same on every platform.
  *
- *   • Oura   — the Account → Export Data JSON: sleep periods (stages/durations/HRV/RHR/breath),
- *              daily readiness (RHR, temperature deviation, score), daily activity (steps/calories).
+ *   • Oura   : the Account -> Export Data per-category files (CSV, `;`-delimited; or an older JSON
+ *              variant): sleep periods (durations/HRV/RHR/breath; a `deleted` type is skipped), daily
+ *              readiness (RHR, temperature deviation, score), daily activity (steps/calories/distance),
+ *              daily SpO2 (`spo2_percentage.average`), VO2max (`vo2_max`). Field names verified against a
+ *              REAL Oura export schema (issue #862). The many health types NOOP doesn't model
+ *              (bloodglucose, contraception, medication, ring config, raw sample streams, ...) are skipped
+ *              gracefully, since an unknown category/column is ignored, never an error.
  *   • Fitbit — Google Takeout → Fitbit JSON: per-day sleep-*.json / resting_heart_rate-*.json /
  *              steps-*.json.
  *   • Garmin — Garmin Connect "Export Your Data" (GDPR) ZIP wellness JSON: *_sleepData.json + daily
@@ -57,10 +62,17 @@ object WearableExportImporter {
 
     // Oura CSV detection (#857). Header keys are already HeaderNorm-normalized.
     private val OURA_CSV_DATE_KEYS = setOf("date", "day", "summary_date", "calendar_date")
+    // Columns that mark a CSV as an Oura wellness export. Covers BOTH a combined daily-summary CSV and
+    // Oura's REAL per-category CSVs, each carrying only its own category's columns (#862): readiness →
+    // `temperature_deviation`, activity → `steps`/`active_calories`, vo2max → `vo2_max`, spo2 →
+    // `spo2_percentage`, sleep period → `total_sleep_duration`.
     private val OURA_CSV_SIGNAL_COLUMNS = setOf(
         "total_sleep_duration", "rem_sleep_duration", "deep_sleep_duration", "light_sleep_duration",
-        "sleep_efficiency", "average_hrv", "average_resting_heart_rate", "lowest_resting_heart_rate",
+        "sleep_efficiency", "efficiency", "average_hrv", "average_breath",
+        "average_resting_heart_rate", "lowest_resting_heart_rate", "lowest_heart_rate",
         "readiness_score", "sleep_score", "respiratory_rate", "temperature_deviation",
+        "active_calories", "total_calories", "equivalent_walking_distance",
+        "vo2_max", "spo2_percentage", "breathing_disturbance_index", "contributors",
     )
     // Filename fragments that mark an Oura per-category CSV export (lowercased, substring match).
     private val OURA_CSV_FILENAMES = listOf("heartrate", "heart_rate", "readiness", "sleep_periods")
@@ -134,7 +146,7 @@ object WearableExportImporter {
     internal class DayAcc(val day: String) {
         var steps: Int? = null; var distanceM: Double? = null; var activeKcal: Double? = null; var totalKcal: Double? = null
         var restingHr: Int? = null; var avgHrvMs: Double? = null; var skinTempDevC: Double? = null
-        var spo2Pct: Double? = null; var avgStress: Int? = null
+        var spo2Pct: Double? = null; var avgStress: Int? = null; var vo2max: Double? = null
         var totalSleepMin: Double? = null; var deepMin: Double? = null; var lightMin: Double? = null
         var remMin: Double? = null; var awakeMin: Double? = null; var efficiencyPct: Double? = null
         var readinessScore: Int? = null; var sleepScore: Int? = null
@@ -257,6 +269,28 @@ object WearableExportImporter {
                     d.steps = a.posInt("steps") ?: d.steps
                     d.activeKcal = a.posDbl("active_calories") ?: d.activeKcal
                     d.totalKcal = a.posDbl("total_calories") ?: d.totalKcal
+                    // Oura reports walking-equivalent distance in METRES (no GPS path-distance).
+                    d.distanceM = a.posDbl("equivalent_walking_distance") ?: d.distanceM
+                }
+            }
+            // Daily SpO2: the value is NESTED, spo2_percentage = { "average": float }, not a flat number,
+            // so reading it flat (the old assumption) would always miss it (#862).
+            (categoryArray(root, "daily_spo2") ?: categoryArray(root, "spo2"))?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val key = o.strOpt("day") ?: continue
+                    val d = day(key)
+                    val nested = o.optJSONObject("spo2_percentage")?.posDbl("average")
+                    val flat = o.posDbl("spo2_percentage") ?: o.posDbl("average")
+                    (nested ?: flat)?.let { d.spo2Pct = d.spo2Pct ?: it }
+                }
+            }
+            // VO2max → mL/kg/min (Oura key `vo2_max`). Feeds Fitness Age, same as Apple Health VO2max.
+            (categoryArray(root, "vo2max") ?: categoryArray(root, "vo2_max"))?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val v = arr.optJSONObject(i) ?: continue
+                    val key = v.strOpt("day") ?: continue
+                    day(key).let { it.vo2max = it.vo2max ?: (v.posDbl("vo2_max") ?: v.posDbl("vo2max")) }
                 }
             }
         }
@@ -287,6 +321,9 @@ object WearableExportImporter {
             for (cells in table.rows) {
                 val rawDay = cells.cell("date", "day", "summary_date", "calendar_date") ?: continue
                 val key = normalizeDayKey(rawDay)
+                // A `deleted` sleep-period row (Oura's `type` enum) is a night the user removed, so skip it
+                // entirely so it neither folds onto the day nor becomes a session (#862).
+                if (cells.cell("type")?.lowercase() == "deleted") continue
                 val d = byDay.getOrPut(key) { DayAcc(key) }
 
                 fun minutes(vararg keys: String): Double? {
@@ -311,13 +348,33 @@ object WearableExportImporter {
                 if (rhr != null && rhr > 0 && d.restingHr == null) d.restingHr = rhr.toInt()
                 cells.double("average_hrv", "hrv")?.takeIf { it > 0 }?.let { d.avgHrvMs = d.avgHrvMs ?: it }
                 cells.double("temperature_deviation", "skin_temperature_deviation")?.let { d.skinTempDevC = d.skinTempDevC ?: it }
-                cells.double("spo2", "blood_oxygen", "average_spo2")?.takeIf { it > 0 }?.let { d.spo2Pct = d.spo2Pct ?: it }
+                // SpO2: the real `dailyspo2` CSV column is `spo2_percentage` (the average %); keep the older
+                // flat aliases too for a combined-summary CSV (#862).
+                cells.double("spo2_percentage", "spo2", "blood_oxygen", "average_spo2")?.takeIf { it > 0 }?.let { d.spo2Pct = d.spo2Pct ?: it }
+                // VO2max: the real `vo2max` CSV column is `vo2_max` (mL/kg/min) → feeds Fitness Age.
+                cells.double("vo2_max", "vo2max")?.takeIf { it > 0 }?.let { d.vo2max = d.vo2max ?: it }
                 cells.double("steps")?.takeIf { it >= 0 }?.let { d.steps = d.steps ?: it.toInt() }
-                cells.double("activity_burn", "active_calories", "active_burn")?.takeIf { it > 0 }?.let { d.activeKcal = d.activeKcal ?: it }
-                cells.double("total_burn", "total_calories")?.takeIf { it > 0 }?.let { d.totalKcal = d.totalKcal ?: it }
-                // Oura's OWN scores -> REFERENCE only.
+                cells.double("active_calories", "activity_burn", "active_burn")?.takeIf { it > 0 }?.let { d.activeKcal = d.activeKcal ?: it }
+                cells.double("total_calories", "total_burn")?.takeIf { it > 0 }?.let { d.totalKcal = d.totalKcal ?: it }
+                // Oura's walking-equivalent distance (metres); no GPS path distance in the export.
+                cells.double("equivalent_walking_distance", "distance_m")?.takeIf { it > 0 }?.let { d.distanceM = d.distanceM ?: it }
+                // Oura's OWN scores -> REFERENCE only. The combined-summary CSV labels them `readiness_score`
+                // / `sleep_score`; the REAL per-category CSVs use a bare `score`. Both `dailyreadiness` and
+                // `dailysleep` carry a `contributors` column, so that alone can't tell them apart; only
+                // `dailyreadiness` carries `temperature_deviation`. So: temperature_deviation present ->
+                // readiness; else contributors present with no sleep durations / steps -> sleep score; an
+                // activity-score row (bare `score` with `steps`) is left out rather than mislabelled (#862).
                 cells.double("readiness_score", "readiness")?.takeIf { it > 0 }?.let { d.readinessScore = d.readinessScore ?: it.toInt() }
                 cells.double("sleep_score")?.takeIf { it > 0 }?.let { d.sleepScore = d.sleepScore ?: it.toInt() }
+                cells.double("score")?.takeIf { it > 0 }?.let { bare ->
+                    val isReadiness = cells.cell("temperature_deviation") != null
+                    val isSleepScore = !isReadiness && total == null &&
+                        cells.cell("steps") == null && cells.cell("contributors") != null
+                    when {
+                        isReadiness -> d.readinessScore = d.readinessScore ?: bare.toInt()
+                        isSleepScore -> d.sleepScore = d.sleepScore ?: bare.toInt()
+                    }
+                }
 
                 // A bedtime window (when the CSV carries one) lands the night on the Sleep tab too.
                 val start = WhoopTime.parseIsoWithOffsetEpochSeconds(cells.cell("bedtime_start", "sleep_start"))
@@ -357,6 +414,9 @@ object WearableExportImporter {
     }
 
     private fun ouraSleep(s: JSONObject): SleepAcc? {
+        // Skip a `deleted` period (Oura's `type` enum marks user-deleted sleeps); folding it would count a
+        // night the user removed. Any other type (`long_sleep`/`short_sleep`/missing) is kept (#862).
+        if (s.strOpt("type")?.lowercase() == "deleted") return null
         val start = WhoopTime.parseEpochSeconds(s.strOpt("bedtime_start"), 0) ?: return null
         val end = WhoopTime.parseEpochSeconds(s.strOpt("bedtime_end"), 0) ?: return null
         if (end <= start) return null
@@ -599,6 +659,7 @@ object WearableExportImporter {
             add(d.day, "energy_kcal", d.activeKcal); add(d.day, "total_kcal", d.totalKcal)
             add(d.day, "rhr", d.restingHr?.toDouble()); add(d.day, "hrv", d.avgHrvMs)
             add(d.day, "skin_temp_dev_c", d.skinTempDevC); add(d.day, "spo2", d.spo2Pct)
+            add(d.day, "vo2max", d.vo2max)
             add(d.day, "stress", d.avgStress?.toDouble())
             add(d.day, "sleep_total_min", d.totalSleepMin); add(d.day, "sleep_deep_min", d.deepMin)
             add(d.day, "sleep_light_min", d.lightMin); add(d.day, "sleep_rem_min", d.remMin)

@@ -1,19 +1,29 @@
 import Foundation
 
-// MARK: - Oura account-export JSON parser
+// MARK: - Oura account-export parser
 //
-// Oura's Account → Export Data download is a single JSON document keyed by category. The categories
-// this lane reads (documented Oura account-export / API-V2 shapes; NOOP's own clean parser):
+// Oura's Account → Export Data download is a set of per-category files (one CSV per type, `;`-delimited;
+// some older / API-shaped exports are a single JSON document keyed by category). The categories this lane
+// reads, with field names verified against a REAL Oura export schema (issue #862, schema by a reporter):
 //
-//   "sleep"            — sleep PERIODS (one per nap/main sleep): bedtime_start / bedtime_end (ISO8601),
-//                        day, total_sleep_duration / deep/light/rem_sleep_duration / awake_time (SECONDS),
-//                        efficiency (%), average_heart_rate, lowest_heart_rate, average_hrv (rMSSD ms),
-//                        average_breath. Oura gives stage DURATIONS, not a per-segment hypnogram, so the
-//                        session carries the breakdown without a stage timeline (we never fake one).
-//   "daily_readiness"  — day, score (Oura's OWN readiness — REFERENCE only, never NOOP Charge),
-//                        temperature_deviation (°C), contributors.resting_heart_rate.
-//   "daily_activity"   — day, steps, active_calories, total_calories.
-//   "daily_sleep"      — day, score (sleep score — reference only).
+//   sleep period (sleepmodel) : bedtime_start / bedtime_end (ISO8601), day, total_sleep_duration /
+//                        deep_sleep_duration / light_sleep_duration / rem_sleep_duration / awake_time
+//                        (SECONDS), efficiency (0-100), average_heart_rate, lowest_heart_rate,
+//                        average_hrv (rMSSD ms), average_breath, type (`long_sleep`/`short_sleep`/
+//                        `deleted`, where a `deleted` period is skipped). Oura gives stage DURATIONS, not
+//                        a per-segment hypnogram, so the session carries the breakdown without a stage
+//                        timeline (we never fake one).
+//   daily_readiness    : day, score (Oura's OWN readiness, REFERENCE only, never NOOP Charge),
+//                        temperature_deviation (°C from baseline), contributors.resting_heart_rate.
+//   daily_activity     : day, steps, active_calories, total_calories, equivalent_walking_distance (m).
+//   daily_sleep        : day, score (sleep score, reference only).
+//   daily_spo2         : day, spo2_percentage.average (%); note the value is NESTED under that key, not
+//                        a flat number (verified against the real schema).
+//   vo2max             : day, vo2_max (mL/kg/min); feeds NOOP's Fitness Age, alongside Apple Health's.
+//
+// The MANY other files in a real export (bloodglucose, contraception, medication, ring config, raw
+// heart-rate / temperature sample streams, etc.) are health types NOOP doesn't model: they are skipped
+// gracefully, since an unknown category or column is ignored, never an error.
 //
 // Some exports nest each category as `{ "data": [ ... ] }`; we accept both `[...]` and `{data:[...]}`.
 
@@ -82,13 +92,36 @@ enum OuraExportParser {
                 byDay[key] = row
             }
 
-            // Daily activity → steps + calories.
+            // Daily activity → steps + calories + walking-equivalent distance.
             for a in categoryArray(root, "daily_activity") ?? categoryArray(root, "activity") ?? [] {
                 guard let key = WearableJSON.str(a, "day") else { continue }
                 var row = day(key)
                 row.steps = WearableJSON.posInt(a, "steps") ?? row.steps
                 row.activeKcal = WearableJSON.posDbl(a, "active_calories") ?? row.activeKcal
                 row.totalKcal = WearableJSON.posDbl(a, "total_calories") ?? row.totalKcal
+                // Oura reports walking-equivalent distance in METRES (no GPS path-distance in the export).
+                row.distanceM = WearableJSON.posDbl(a, "equivalent_walking_distance") ?? row.distanceM
+                byDay[key] = row
+            }
+
+            // Daily SpO2 -> the average. The value is NESTED: spo2_percentage = { "average": float }, not a
+            // flat number, so reading it flat (the old assumption) would always miss it (#862).
+            for o in categoryArray(root, "daily_spo2") ?? categoryArray(root, "spo2") ?? [] {
+                guard let key = WearableJSON.str(o, "day") else { continue }
+                var row = day(key)
+                if let pct = o["spo2_percentage"] as? [String: Any], let avg = WearableJSON.posDbl(pct, "average") {
+                    row.spo2Pct = row.spo2Pct ?? avg
+                } else if let avg = WearableJSON.posDbl(o, "spo2_percentage") ?? WearableJSON.posDbl(o, "average") {
+                    row.spo2Pct = row.spo2Pct ?? avg   // tolerate a flattened variant too
+                }
+                byDay[key] = row
+            }
+
+            // VO2max → mL/kg/min (Oura key is `vo2_max`). Feeds NOOP's Fitness Age, same as Apple Health.
+            for v in categoryArray(root, "vo2max") ?? categoryArray(root, "vo2_max") ?? [] {
+                guard let key = WearableJSON.str(v, "day") else { continue }
+                var row = day(key)
+                row.vo2max = WearableJSON.posDbl(v, "vo2_max") ?? WearableJSON.posDbl(v, "vo2max") ?? row.vo2max
                 byDay[key] = row
             }
         }
@@ -108,7 +141,9 @@ enum OuraExportParser {
             row.avgHrvMs = row.avgHrvMs ?? d.avgHrvMs
             row.skinTempDevC = row.skinTempDevC ?? d.skinTempDevC
             row.spo2Pct = row.spo2Pct ?? d.spo2Pct
+            row.vo2max = row.vo2max ?? d.vo2max
             row.steps = row.steps ?? d.steps
+            row.distanceM = row.distanceM ?? d.distanceM
             row.activeKcal = row.activeKcal ?? d.activeKcal
             row.totalKcal = row.totalKcal ?? d.totalKcal
             row.readinessScore = row.readinessScore ?? d.readinessScore
@@ -152,11 +187,20 @@ enum OuraExportParser {
     /// Header keys (already HeaderNorm-normalized) that name the day column in an Oura CSV.
     private static let dateKeys: Set<String> = ["date", "day", "summary_date", "calendar_date"]
 
-    /// Normalized columns that mark a CSV as an Oura DAILY summary (vs a raw `heartrate.csv` sample file).
+    /// Normalized columns that mark a CSV as an Oura wellness export (vs a raw `heartrate.csv`/temperature
+    /// sample file). Covers BOTH a combined daily-summary CSV and Oura's REAL per-category CSVs, each of
+    /// which carries only its own category's columns (#862): a `dailyreadiness` CSV's signal is
+    /// `temperature_deviation`, a `dailyactivity` CSV's is `steps`/`active_calories`, a `vo2max` CSV's is
+    /// `vo2_max`, a `dailyspo2` CSV's is `spo2_percentage`, a `sleepmodel` CSV's is `total_sleep_duration`.
     private static let ouraCSVSignalColumns: Set<String> = [
+        // sleep period / combined-summary durations
         "total_sleep_duration", "rem_sleep_duration", "deep_sleep_duration", "light_sleep_duration",
-        "sleep_efficiency", "average_hrv", "average_resting_heart_rate", "lowest_resting_heart_rate",
+        "sleep_efficiency", "efficiency", "average_hrv", "average_breath",
+        "average_resting_heart_rate", "lowest_resting_heart_rate", "lowest_heart_rate",
+        // per-category signals (real export, one file per type)
         "readiness_score", "sleep_score", "respiratory_rate", "temperature_deviation",
+        "active_calories", "total_calories", "equivalent_walking_distance",
+        "vo2_max", "spo2_percentage", "breathing_disturbance_index", "contributors",
     ]
 
     /// Parse Oura CSV files (daily summaries) into the same day/sleep model the JSON path produces. A CSV
@@ -171,6 +215,10 @@ enum OuraExportParser {
             for cells in table.rows {
                 guard let key = cells.cell("date", "day", "summary_date", "calendar_date")
                     .map(normalizeDayKey) else { continue }
+
+                // A `deleted` sleep-period row (Oura's `type` enum) is a night the user removed, so skip it
+                // entirely so it neither folds onto the day nor becomes a session (#862).
+                if cells.cell("type")?.lowercased() == "deleted" { continue }
 
                 var row = byDay[key] ?? WearableDailyRow(day: key)
 
@@ -200,21 +248,46 @@ enum OuraExportParser {
                 if let temp = cells.double("temperature_deviation", "skin_temperature_deviation") {
                     row.skinTempDevC = row.skinTempDevC ?? temp
                 }
-                if let spo2 = cells.double("spo2", "blood_oxygen", "average_spo2"), spo2 > 0 {
+                // SpO2: the real `dailyspo2` CSV column is `spo2_percentage` (the average %). The nested
+                // JSON object flattens to that one numeric cell in the CSV, so reading it as a number works;
+                // the older flat aliases are kept for a combined-summary CSV (#862).
+                if let spo2 = cells.double("spo2_percentage", "spo2", "blood_oxygen", "average_spo2"), spo2 > 0 {
                     row.spo2Pct = row.spo2Pct ?? spo2
                 }
+                // VO2max: the real `vo2max` CSV column is `vo2_max` (mL/kg/min) → feeds Fitness Age.
+                if let v = cells.double("vo2_max", "vo2max"), v > 0 { row.vo2max = row.vo2max ?? v }
                 if let steps = cells.double("steps"), steps >= 0 { row.steps = row.steps ?? Int(steps) }
-                if let kcal = cells.double("activity_burn", "active_calories", "active_burn"), kcal > 0 {
+                if let kcal = cells.double("active_calories", "activity_burn", "active_burn"), kcal > 0 {
                     row.activeKcal = row.activeKcal ?? kcal
                 }
-                if let total = cells.double("total_burn", "total_calories"), total > 0 {
+                if let total = cells.double("total_calories", "total_burn"), total > 0 {
                     row.totalKcal = row.totalKcal ?? total
                 }
-                // Oura's OWN scores → REFERENCE only.
+                // Oura's walking-equivalent distance (metres); no GPS path distance in the export.
+                if let dist = cells.double("equivalent_walking_distance", "distance_m"), dist > 0 {
+                    row.distanceM = row.distanceM ?? dist
+                }
+                // Oura's OWN scores -> REFERENCE only. The combined-summary CSV labels them `readiness_score`
+                // / `sleep_score`; the REAL per-category CSVs use a bare `score`, so disambiguate by which
+                // category this row is. Both `dailyreadiness` and `dailysleep` carry a `contributors`
+                // column, so that alone can't tell them apart; only `dailyreadiness` carries
+                // `temperature_deviation`. So: temperature_deviation present -> readiness; else
+                // contributors present with no sleep durations / steps -> sleep score; an activity-score row
+                // (bare `score` with `steps`) is left out rather than mislabelled (#862).
                 if let r = cells.double("readiness_score", "readiness"), r > 0 {
                     row.readinessScore = row.readinessScore ?? Int(r)
                 }
                 if let s = cells.double("sleep_score"), s > 0 { row.sleepScore = row.sleepScore ?? Int(s) }
+                if let bare = cells.double("score"), bare > 0 {
+                    let isReadiness = cells.cell("temperature_deviation") != nil
+                    let isSleepScore = !isReadiness && total == nil
+                        && cells.cell("steps") == nil && cells.cell("contributors") != nil
+                    if isReadiness {
+                        row.readinessScore = row.readinessScore ?? Int(bare)
+                    } else if isSleepScore {
+                        row.sleepScore = row.sleepScore ?? Int(bare)
+                    }
+                }
 
                 byDay[key] = row
 
@@ -260,6 +333,9 @@ enum OuraExportParser {
     }
 
     private static func sleepSession(_ s: [String: Any]) -> WearableSleepSession? {
+        // Skip a `deleted` period (Oura's `type` enum marks user-deleted sleeps); folding it would count
+        // a night the user removed. Any other type (`long_sleep`/`short_sleep`/missing) is kept (#862).
+        if let type = WearableJSON.str(s, "type")?.lowercased(), type == "deleted" { return nil }
         guard let start = WhoopTime.parse(WearableJSON.str(s, "bedtime_start"), offsetMinutes: 0),
               let end = WhoopTime.parse(WearableJSON.str(s, "bedtime_end"), offsetMinutes: 0),
               end > start else { return nil }
