@@ -193,10 +193,10 @@ public struct YearHeatStrip: View {
     private var axSummary: String {
         let scored = days.compactMap { $0.score }
         guard let lo = scored.min(), let hi = scored.max() else {
-            return String(localized: "Recovery calendar, no data")
+            return String(localized: "Recovery calendar, no data", bundle: .module)
         }
         let avg = scored.reduce(0, +) / Double(scored.count)
-        return String(localized: "Recovery calendar, \(scored.count) days, average \(Int(avg.rounded())), low \(Int(lo.rounded())), high \(Int(hi.rounded()))")
+        return String(localized: "Recovery calendar, \(scored.count) days, average \(Int(avg.rounded())), low \(Int(lo.rounded())), high \(Int(hi.rounded()))", bundle: .module)
     }
 
     // MARK: Grid geometry

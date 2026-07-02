@@ -363,15 +363,24 @@ public struct InsightCard: View {
 public struct SegmentedPillControl<T: Hashable>: View {
     let items: [T]
     let label: (T) -> String
+    /// Per-segment availability (#943): a disabled segment stays visible (so users learn the
+    /// option exists) but renders extra-dim and ignores taps; VoiceOver announces it dimmed.
+    /// Defaults to everything enabled; ADDED additively, no existing call site touched.
+    let isEnabled: (T) -> Bool
     @Binding var selection: T
     @Environment(\.colorScheme) private var scheme
     public init(_ items: [T], selection: Binding<T>, label: @escaping (T) -> String) {
-        self.items = items; self._selection = selection; self.label = label
+        self.init(items, selection: selection, isEnabled: { _ in true }, label: label)
+    }
+    public init(_ items: [T], selection: Binding<T>, isEnabled: @escaping (T) -> Bool,
+                label: @escaping (T) -> String) {
+        self.items = items; self._selection = selection; self.isEnabled = isEnabled; self.label = label
     }
     public var body: some View {
         HStack(spacing: 4) {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 let sel = item == selection
+                let enabled = isEnabled(item)
                 Button {
                     guard selection != item else { return }   // re-tapping the active segment stays silent
                     StrandHaptic.selection.play()
@@ -382,8 +391,9 @@ public struct SegmentedPillControl<T: Hashable>: View {
                         // Active segment is SELECTION CHROME, so it follows the accent: on dark a
                         // gold-gradient pill with gold-deep ink; on light a flat blue accent pill with
                         // white ink (so the light theme's selection matches its blue chrome, not gold).
+                        // Disabled segments drop to a fainter tertiary so the lock reads at a glance.
                         .foregroundStyle(sel ? (scheme == .light ? Color.white : StrandPalette.textPrimary)
-                                             : StrandPalette.textTertiary)
+                                             : StrandPalette.textTertiary.opacity(enabled ? 1 : 0.35))
                         // Fill the segment height so the selected pill has EQUAL margins to the track
                         // on every side. (The old compact pill inside a taller 44pt touch frame left
                         // more vertical margin than horizontal — it read as off-centre.)
@@ -402,6 +412,7 @@ public struct SegmentedPillControl<T: Hashable>: View {
                 }
                 .buttonStyle(.plain)
                 .frame(height: 36)   // segment height; the pill fills it for an even inset
+                .disabled(!enabled)
                 // Announce the active range to VoiceOver and give a non-colour cue.
                 .accessibilityAddTraits(sel ? .isSelected : [])
             }

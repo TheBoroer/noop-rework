@@ -327,6 +327,9 @@ targets:
     platform: watchOS
     deploymentTarget: "10.0"
     sources:
+      # Includes NOOPWatch/Localizable.xcstrings, the watch app's OWN string catalog (the watch cannot
+      # read the phone app's Strand/Resources catalog; a target only ships the catalogs in its sources).
+      # Shared StrandDesign strings localize via the package's own catalog + bundle: .module.
       - path: NOOPWatch
         excludes:
           - "Info.plist"
@@ -381,6 +384,8 @@ targets:
     platform: watchOS
     deploymentTarget: "10.0"
     sources:
+      # Includes NOOPWatchComplications/Localizable.xcstrings: the complication is its own bundle and
+      # needs its own catalog (it cannot read the watch app's, let alone the phone's).
       - path: NOOPWatchComplications
         excludes:
           - "Info.plist"
@@ -408,6 +413,9 @@ targets:
         PRODUCT_NAME: NOOPWatchComplications
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "4"
+        # Parity with the other UI targets: auto-extract LocalizedStringKey / String(localized:) usages
+        # into this target's Localizable.xcstrings on build.
+        SWIFT_EMIT_LOC_STRINGS: YES
     dependencies:
       - package: StrandDesign
 

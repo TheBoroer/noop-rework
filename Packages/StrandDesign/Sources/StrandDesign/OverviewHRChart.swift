@@ -441,20 +441,20 @@ public struct OverviewHRChart: View {
     /// chart shows visually, so the collapsed element still conveys the whole picture (cf. the Android
     /// OverviewHRChart semantics).
     private var accessibilitySummary: String {
-        guard !points.isEmpty else { return String(localized: "No heart-rate data") }
+        guard !points.isEmpty else { return String(localized: "No heart-rate data", bundle: .module) }
         let values = points.map(\.value)
         let lo = values.min() ?? valueRange.lowerBound
         let hi = values.max() ?? valueRange.upperBound
-        var parts = [String(localized: "\(points.count) readings"),
-                     String(localized: "average \(valueFormat(averageValue)) bpm"),
-                     String(localized: "range \(valueFormat(lo)) to \(valueFormat(hi))")]
+        var parts = [String(localized: "\(points.count) readings", bundle: .module),
+                     String(localized: "average \(valueFormat(averageValue)) bpm", bundle: .module),
+                     String(localized: "range \(valueFormat(lo)) to \(valueFormat(hi))", bundle: .module)]
         if let sleep {
-            parts.append(String(localized: "asleep \(Self.hoursMinutes(sleep.end.timeIntervalSince(sleep.start)))"))
+            parts.append(String(localized: "asleep \(Self.hoursMinutes(sleep.end.timeIntervalSince(sleep.start)))", bundle: .module))
         }
         if let recovery { parts.append(recovery.label) }
         if let effort { parts.append(effort.label) }
         if !workouts.isEmpty {
-            parts.append(workouts.count == 1 ? String(localized: "1 workout") : String(localized: "\(workouts.count) workouts"))
+            parts.append(workouts.count == 1 ? String(localized: "1 workout", bundle: .module) : String(localized: "\(workouts.count) workouts", bundle: .module))
         }
         return parts.joined(separator: ", ")
     }

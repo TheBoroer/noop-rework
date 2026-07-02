@@ -101,7 +101,7 @@ public struct Hypnogram: View {
     /// to the #707 OOM). Collapsing to one node keeps a clear screen-reader read-out at O(1) node cost.
     /// e.g. "Sleep stages, 2 hours deep, 1 hour 30 minutes REM, 3 hours light, 20 minutes awake".
     private var axSummary: String {
-        guard !intervals.isEmpty else { return String(localized: "Sleep stages, no data") }
+        guard !intervals.isEmpty else { return String(localized: "Sleep stages, no data", bundle: .module) }
         // Sum duration per stage in the natural read order (deep · REM · light · awake), naming only the
         // stages that actually occur so a night with no awake time doesn't read "0 minutes awake".
         var parts: [String] = []
@@ -109,8 +109,8 @@ public struct Hypnogram: View {
             let total = intervals.filter { $0.stage == stage }.reduce(0.0) { $0 + $1.duration }
             if total > 0 { parts.append("\(Hypnogram.durationPhrase(total)) \(stage.label.lowercased())") }
         }
-        return parts.isEmpty ? String(localized: "Sleep stages, no data")
-                             : String(localized: "Sleep stages, \(parts.joined(separator: ", "))")
+        return parts.isEmpty ? String(localized: "Sleep stages, no data", bundle: .module)
+                             : String(localized: "Sleep stages, \(parts.joined(separator: ", "))", bundle: .module)
     }
 
     /// A spoken duration phrase ("2 hours 5 minutes", "45 minutes", "1 hour") for a seconds interval.
@@ -119,8 +119,8 @@ public struct Hypnogram: View {
         let h = total / 60
         let m = total % 60
         // Whole-phrase per unit (no "s"-suffix stitching) so each key can carry its own plural rule.
-        func hours(_ n: Int) -> String { n == 1 ? String(localized: "1 hour") : String(localized: "\(n) hours") }
-        func minutes(_ n: Int) -> String { n == 1 ? String(localized: "1 minute") : String(localized: "\(n) minutes") }
+        func hours(_ n: Int) -> String { n == 1 ? String(localized: "1 hour", bundle: .module) : String(localized: "\(n) hours", bundle: .module) }
+        func minutes(_ n: Int) -> String { n == 1 ? String(localized: "1 minute", bundle: .module) : String(localized: "\(n) minutes", bundle: .module) }
         if h > 0 && m > 0 { return "\(hours(h)) \(minutes(m))" }
         if h > 0 { return hours(h) }
         return minutes(max(m, 1))

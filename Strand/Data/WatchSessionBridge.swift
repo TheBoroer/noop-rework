@@ -180,21 +180,23 @@ final class WatchSessionBridge: NSObject, ObservableObject {
 
     /// A one line sleep summary for the glance, formatted on the phone (the watch never recomputes it).
     /// "7h 12m · 81%" when both are present; just the duration or just the efficiency when only one is;
-    /// empty when neither is known (the watch then hides the line).
+    /// empty when neither is known (the watch then hides the line). Formatted through the app's string
+    /// catalog ("%lldh %lldm" / "%lld%%", the same keys the Sleep screens use) so the wrist shows the
+    /// phone's language, not hardcoded English.
     static func sleepSummary(for day: DailyMetric?) -> String {
         guard let day else { return "" }
         var parts: [String] = []
         if let mins = day.totalSleepMin, mins > 0 {
             let h = Int(mins) / 60
             let m = Int(mins) % 60
-            parts.append("\(h)h \(m)m")
+            parts.append(String(localized: "\(h)h \(m)m"))
         }
         if let eff = day.efficiency, eff > 0 {
             // efficiency is stored as a fraction in [0,1] in some paths and as a percent in others; the
             // cached DailyMetric carries the percent-style value the Today tile reads, so render it as a
             // whole percent and clamp defensively.
             let pct = eff <= 1.0 ? eff * 100 : eff
-            parts.append("\(Int(pct.rounded()))%")
+            parts.append(String(localized: "\(Int(pct.rounded()))%"))
         }
         return parts.joined(separator: " · ")
     }

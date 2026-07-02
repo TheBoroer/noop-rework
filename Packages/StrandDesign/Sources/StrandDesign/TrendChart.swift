@@ -95,11 +95,11 @@ public struct TrendChart: View {
         // VoiceOver one-liner: count + mean + range — formatted with the SAME valueFormat the
         // tooltip uses, so units match. Computed once here, not per render.
         if sorted.isEmpty {
-            self.a11ySummary = String(localized: "No data")
+            self.a11ySummary = String(localized: "No data", bundle: .module)
         } else {
             let vals = sorted.map(\.value)
             let lo = vals.min()!, hi = vals.max()!
-            self.a11ySummary = String(localized: "\(sorted.count) points, mean \(valueFormat(avg)), range \(valueFormat(lo)) to \(valueFormat(hi))")
+            self.a11ySummary = String(localized: "\(sorted.count) points, mean \(valueFormat(avg)), range \(valueFormat(lo)) to \(valueFormat(hi))", bundle: .module)
         }
     }
 
