@@ -126,7 +126,7 @@ from **their own device**, on a machine **they** control.
 | `shared/` | Kotlin Multiplatform logic: protocol, analytics, data (Room), oura, ingest, update. `commonMain` is platform-free; `androidMain` holds the not-yet-hoisted remainder. |
 | `android/` | Android app (Jetpack Compose UI, BLE service, alarms, widgets) depending on `shared`. |
 | `Strand*`, `NOOPWatch*`, `Packages/` | Original Swift apps, untouched until Phase 2/3 of the migration. |
-| `docs/superpowers/specs/` | Design specs. Start with the 2026-07-09 unification design. |
+| `docs/superpowers/specs/` | Design specs. Start with the 2026-07-09 unification design. The upstream cherry-pick protocol lives in [`docs/UPSTREAM.md`](docs/UPSTREAM.md). |
 
 Rule of thumb: OS API code lives in the platform app or `androidMain`/`iosMain`; decisions, calculations, and byte parsing live in `commonMain`.
 

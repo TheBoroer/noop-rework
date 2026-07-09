@@ -52,7 +52,11 @@ object Whoop5Config {
     )
 
     /** The 40-byte SET_CONFIG payload body: flag name as ASCII NUL-padded to 32 bytes, value byte at
-     *  offset 32, then 7 zero bytes. (Mirrors judes.club `setConfigPayload(name, value)`.) */
+     *  offset 32, then 7 zero bytes. (Mirrors judes.club `setConfigPayload(name, value)`.) Encoding
+     *  is UTF-8 (Kotlin's default for [String.encodeToByteArray]); current callers only ever pass
+     *  ASCII flag names, so this is byte-identical to ASCII, but a non-ASCII name would emit
+     *  multi-byte UTF-8 sequences into the fixed 32-byte NUL-padded field instead of one byte per
+     *  character. */
     fun payloadBody(name: String, value: Int): ByteArray {
         val p = ByteArray(40)
         val bytes = name.encodeToByteArray()
@@ -65,7 +69,10 @@ object Whoop5Config {
      *  ASCII digit, e.g. '1'=0x31 / '0'=0x30). 33 bytes, no trailing padding (unlike the 40-byte
      *  feature-flag body). The caller prepends the b3 byte (0x01) before sending, like CLIENT_HELLO.
      *  Validated for whoop_live_hr_in_adv_ind_pkt on real hardware (paired on a Garmin Edge 840).
-     *  Keep in lockstep with the Swift `Whoop5Config.deviceConfigBody`. (#181) */
+     *  Keep in lockstep with the Swift `Whoop5Config.deviceConfigBody`. (#181) Encoding is UTF-8
+     *  (Kotlin's default for [String.encodeToByteArray]); current callers only ever pass ASCII key
+     *  names, so this is byte-identical to ASCII, but a non-ASCII name would emit multi-byte UTF-8
+     *  sequences into the fixed 32-byte NUL-padded field instead of one byte per character. */
     fun deviceConfigBody(name: String, value: Int): ByteArray {
         val b = ByteArray(33)
         val bytes = name.encodeToByteArray()
