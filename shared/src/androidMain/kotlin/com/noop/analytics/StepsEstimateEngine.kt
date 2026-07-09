@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (java.util.Locale-based String.format in formatK, entangled with the CalibrationStatus sealed hierarchy; needs a multiplatform decimal formatter)
 package com.noop.analytics
 
 import com.noop.data.GravitySample

@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (synchronized() and the JVM-only LinkedHashMap(capacity,loadFactor,accessOrder) LRU constructor have no commonMain equivalent without a new concurrency dependency; needs a real multiplatform LRU redesign beyond Task 8)
 package com.noop.analytics
 
 import com.noop.data.GravitySample
@@ -577,11 +577,12 @@ object SleepStager {
      * True when the run's CENTER, shifted to LOCAL time by [tzOffsetSeconds], lands in the
      * daytime band [daytimeBandStartHour, daytimeBandEndHour). The center (not the edges) is
      * used so a window straddling a band edge is classified once, by where it mostly is.
-     * Math.floorMod keeps the local-shifted time in [0, secondsPerDay) for any sign.
+     * Kotlin's `Long.mod` (floor-mod) keeps the local-shifted time in [0, secondsPerDay) for any sign,
+     * the multiplatform twin of `java.lang.Math.floorMod`.
      */
     internal fun isDaytimeCenter(p: Period, tzOffsetSeconds: Long): Boolean {
         val center = p.start + (p.end - p.start) / 2
-        val secOfDay = Math.floorMod(center + tzOffsetSeconds, secondsPerDay)
+        val secOfDay = (center + tzOffsetSeconds).mod(secondsPerDay)
         val hour = (secOfDay / 3_600L).toInt()
         return hour >= daytimeBandStartHour && hour < daytimeBandEndHour
     }
@@ -593,7 +594,7 @@ object SleepStager {
      * Reimplemented from @vulnix0x4's PR #353.
      */
     internal fun isOvernightOnset(start: Long, tzOffsetSeconds: Long): Boolean {
-        val secOfDay = Math.floorMod(start + tzOffsetSeconds, secondsPerDay)
+        val secOfDay = (start + tzOffsetSeconds).mod(secondsPerDay)
         val hour = (secOfDay / 3_600L).toInt()
         return !(hour >= daytimeBandStartHour && hour < daytimeBandEndHour)
     }
@@ -844,9 +845,9 @@ object SleepStager {
             // can only cost one platform an extra recompute, never change a value, so this is free
             // collision hardening, not a parity break.
             grav = streamFingerprint(gravity, { it.ts }) { s ->
-                var q = java.lang.Double.doubleToRawLongBits(s.x)
-                q = q * 1_000_003L + java.lang.Double.doubleToRawLongBits(s.y)
-                q = q * 1_000_003L + java.lang.Double.doubleToRawLongBits(s.z)
+                var q = s.x.toRawBits()
+                q = q * 1_000_003L + s.y.toRawBits()
+                q = q * 1_000_003L + s.z.toRawBits()
                 q
             },
             hr = streamFingerprint(hr, { it.ts }) { it.bpm.toLong() },

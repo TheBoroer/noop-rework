@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (transitively blocked via CyclePhaseEngine.kt's java.time.LocalDate dependency)
 package com.noop.analytics
 
 import com.noop.data.DailyMetric

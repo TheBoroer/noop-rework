@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (com.noop.data.WhoopRepository dependency; WhoopRepository stays androidMain this phase)
 package com.noop.analytics
 
 import com.noop.data.GravitySample

@@ -1,4 +1,3 @@
-// TASK8: re-hoist after data hoist
 package com.noop.analytics
 
 import com.noop.data.GravitySample
@@ -30,6 +29,11 @@ import kotlin.math.sqrt
  * (ts:Long seconds, x/y/z:Double). All ts/start/end are unix SECONDS as Long. NOT medical advice.
  */
 object AutoWorkoutDetector {
+
+    /** Round half up (ties away from zero for positive input), matching `java.lang.Math.round(Double)`.
+     *  `kotlin.math.round` rounds half to even instead, so it is not a drop-in replacement here. Mirrors
+     *  the identical helper introduced in com.noop.protocol.PpgHr (Task 6). */
+    private fun roundHalfUp(x: Double): Long = kotlin.math.floor(x + 0.5).toLong()
 
     // ---- Constants (keep byte-identical with the Swift twin) ----
 
@@ -196,7 +200,7 @@ object AutoWorkoutDetector {
             }
 
             val bpms = window.map { it.bpm }
-            val avg = Math.round(bpms.sum().toDouble() / bpms.size.toDouble()).toInt()
+            val avg = roundHalfUp(bpms.sum().toDouble() / bpms.size.toDouble()).toInt()
             // window is non-empty so max() always exists; `?: avg` mirrors the Swift twin's fallback exactly.
             val peak = bpms.maxOrNull() ?: avg
             val durMin = ((end - start) / 60L).toInt()

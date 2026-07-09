@@ -1,3 +1,4 @@
+// PHASE2: hoist (androidx.room.withTransaction is an Android-only extension in 2.6/2.7; the common Room 2.7 APIs are useWriterConnection/immediateTransaction)
 package com.noop.data
 
 import androidx.room.withTransaction

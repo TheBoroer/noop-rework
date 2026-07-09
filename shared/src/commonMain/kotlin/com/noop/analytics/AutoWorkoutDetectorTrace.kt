@@ -1,4 +1,3 @@
-// TASK8: re-hoist after data hoist
 package com.noop.analytics
 
 import com.noop.data.GravitySample
@@ -17,6 +16,12 @@ import com.noop.data.HrSample
 // and the cross-source dedup decisions. WorkoutsReadout parses the WORKOUTS-tagged log tail back into the
 // lastSessionSummary id. Everything is pure, no clock, no IO, no PII. Byte-aligned with the Swift line
 // shapes so a shared report reads identically on either platform. No em-dashes.
+
+/** Round half up (ties away from zero for positive input), matching `java.lang.Math.round(Double)`.
+ *  `kotlin.math.round` rounds half to even instead, so it is not a drop-in replacement here. Mirrors
+ *  the identical helper introduced in com.noop.protocol.PpgHr (Task 6). File-private so both
+ *  [AutoWorkoutDetectorTrace] and [WorkoutsTrace] below can use it. */
+private fun roundHalfUp(x: Double): Long = kotlin.math.floor(x + 0.5).toLong()
 
 object AutoWorkoutDetectorTrace {
 
@@ -121,7 +126,7 @@ object AutoWorkoutDetectorTrace {
                 if (meanMotion < AutoWorkoutDetector.motionConfirmMean) {
                     lines.add(
                         "autoDetect window durMin=$durMin verdict=dropped why=motionNotConfirmed " +
-                            "(mean=${Math.round(meanMotion * 1000.0) / 1000.0} < ${AutoWorkoutDetector.motionConfirmMean})",
+                            "(mean=${roundHalfUp(meanMotion * 1000.0) / 1000.0} < ${AutoWorkoutDetector.motionConfirmMean})",
                     )
                     continue
                 }
@@ -168,7 +173,7 @@ object WorkoutsTrace {
      */
     fun gpsLine(rawFixes: Int?, acceptedPoints: Int, distanceM: Double): String =
         "gps rawFixes=${rawFixes?.toString() ?: "n/a"} accepted=$acceptedPoints " +
-            "distanceM=${Math.round(distanceM)} (filter: accuracy+speed gate)"
+            "distanceM=${roundHalfUp(distanceM)} (filter: accuracy+speed gate)"
 
     /** A cross-source dedup decision line: two same-activity rows collapsed to the richer one. */
     fun dedupLine(

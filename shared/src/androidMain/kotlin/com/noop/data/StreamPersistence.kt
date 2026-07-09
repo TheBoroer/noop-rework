@@ -1,3 +1,4 @@
+// PHASE2: hoist (org.json JSONObject.quote usage, no multiplatform JSON parser in scope this phase)
 package com.noop.data
 
 import com.noop.protocol.Streams

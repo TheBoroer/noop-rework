@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (System.currentTimeMillis usage, plus com.noop.data.StreamPersistence.encodePayload dependency (org.json), which stays androidMain this phase)
 package com.noop.protocol
 
 import com.noop.data.BatteryRow

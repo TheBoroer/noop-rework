@@ -234,6 +234,6 @@ data class ProfileBaselines(
     val skinTemp: BaselineState? = null,
 )
 
-// [DayResult] (mirrors Swift `AnalyticsEngine.DayResult`) moved to its own file, DayResult.kt: it
-// carries `com.noop.data.DailyMetric` directly, so it stays androidMain-only (TASK8: re-hoist after
-// data hoist) while every other pure shape here (including [ProfileBaselines]) hoists to commonMain.
+// [DayResult] (mirrors Swift `AnalyticsEngine.DayResult`) lives in its own file, DayResult.kt: it
+// carries `com.noop.data.DailyMetric` directly, so it was androidMain-only until the Task 8 data hoist
+// moved `DailyMetric` (Entities.kt) to commonMain, at which point DayResult.kt hoisted alongside it.

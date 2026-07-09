@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (synchronized() and the JVM-only LinkedHashMap(capacity,loadFactor,accessOrder) LRU constructor have no commonMain equivalent without a new concurrency dependency; needs a real multiplatform LRU redesign beyond Task 8)
 package com.noop.analytics
 
 import com.noop.data.GravitySample
@@ -75,9 +75,9 @@ internal object StagerCache {
             gFirst = grav.first().ts; gLast = grav.last().ts
             for (s in grav) {
                 gSum = gSum * 1_000_003 + s.ts * 31
-                gSum = gSum * 1_000_003 + java.lang.Double.doubleToRawLongBits(s.x)
-                gSum = gSum * 1_000_003 + java.lang.Double.doubleToRawLongBits(s.y)
-                gSum = gSum * 1_000_003 + java.lang.Double.doubleToRawLongBits(s.z)
+                gSum = gSum * 1_000_003 + s.x.toRawBits()
+                gSum = gSum * 1_000_003 + s.y.toRawBits()
+                gSum = gSum * 1_000_003 + s.z.toRawBits()
             }
         }
         var hSum = 0L; var hFirst = 0L; var hLast = 0L

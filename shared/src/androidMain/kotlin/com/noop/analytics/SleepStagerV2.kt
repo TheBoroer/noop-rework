@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (transitively blocked via StagerCache.kt's synchronized()/LinkedHashMap(accessOrder) usage)
 package com.noop.analytics
 
 import com.noop.data.GravitySample

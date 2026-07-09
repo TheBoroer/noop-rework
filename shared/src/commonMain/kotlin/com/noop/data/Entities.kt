@@ -286,20 +286,13 @@ data class SleepSession(
     /** Whole-block duration in hours (effective onset → wake). */
     val durationHours: Double get() = (endTs - effectiveStartTs) / 3600.0
 
-    /**
-     * DERIVED nap classification (#518), computed at READ time, NO schema column / migration. A block
-     * is a nap when it is SHORT (< [NAP_MAX_HOURS]) or DAYTIME-onset (onset not in the overnight window).
-     * The day's MAIN sleep is resolved separately (the longest, overnight-preferring block, see
-     * SleepScreen.mainSleepBlock); this flag only describes the block's own shape, so the UI can label /
-     * count naps consistently with iOS SleepView.isNap. A long overnight split-sleep block is NOT a nap.
-     */
-    val isNapShaped: Boolean
-        get() {
-            val cal = java.util.Calendar.getInstance().apply { timeInMillis = effectiveStartTs * 1000L }
-            val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
-            val overnightOnset = h >= 20 || h < 10
-            return durationHours < NAP_MAX_HOURS || !overnightOnset
-        }
+    // NOTE: the DERIVED nap classification (#518, "isNapShaped") that used to live here needs the LOCAL
+    // hour-of-day of [effectiveStartTs] (java.util.Calendar), which has no commonMain-safe equivalent
+    // without kotlinx-datetime (out of scope this phase). Neither a computed getter nor a schema column
+    // (Room only maps primary-constructor properties), so extracting it doesn't touch the entity's
+    // persisted shape. It is currently unreferenced anywhere in the codebase; moved to
+    // shared/src/androidMain/kotlin/com/noop/data/SleepSessionNapShape.kt (androidMain extension
+    // property) so this entity file can hoist to commonMain. See NAP_MAX_HOURS below.
 
     companion object {
         /** A block shorter than this is nap-shaped regardless of onset. Mirrors iOS SleepView.napMaxHours. */

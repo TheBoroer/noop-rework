@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (transitively blocked via StepsEstimateEngine.kt's java.util.Locale-based formatK)
 package com.noop.analytics
 
 import com.noop.data.StepSample
@@ -27,7 +27,12 @@ import kotlin.math.max
 
 object StepsEstimateEngineTrace {
 
-    private fun r2(x: Double): Double = Math.round(x * 100.0) / 100.0
+    /** Round half up (ties away from zero), matching `java.lang.Math.round(Double)`; `kotlin.math.round`
+     *  rounds half to even instead, so it is not a drop-in replacement here. */
+    private fun r2(x: Double): Double = kotlin.math.floor(x * 100.0 + 0.5) / 100.0
+
+    /** Integer twin of [r2]'s half-up rounding, matching `java.lang.Math.round(Double).toInt()`. */
+    private fun roundHalfUp(x: Double): Int = kotlin.math.floor(x + 0.5).toInt()
 
     /**
      * The WHOOP-4 motion-volume calibration trace. Given the per-day calibration points (each a motion volume
@@ -164,7 +169,7 @@ object StepsEstimateEngineTrace {
         // The scaled total, the SAME expression analyzeDay produces for steps_est (ticks / ticksPerStep,
         // floored at 0.5 so a bad pref can at most double, never explode, the total).
         val scaled = if (rawTotal > 0) {
-            Math.round(rawTotal.toDouble() / max(ticksPerStep, 0.5)).toInt()
+            roundHalfUp(rawTotal.toDouble() / max(ticksPerStep, 0.5))
         } else {
             0
         }

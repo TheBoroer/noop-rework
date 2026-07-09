@@ -1,4 +1,3 @@
-// TASK8: re-hoist after data hoist
 package com.noop.analytics
 
 // HrvAnalyzerTrace.kt - Kotlin twin of HRVAnalyzer+Trace.swift. The HRV & Autonomic test-mode cleaning
@@ -13,7 +12,9 @@ package com.noop.analytics
 
 object HrvAnalyzerTrace {
 
-    private fun r2(x: Double): Double = Math.round(x * 100.0) / 100.0
+    /** Round half up (ties away from zero), matching `java.lang.Math.round(Double)`; `kotlin.math.round`
+     *  rounds half to even instead, so it is not a drop-in replacement here. */
+    private fun r2(x: Double): Double = kotlin.math.floor(x * 100.0 + 0.5) / 100.0
 
     /**
      * Side-effect-free diagnostic twin of [HrvAnalyzer.analyzeRaw]: returns the SAME HrvResult

@@ -1,4 +1,3 @@
-// TASK8: re-hoist after data hoist
 package com.noop.analytics
 
 import com.noop.data.GravitySample
@@ -194,9 +193,11 @@ object SedentaryDetector {
 
     // ── Pure time helpers (InactivityPrefs parity) ───────────────────────────
 
-    /** Local minute-of-day [0,1440) for a unix-seconds instant given a tz offset (seconds east of UTC). */
+    /** Local minute-of-day [0,1440) for a unix-seconds instant given a tz offset (seconds east of UTC).
+     *  Kotlin's `Long.mod` is a floor-mod (always non-negative for a positive divisor), the multiplatform
+     *  twin of `java.lang.Math.floorMod`. */
     fun localMinuteOfDay(epochSec: Long, tzOffsetSec: Long): Int =
-        (Math.floorMod(epochSec + tzOffsetSec, 86_400L) / 60L).toInt()
+        ((epochSec + tzOffsetSec).mod(86_400L) / 60L).toInt()
 
     /** Wrap-aware membership: is [minuteOfDay] inside `[startMin, endMin)` (window may cross midnight)? */
     fun windowContains(minuteOfDay: Int, startMin: Int, endMin: Int): Boolean =

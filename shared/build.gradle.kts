@@ -2,6 +2,7 @@ plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.library")
     id("com.google.devtools.ksp")
+    id("androidx.room") version "2.7.1"
 }
 
 kotlin {
@@ -16,6 +17,10 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
+
+            // Room 2.7 entity/DAO annotations are commonMain-safe; the entities/DAOs hoisted from
+            // androidMain need this to resolve. The database builder itself stays androidMain (Task 8).
+            implementation("androidx.room:room-runtime:2.7.1")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
@@ -50,6 +55,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 dependencies {

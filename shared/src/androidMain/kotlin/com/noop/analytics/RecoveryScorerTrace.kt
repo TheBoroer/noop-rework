@@ -1,4 +1,4 @@
-// TASK8: re-hoist after data hoist
+// PHASE2: hoist (transitively blocked via Baselines.kt's android.content.SharedPreferences + java.time dependency)
 package com.noop.analytics
 
 import kotlin.math.abs
@@ -15,7 +15,9 @@ import kotlin.math.abs
 
 object RecoveryScorerTrace {
 
-    private fun r2(x: Double): Double = Math.round(x * 100.0) / 100.0
+    /** Round half up (ties away from zero), matching `java.lang.Math.round(Double)`; `kotlin.math.round`
+     *  rounds half to even instead, so it is not a drop-in replacement here. */
+    private fun r2(x: Double): Double = kotlin.math.floor(x * 100.0 + 0.5) / 100.0
 
     /**
      * Side-effect-free diagnostic twin of [RecoveryScorer.recovery]: returns the SAME score recovery(...)

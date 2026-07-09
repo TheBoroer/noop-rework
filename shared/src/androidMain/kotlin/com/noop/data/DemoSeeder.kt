@@ -1,3 +1,4 @@
+// PHASE2: hoist (java.time.LocalDate/ZoneId + org.json usage needs kotlinx-datetime + a multiplatform JSON parser)
 package com.noop.data
 
 import org.json.JSONArray

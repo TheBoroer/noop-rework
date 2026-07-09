@@ -31,6 +31,11 @@ import com.noop.protocol.WhoopEvent
  */
 object OuraStreamMapping {
 
+    /** Round half up (ties away from zero for positive input), matching `java.lang.Math.round(Double)`.
+     *  `kotlin.math.round` rounds half to even instead, so it is not a drop-in replacement here. Mirrors
+     *  the identical helper introduced in com.noop.protocol.PpgHr (Task 6). */
+    private fun roundHalfUp(x: Double): Long = kotlin.math.floor(x + 0.5).toLong()
+
     /** The event `kind` recorded for the ring's own open HRV (0x5D) tag. Must match Swift exactly. */
     const val EVENT_HRV = "OURA_HRV"
 
@@ -94,7 +99,7 @@ object OuraStreamMapping {
                     out.skinTemp.add(
                         SkinTempSample(
                             ts = ts,
-                            raw = Math.round(ev.value.celsius * 100.0).toInt(),
+                            raw = roundHalfUp(ev.value.celsius * 100.0).toInt(),
                             unit = "centi_c",
                         ),
                     )

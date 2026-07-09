@@ -1,3 +1,4 @@
+// PHASE2: hoist (android.content.Context/SharedPreferences dependency needs a multiplatform settings/preferences abstraction)
 package com.noop.data
 
 import android.content.Context
