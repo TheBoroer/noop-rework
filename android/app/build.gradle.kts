@@ -4,6 +4,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Optional release signing. Credentials live in `keystore.properties` (git-ignored, never
@@ -118,12 +119,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    composeOptions {
-        // Compose Compiler extension matched to Kotlin 1.9.24 (see the official
-        // Compose-to-Kotlin compatibility map). Bumping Kotlin requires bumping this.
-        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     packaging {
