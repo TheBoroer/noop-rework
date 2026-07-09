@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Demo-debug launcher background: purple-tinted tile + corner flash so side-by-side
+     installs are tellable apart at a glance. Label stays "NOOP" on purpose. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="0" android:endY="108"
+                android:startColor="#2E1538" android:endColor="#120818"/>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M0,0h40l-40,40z" android:fillColor="#B675E0"/>
+</vector>
