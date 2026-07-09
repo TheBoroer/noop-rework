@@ -760,10 +760,13 @@ object SleepStager {
      *  sessions — the multi-hour raw streams are never retained (#707 rule: the cache must not be the
      *  next leak). */
     private const val DETECT_CACHE_MAX_DAYS = 40
-    private val detectCache = object : LinkedHashMap<DetectKey, List<DetectedSleep>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<DetectKey, List<DetectedSleep>>): Boolean =
-            size > DETECT_CACHE_MAX_DAYS
-    }
+
+    /** Plain access-order map, NOT a `LinkedHashMap` subclass: the K2 multiplatform IR actualizer, which
+     *  now walks the whole module once commonMain carries real declarations (the protocol hoist), crashes
+     *  trying to resolve a fake override for the inherited `get` on any class extending
+     *  `java.util.LinkedHashMap` (subclassing, not anonymity, is the trigger). Eviction is done manually
+     *  at the one put call site below instead of via `removeEldestEntry`; behavior is unchanged. */
+    private val detectCache = LinkedHashMap<DetectKey, List<DetectedSleep>>(16, 0.75f, true)
     private val detectCacheLock = Any()
 
     /** Deep copy across the memo boundary. [DetectedSleep] itself is immutable, but its `stages` are
@@ -859,7 +862,10 @@ object SleepStager {
         // with an identical value — benign, the function is deterministic.
         val sessions = detectSleepUncached(hr, rr, resp, gravity, tzOffsetSeconds, wristOff,
             bandSleepState, useSleepStagerV2, null)
-        synchronized(detectCacheLock) { detectCache[key] = copyDetected(sessions) }
+        synchronized(detectCacheLock) {
+            detectCache[key] = copyDetected(sessions)
+            if (detectCache.size > DETECT_CACHE_MAX_DAYS) detectCache.remove(detectCache.keys.first())
+        }
         return sessions
     }
 

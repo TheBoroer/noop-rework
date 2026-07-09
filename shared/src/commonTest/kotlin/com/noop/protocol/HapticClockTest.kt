@@ -1,7 +1,7 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * Pure-logic tests for the Haptic Clock encoder (#460). These pin the EXACT pulse list for sample

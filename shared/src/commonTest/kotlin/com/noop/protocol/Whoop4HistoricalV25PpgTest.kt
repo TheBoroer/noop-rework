@@ -1,9 +1,10 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.math.floor
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * WHOOP 4.0 **v25** PPG → HR feasibility guard (issue #194, RFC — NOT a live decode). Kotlin mirror of
@@ -61,7 +62,8 @@ class Whoop4HistoricalV25PpgTest {
             for (k in 0 until x.size - lag) s += x[k] * x[k + lag]
             if (s > bestV) { bestV = s; best = lag }
         }
-        return Math.round(fs * 60.0 / best).toInt()
+        // Round half up, matching java.lang.Math.round(Double); kotlin.math.round is round-half-to-even.
+        return floor(fs * 60.0 / best + 0.5).toInt()
     }
 
     @Test fun fixtureIsV25Consecutive() {
@@ -78,7 +80,7 @@ class Whoop4HistoricalV25PpgTest {
         val start = 15
         for (n in listOf(16, 18, 20, 24, 30)) {
             val sig = records.flatMap { f -> (0 until n).mapNotNull { i16(f, start + it * 2) } }
-            assertEquals("N=$n: bare bpm should equal record period 1440/N", 1440 / n, bareBpm(sig))
+            assertEquals(1440 / n, bareBpm(sig), "N=$n: bare bpm should equal record period 1440/N")
         }
     }
 
@@ -91,8 +93,8 @@ class Whoop4HistoricalV25PpgTest {
      *  — so the start byte is load-bearing and v25→HR must not ship on an unpinned span. */
     @Test fun notchDoesNotFullyProtectV25SoStartByteIsLoadBearing() {
         val hr = PpgHr.estimate(samples(15))
-        assertFalse("offset-15 read should surface the artifact the notch misses", hr.isEmpty())
-        assertTrue("surviving artifact is the record-period 60 bpm", hr.all { it.bpm == 60 })
-        assertTrue("artifact confidence is low-but-passing, the worst false positive", hr.all { it.conf < 0.5 })
+        assertFalse(hr.isEmpty(), "offset-15 read should surface the artifact the notch misses")
+        assertTrue(hr.all { it.bpm == 60 }, "surviving artifact is the record-period 60 bpm")
+        assertTrue(hr.all { it.conf < 0.5 }, "artifact confidence is low-but-passing, the worst false positive")
     }
 }

@@ -1,7 +1,7 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * Golden test for the "Broadcast HR" device-config write — the strap is made to advertise its heart
@@ -18,10 +18,10 @@ class BroadcastHrConfigTest {
         assertEquals(33, body.size)
         assertEquals(
             "whoop_live_hr_in_adv_ind_pkt",
-            body.copyOfRange(0, 28).toString(Charsets.US_ASCII),
+            body.copyOfRange(0, 28).decodeToString(),
         )
-        for (i in 28 until 32) assertEquals("null pad @$i", 0, body[i].toInt())
-        assertEquals("ASCII '1' value @32", '1'.code, body[32].toInt())
+        for (i in 28 until 32) assertEquals(0, body[i].toInt(), "null pad @$i")
+        assertEquals('1'.code, body[32].toInt(), "ASCII '1' value @32")
     }
 
     @Test

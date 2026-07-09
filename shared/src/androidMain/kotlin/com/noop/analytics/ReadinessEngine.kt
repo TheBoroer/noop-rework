@@ -99,7 +99,10 @@ object ReadinessEngine {
         val key = readinessKey(today, days)
         synchronized(evaluateCacheLock) { evaluateCache[key] }?.let { return it }
         val result = evaluateUncached(days, today)   // computed OUTSIDE the lock (the expensive sort/walk)
-        synchronized(evaluateCacheLock) { evaluateCache[key] = result }
+        synchronized(evaluateCacheLock) {
+            evaluateCache[key] = result
+            if (evaluateCache.size > EVALUATE_CACHE_CAP) evaluateCache.remove(evaluateCache.keys.first())
+        }
         return result
     }
 
@@ -111,11 +114,12 @@ object ReadinessEngine {
 
     /** Access-order LRU (cap [EVALUATE_CACHE_CAP]); every access is under [evaluateCacheLock] because a
      *  LinkedHashMap in access order mutates on `get`. Twin of Swift's AnalyticsMemoCache(capacity: 16). */
-    private val evaluateCache: LinkedHashMap<ReadinessKey, Readiness> =
-        object : LinkedHashMap<ReadinessKey, Readiness>(EVALUATE_CACHE_CAP, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ReadinessKey, Readiness>): Boolean =
-                size > EVALUATE_CACHE_CAP
-        }
+    /** Plain access-order map, NOT a `LinkedHashMap` subclass: the K2 multiplatform IR actualizer, which
+     *  now walks the whole module once commonMain carries real declarations (the protocol hoist), crashes
+     *  trying to resolve a fake override for the inherited `get` on any class extending
+     *  `java.util.LinkedHashMap` (subclassing, not anonymity, is the trigger). Eviction is done manually
+     *  at the one put call site below instead of via `removeEldestEntry`; behavior is unchanged. */
+    private val evaluateCache: LinkedHashMap<ReadinessKey, Readiness> = LinkedHashMap(EVALUATE_CACHE_CAP, 0.75f, true)
     private val evaluateCacheLock = Any()
 
     /** Order-independent fingerprint of the readiness-relevant columns — a new sync re-keys, a cosmetic

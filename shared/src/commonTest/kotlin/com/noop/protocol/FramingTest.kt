@@ -1,11 +1,11 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Frame round-trip + decode tests against concrete byte vectors.
@@ -13,10 +13,15 @@ import org.junit.Test
  * All vectors were generated independently (Python: zlib CRC-32, table CRC-8, CRC16-Modbus) from
  * the same envelope spec the Kotlin code implements, so a passing test confirms cross-checked
  * agreement rather than the code merely agreeing with itself.
+ *
+ * The one Framing test that also exercises [AlarmPayload] (which stays in androidMain for now, java.time)
+ * lives in androidUnitTest as AlarmPayloadFramingParityTest so the rest of this file can run here, on
+ * the iOS simulator too.
  */
 class FramingTest {
 
-    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+    private fun hex(bytes: ByteArray): String =
+        bytes.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
     private fun bytes(vararg ints: Int): ByteArray = ByteArray(ints.size) { ints[it].toByte() }
 
@@ -52,7 +57,7 @@ class FramingTest {
         val runAlarm = Framing.buildCommand(CommandNumber.RUN_ALARM, byteArrayOf(0x01), seq = 2)
         assertEquals("aa0800a82302440135b15573", hex(runAlarm))
         // The payload bytes themselves, pinned once more without the envelope: patternId=2, 3 loops.
-        assertArrayEquals(byteArrayOf(2, 3, 0, 0, 0), haptics.copyOfRange(7, 12))
+        assertContentEquals(byteArrayOf(2, 3, 0, 0, 0), haptics.copyOfRange(7, 12))
         assertEquals(CommandNumber.RUN_ALARM.rawValue, runAlarm[6].toInt() and 0xFF)
     }
 
@@ -150,21 +155,6 @@ class FramingTest {
         assertTrue(Framing.parseFrame(frame, DeviceFamily.WHOOP5).ok)
         // pad4 is a NO-OP for already-4-aligned commands: HR toggle inner ([35,seq,3,1]) stays 16 bytes.
         assertEquals(16, Framing.puffinCommandFrame(cmd = CommandNumber.TOGGLE_REALTIME_HR.rawValue, seq = 7, payload = byteArrayOf(1)).size)
-    }
-
-    @Test
-    fun puffinCommandFrame_alarmFramesMatchSwiftParityGoldens() {
-        // Cross-platform parity pins: the macOS port (DeviceFamilyFramingTests) asserts these SAME
-        // three full-frame hexes, so both platforms are locked to identical alarm bytes. The
-        // SET_ALARM_TIME inner is 23 bytes → pad4 → 24 (declLen 28); the rev-2 bodies pad 5 → 8.
-        // (RUN_ALARM rev2 [0x02, alarmId] is built inline — the Kotlin client no longer ships a
-        // helper for it, but the Mac test-buzz path still sends it, so the bytes stay pinned here.)
-        val alarm = Framing.puffinCommandFrame(cmd = 66, seq = 1, payload = AlarmPayload.build(1_700_000_000_123L))
-        assertEquals("aa011c000001e381230142040100f15365be0f2f980000000000000000071e00392f2ac9", hex(alarm))
-        assertEquals("aa010c000001e74123014502ff000000267ffc4f",
-            hex(Framing.puffinCommandFrame(cmd = 69, seq = 1, payload = AlarmPayload.disableRev2())))
-        assertEquals("aa010c000001e741230144020100000017cd19e2",
-            hex(Framing.puffinCommandFrame(cmd = 68, seq = 1, payload = byteArrayOf(0x02, 0x01))))
     }
 
     // MARK: - parseFrame decode vectors
@@ -316,7 +306,7 @@ class FramingTest {
         assertTrue(r.feed(frame.copyOfRange(0, cut)).isEmpty())
         val done = r.feed(frame.copyOfRange(cut, frame.size))
         assertEquals(1, done.size)
-        assertArrayEquals(frame, done[0])
+        assertContentEquals(frame, done[0])
     }
 
     @Test
@@ -326,8 +316,8 @@ class FramingTest {
         val r = Reassembler()
         val out = r.feed(a + b)
         assertEquals(2, out.size)
-        assertArrayEquals(a, out[0])
-        assertArrayEquals(b, out[1])
+        assertContentEquals(a, out[0])
+        assertContentEquals(b, out[1])
     }
 
     @Test
@@ -336,7 +326,7 @@ class FramingTest {
         val r = Reassembler()
         val out = r.feed(byteArrayOf(0x00, 0x11, 0x22) + frame)
         assertEquals(1, out.size)
-        assertArrayEquals(frame, out[0])
+        assertContentEquals(frame, out[0])
     }
 
     @Test
@@ -350,7 +340,7 @@ class FramingTest {
         val r = Reassembler()
         val out = r.feed(garbage + good)
         assertEquals(1, out.size)
-        assertArrayEquals(good, out[0])
+        assertContentEquals(good, out[0])
     }
 
     @Test
@@ -364,8 +354,8 @@ class FramingTest {
         val out = ArrayList<ByteArray>()
         for (b in first + second) out += r.feed(byteArrayOf(b))
         assertEquals(2, out.size)
-        assertArrayEquals(first, out[0])
-        assertArrayEquals(second, out[1])
+        assertContentEquals(first, out[0])
+        assertContentEquals(second, out[1])
     }
 
     @Test
@@ -379,7 +369,7 @@ class FramingTest {
         r.reset()
         val out = r.feed(frame)
         assertEquals(1, out.size)
-        assertArrayEquals(frame, out[0])
+        assertContentEquals(frame, out[0])
     }
 
     // MARK: - enum fromRaw
@@ -444,7 +434,7 @@ class FramingTest {
         val frame = fromHex(whoop5RealtimeHex)
         val out = Reassembler(DeviceFamily.WHOOP5).feed(frame)
         assertEquals(1, out.size)
-        assertArrayEquals(frame, out[0])
+        assertContentEquals(frame, out[0])
         assertTrue(Reassembler(DeviceFamily.WHOOP4).feed(frame).isEmpty())
     }
 

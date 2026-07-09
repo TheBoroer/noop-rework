@@ -1,5 +1,8 @@
 package com.noop.protocol
 
+import kotlin.math.abs
+import kotlin.math.floor
+
 /**
  * Derive heart rate from the WHOOP 5.0/MG **v26** optical PPG waveform (#156).
  *
@@ -40,6 +43,10 @@ object PpgHr {
 
     /** Minimum normalised-autocorrelation peak to emit an estimate. */
     const val MIN_CONFIDENCE = 0.3
+
+    /** Round half up (ties away from zero for positive input), matching `java.lang.Math.round(Double)`.
+     *  `kotlin.math.round` rounds half to even instead, so it is not a drop-in replacement here. */
+    private fun roundHalfUp(x: Double): Long = floor(x + 0.5).toLong()
 
     /**
      * One concatenated, time-ordered PPG sample: its wall-clock second [ts] and raw ADC [value].
@@ -168,7 +175,7 @@ object PpgHr {
         if (fs <= 1 || n < fs * 4) return x
         var withinSum = 0.0; var withinCount = 0; var boundarySum = 0.0; var boundaryCount = 0
         for (i in 1 until n) {
-            val d = Math.abs(x[i] - x[i - 1])
+            val d = abs(x[i] - x[i - 1])
             if (i % fs == 0) { boundarySum += d; boundaryCount++ } else { withinSum += d; withinCount++ }
         }
         if (withinCount == 0 || boundaryCount == 0) return x
@@ -186,8 +193,8 @@ object PpgHr {
         // De-artifact (#194) THEN detrend, so the autocorrelation sees the pulse, not a record-rate comb.
         val x = detrend(removeRecordRateComponent(values, SAMPLE_RATE_HZ))
         val fsD = SAMPLE_RATE_HZ.toDouble()
-        val loLag = maxOf(2, Math.round(fsD * 60 / MAX_BPM).toInt())
-        val hiLag = minOf(x.size - 2, Math.round(fsD * 60 / MIN_BPM).toInt())
+        val loLag = maxOf(2, roundHalfUp(fsD * 60 / MAX_BPM).toInt())
+        val hiLag = minOf(x.size - 2, roundHalfUp(fsD * 60 / MIN_BPM).toInt())
         if (hiLag <= loLag) return null
 
         val vals = HashMap<Int, Double>(hiLag - loLag + 1)
@@ -225,8 +232,8 @@ object PpgHr {
 
         // Round to whole bpm (the lag is integer, so sub-bpm precision isn't real signal) and round
         // conf to 3 dp — both matching the Swift estimator and the measured-HR Int domain (#219).
-        val bpm = Math.round(fsD * 60 / bestLag).toInt()
-        val conf = Math.round(vals[bestLag]!! * 1000) / 1000.0
+        val bpm = roundHalfUp(fsD * 60 / bestLag).toInt()
+        val conf = roundHalfUp(vals[bestLag]!! * 1000) / 1000.0
         return Estimate(ts = ts, bpm = bpm, conf = conf)
     }
 }

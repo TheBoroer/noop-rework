@@ -1,11 +1,11 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.random.Random
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * [PpgHr] — derive HR from the WHOOP 5/MG v26 optical PPG waveform by autocorrelation (#156).
@@ -35,12 +35,12 @@ class PpgHrTest {
     fun recovers70BpmFromCleanSine() {
         // 16 s so several 8 s windows slide across it.
         val est = PpgHr.estimate(sine(bpm = 70.0, seconds = 16))
-        assertTrue("expected at least one estimate from a clean sine", est.isNotEmpty())
+        assertTrue(est.isNotEmpty(), "expected at least one estimate from a clean sine")
         // Every window of a pure periodic signal should land within 2 bpm of the truth.
         for (e in est) {
-            assertTrue("bpm ${e.bpm} not within 70±2", e.bpm in 68..72)
-            assertTrue("confidence ${e.conf} below gate", e.conf >= PpgHr.MIN_CONFIDENCE)
-            assertTrue("confidence ${e.conf} > 1", e.conf <= 1.0)
+            assertTrue(e.bpm in 68..72, "bpm ${e.bpm} not within 70±2")
+            assertTrue(e.conf >= PpgHr.MIN_CONFIDENCE, "confidence ${e.conf} below gate")
+            assertTrue(e.conf <= 1.0, "confidence ${e.conf} > 1")
         }
     }
 
@@ -52,7 +52,7 @@ class PpgHrTest {
         }
         val est = PpgHr.estimate(noise)
         // White noise has no periodic structure → autocorrelation never clears the 0.3 gate.
-        assertTrue("noise produced estimates: $est", est.isEmpty())
+        assertTrue(est.isEmpty(), "noise produced estimates: $est")
     }
 
     @Test
@@ -68,8 +68,8 @@ class PpgHrTest {
         // Swift parity: a 3 s run DOES produce HR (each second's centred window holds >= 3 s). The
         // old Kotlin needed a full 8 s window and wrongly returned nothing here.
         val est = PpgHr.estimate(sine(bpm = 70.0, seconds = 3))
-        assertTrue("expected estimates from a 3 s run", est.isNotEmpty())
-        for (e in est) assertTrue("bpm ${e.bpm} not within 70±3", e.bpm in 67..73)
+        assertTrue(est.isNotEmpty(), "expected estimates from a 3 s run")
+        for (e in est) assertTrue(e.bpm in 67..73, "bpm ${e.bpm} not within 70±3")
     }
 
     @Test
@@ -78,8 +78,8 @@ class PpgHrTest {
         // (25 bpm). The global-argmax estimator could lock onto the stronger low-lag-energy harmonic
         // and report ~25 bpm; fundamental-period preference must report ~50 (Swift parity, #219).
         val est = PpgHr.estimate(sine(bpm = 50.0, seconds = 16))
-        assertTrue("expected estimates from a clean 50 bpm sine", est.isNotEmpty())
-        for (e in est) assertTrue("bpm ${e.bpm} not near 50 (harmonic leak?)", e.bpm in 47..53)
+        assertTrue(est.isNotEmpty(), "expected estimates from a clean 50 bpm sine")
+        for (e in est) assertTrue(e.bpm in 47..53, "bpm ${e.bpm} not near 50 (harmonic leak?)")
     }
 
     @Test
@@ -106,8 +106,8 @@ class PpgHrTest {
             }
         }
         val est = PpgHr.estimate(samples)
-        assertTrue("a real low-HR pulse under a record-rate artifact must still estimate", est.isNotEmpty())
-        for (e in est) assertTrue("snapped to ${e.bpm} — artifact not removed", e.bpm in 46..54)
+        assertTrue(est.isNotEmpty(), "a real low-HR pulse under a record-rate artifact must still estimate")
+        for (e in est) assertTrue(e.bpm in 46..54, "snapped to ${e.bpm} — artifact not removed")
     }
 
     @Test
@@ -115,7 +115,7 @@ class PpgHrTest {
         // A clean 60 bpm pulse is also period-fs but flows smoothly across record boundaries — the
         // boundary gate must NOT treat it as the artifact and erase it.
         val est = PpgHr.estimate(sine(bpm = 60.0, seconds = 10))
-        assertTrue("true 60 bpm must not be notched away", est.isNotEmpty())
-        for (e in est) assertTrue("bpm ${e.bpm} not near 60", e.bpm in 57..63)
+        assertTrue(est.isNotEmpty(), "true 60 bpm must not be notched away")
+        for (e in est) assertTrue(e.bpm in 57..63, "bpm ${e.bpm} not near 60")
     }
 }

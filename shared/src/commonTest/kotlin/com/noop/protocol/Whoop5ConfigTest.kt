@@ -1,7 +1,7 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * Byte-parity tests for the WHOOP 5/MG R22 deep-data enable sequence. The golden frame is shared
@@ -11,7 +11,7 @@ import org.junit.Test
  */
 class Whoop5ConfigTest {
 
-    private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
+    private fun ByteArray.hex() = joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
     @Test
     fun enableR22PacketsGoldenFrame() {
@@ -39,7 +39,7 @@ class Whoop5ConfigTest {
     fun payloadBodyIsAsciiNameNulPaddedWithValueAt32() {
         val body = Whoop5Config.payloadBody("enable_r22_packets", 0x32)
         assertEquals(40, body.size)
-        assertEquals("enable_r22_packets", String(body.copyOfRange(0, 18), Charsets.US_ASCII))
+        assertEquals("enable_r22_packets", body.copyOfRange(0, 18).decodeToString())
         for (i in 18 until 32) assertEquals(0, body[i].toInt())
         assertEquals(0x32, body[32].toInt() and 0xFF)
         for (i in 33 until 40) assertEquals(0, body[i].toInt())

@@ -1,9 +1,9 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * Device-family-aware skin-temp raw→°C conversion (#938). Mirrors the macOS `SkinTempConversionTests`.
@@ -30,8 +30,8 @@ class SkinTempConversionTest {
     fun whoop4WornBaselineLandsInPlausibleBand() {
         for (raw in listOf(826, 830, 845, 859, 865)) {
             val c = skinTempCelsius(raw, DeviceFamily.WHOOP4)
-            assertTrue("worn 4.0 raw $raw → $c °C must clear the 28 °C worn gate", c >= 28.0)
-            assertTrue("worn 4.0 raw $raw → $c °C must stay under the 42 °C worn ceiling", c <= 42.0)
+            assertTrue(c >= 28.0, "worn 4.0 raw $raw → $c °C must clear the 28 °C worn gate")
+            assertTrue(c <= 42.0, "worn 4.0 raw $raw → $c °C must stay under the 42 °C worn ceiling")
         }
         assertEquals(33.0, skinTempCelsius(826, DeviceFamily.WHOOP4), 1e-9)
     }
@@ -39,8 +39,8 @@ class SkinTempConversionTest {
     @Test
     fun whoop4NoContactFloorIsBelowWornGate() {
         for (raw in listOf(506, 514, 520)) {
-            assertTrue("4.0 no-contact floor raw $raw must fall below the worn gate",
-                skinTempCelsius(raw, DeviceFamily.WHOOP4) < 28.0)
+            assertTrue(skinTempCelsius(raw, DeviceFamily.WHOOP4) < 28.0,
+                "4.0 no-contact floor raw $raw must fall below the worn gate")
         }
     }
 

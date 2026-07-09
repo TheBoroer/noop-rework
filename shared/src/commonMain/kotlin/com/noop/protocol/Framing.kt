@@ -122,7 +122,7 @@ class Reassembler(private val family: DeviceFamily = DeviceFamily.WHOOP4) {
             while (cap < tail + fragment.size) cap = cap shl 1
             data = data.copyOf(cap)
         }
-        System.arraycopy(fragment, 0, data, tail, fragment.size)
+        fragment.copyInto(data, destinationOffset = tail)
         tail += fragment.size
     }
 
@@ -134,7 +134,7 @@ class Reassembler(private val family: DeviceFamily = DeviceFamily.WHOOP4) {
     private fun compact() {
         if (head == 0) return
         val remaining = tail - head
-        if (remaining > 0) System.arraycopy(data, head, data, 0, remaining)
+        if (remaining > 0) data.copyInto(data, destinationOffset = 0, startIndex = head, endIndex = head + remaining)
         head = 0
         tail = remaining
     }
@@ -234,7 +234,7 @@ object Framing {
         else -> hexLabel(v)
     }
 
-    private fun hexLabel(v: Int): String = "0x%02X(%d)".format(v, v)
+    private fun hexLabel(v: Int): String = "0x${v.toString(16).uppercase().padStart(2, '0')}($v)"
 
     // MARK: - parse
 
@@ -307,7 +307,7 @@ object Framing {
         val payEnd = frame.size - 4
         if (payEnd > 16) {
             parsed["event_payload_hex"] = frame.copyOfRange(16, payEnd)
-                .joinToString("") { "%02x".format(it) }
+                .joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
         }
         if (EventNumber.fromRaw(evVal) == EventNumber.BATTERY_LEVEL) {
             frame.u16(21)?.let { raw -> if (raw <= 1100) parsed["battery_pct"] = raw.toDouble() / 10.0 }
@@ -368,7 +368,7 @@ object Framing {
         val payEnd = frame.size - 4
         if (payEnd <= 21) return
         val text = frame.copyOfRange(21, payEnd)
-            .toString(Charsets.UTF_8)
+            .decodeToString()
             .trimEnd('\u0000')
         if (text.isNotEmpty()) parsed["console"] = text.take(2048)
     }
@@ -527,7 +527,7 @@ object Framing {
         inner[0] = PacketType.COMMAND.rawValue.toByte()     // type = 35
         inner[1] = (seq and 0xFF).toByte()
         inner[2] = (cmd.rawValue and 0xFF).toByte()
-        System.arraycopy(payload, 0, inner, 3, payload.size)
+        payload.copyInto(inner, destinationOffset = 3)
 
         val length = inner.size + 4
         val lenLo = (length and 0xFF).toByte()
@@ -541,7 +541,7 @@ object Framing {
         frame[i++] = lenLo
         frame[i++] = lenHi
         frame[i++] = headerCrc
-        System.arraycopy(inner, 0, frame, i, inner.size)
+        inner.copyInto(frame, destinationOffset = i)
         i += inner.size
         frame[i++] = (trailer and 0xFFL).toByte()
         frame[i++] = ((trailer ushr 8) and 0xFFL).toByte()
@@ -578,7 +578,7 @@ object Framing {
         inner0[0] = (type and 0xFF).toByte()
         inner0[1] = (seq and 0xFF).toByte()
         inner0[2] = (cmd and 0xFF).toByte()
-        System.arraycopy(payload, 0, inner0, 3, payload.size)
+        payload.copyInto(inner0, destinationOffset = 3)
         // Pad the inner record to a 4-byte boundary before length/CRC, exactly as the strap's maverick
         // framing does (pad4). No-op for the 4-aligned commands shipped so far (toggle HR, historical),
         // but REQUIRED for the 12-byte haptics payload (inner 15 -> 16) — otherwise the declared length
@@ -601,10 +601,10 @@ object Framing {
 
         val frame = ByteArray(6 + 2 + inner.size + 4)
         var i = 0
-        System.arraycopy(head, 0, frame, i, 6); i += 6
+        head.copyInto(frame, destinationOffset = i); i += 6
         frame[i++] = (c16 and 0xFF).toByte()
         frame[i++] = ((c16 ushr 8) and 0xFF).toByte()
-        System.arraycopy(inner, 0, frame, i, inner.size); i += inner.size
+        inner.copyInto(frame, destinationOffset = i); i += inner.size
         frame[i++] = (c32 and 0xFFL).toByte()
         frame[i++] = ((c32 ushr 8) and 0xFFL).toByte()
         frame[i++] = ((c32 ushr 16) and 0xFFL).toByte()

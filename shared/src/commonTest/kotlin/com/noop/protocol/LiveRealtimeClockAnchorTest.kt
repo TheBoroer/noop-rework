@@ -1,7 +1,7 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
  * #126: live REALTIME_DATA carries the strap's OWN timestamp. On a strap with an invalid RTC that value

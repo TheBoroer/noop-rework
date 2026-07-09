@@ -108,11 +108,12 @@ internal object StagerCache {
      *  yet tiny (a night is a handful of StageSegments). Access-order LRU so the hottest nights survive. */
     private const val MAX_NIGHTS = 64
 
-    private val cache: LinkedHashMap<Key, List<StageSegment>> =
-        object : LinkedHashMap<Key, List<StageSegment>>(16, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, List<StageSegment>>): Boolean =
-                size > MAX_NIGHTS
-        }
+    /** Plain access-order map, NOT a `LinkedHashMap` subclass: the K2 multiplatform IR actualizer, which
+     *  now walks the whole module once commonMain carries real declarations (the protocol hoist), crashes
+     *  trying to resolve a fake override for the inherited `get` on any class extending
+     *  `java.util.LinkedHashMap` (subclassing, not anonymity, is the trigger). Eviction is done manually
+     *  at the one put call site below instead of via `removeEldestEntry`; behavior is unchanged. */
+    private val cache: LinkedHashMap<Key, List<StageSegment>> = LinkedHashMap(16, 0.75f, true)
     private val lock = Any()
 
     fun get(key: Key): List<StageSegment>? = synchronized(lock) { cache[key] }
@@ -120,7 +121,10 @@ internal object StagerCache {
     fun put(key: Key, value: List<StageSegment>) {
         // Store a defensive copy so the entry is never the same instance a caller holds (StageSegment is
         // mutable; a caller extending start/end in place would otherwise corrupt the cache).
-        synchronized(lock) { cache[key] = copyOf(value) }
+        synchronized(lock) {
+            cache[key] = copyOf(value)
+            if (cache.size > MAX_NIGHTS) cache.remove(cache.keys.first())
+        }
     }
 
     /** Deep copy of a hypnogram (StageSegment is mutable, so every cache boundary copies). */

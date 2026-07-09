@@ -55,7 +55,7 @@ object Whoop5Config {
      *  offset 32, then 7 zero bytes. (Mirrors judes.club `setConfigPayload(name, value)`.) */
     fun payloadBody(name: String, value: Int): ByteArray {
         val p = ByteArray(40)
-        val bytes = name.toByteArray(Charsets.US_ASCII)
+        val bytes = name.encodeToByteArray()
         for (i in 0 until minOf(32, bytes.size)) p[i] = bytes[i]
         p[32] = (value and 0xFF).toByte()
         return p
@@ -68,7 +68,7 @@ object Whoop5Config {
      *  Keep in lockstep with the Swift `Whoop5Config.deviceConfigBody`. (#181) */
     fun deviceConfigBody(name: String, value: Int): ByteArray {
         val b = ByteArray(33)
-        val bytes = name.toByteArray(Charsets.US_ASCII)
+        val bytes = name.encodeToByteArray()
         for (i in 0 until minOf(32, bytes.size)) b[i] = bytes[i]
         b[32] = (value and 0xFF).toByte()
         return b

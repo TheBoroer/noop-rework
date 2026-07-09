@@ -1,7 +1,8 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Concrete-vector tests for the three frame checksums. The "123456789" check values are the
@@ -12,7 +13,7 @@ import org.junit.Test
  */
 class CrcTest {
 
-    private val check = "123456789".toByteArray(Charsets.US_ASCII)
+    private val check = "123456789".encodeToByteArray()
 
     @Test
     fun crc8_referenceCheckValue() {
@@ -44,7 +45,7 @@ class CrcTest {
     fun crc32_isUnsignedThirtyTwoBit() {
         // Result must always be in 0..0xFFFFFFFF (never negative / sign-extended).
         val v = Crc.crc32(byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()))
-        assert(v in 0L..0xFFFFFFFFL) { "crc32 out of range: $v" }
+        assertTrue(v in 0L..0xFFFFFFFFL, "crc32 out of range: $v")
     }
 
     @Test
