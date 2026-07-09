@@ -1,4 +1,4 @@
-// Root build file — declares plugin versions once; applied per-module in app/build.gradle.kts and
+// Root build file: declares plugin versions once; applied per-module in app/build.gradle.kts and
 // shared/build.gradle.kts.
 // Keep these versions aligned with the shared contract:
 //   Android Gradle Plugin 8.x · Kotlin 2.1.x · KSP matched to the Kotlin version · Room 2.7.x.
