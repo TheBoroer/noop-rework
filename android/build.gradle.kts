@@ -8,4 +8,6 @@ plugins {
     id("com.google.devtools.ksp") version "2.1.21-2.0.1" apply false
     // Kotlin 2.x moves the Compose compiler into this Gradle plugin (was composeOptions).
     id("org.jetbrains.kotlin.plugin.compose") version "2.1.21" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.1.21" apply false
+    id("com.android.library") version "8.5.2" apply false
 }

@@ -129,6 +129,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":shared"))
+
     // --- Compose (BOM pins all Compose artifact versions in lockstep) ---
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)

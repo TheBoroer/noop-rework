@@ -22,3 +22,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "NOOP"
 include(":app")
+
+include(":shared")
+project(":shared").projectDir = file("../shared")
