@@ -2265,16 +2265,17 @@ class WhoopBleClient(
                     restingHr = restingHr,
                     config = NapPrefs.config(context),
                 )
-                if (decision.verdict == NapVerdict.NAP && decision.candidate != null &&
-                    decision.candidate.end > highWater
+                val candidate = decision.candidate
+                if (decision.verdict == NapVerdict.NAP && candidate != null &&
+                    candidate.end > highWater
                 ) {
-                    val queued = NapStore.enqueue(context, decision.candidate, nowSec)
+                    val queued = NapStore.enqueue(context, candidate, nowSec)
                     // Advance the mark past this nap's window so the same window isn't re-judged on the next
                     // overlapping offload — whether or not it newly queued (a dup the user already saw or
                     // dismissed is still "past"). NapStore's own dedup is the belt to this braces.
-                    NapPrefs.setHighWaterTs(context, decision.candidate.end)
+                    NapPrefs.setHighWaterTs(context, candidate.end)
                     if (queued) {
-                        val mins = decision.candidate.durationS / 60
+                        val mins = candidate.durationS / 60
                         log("Nap detection: queued a ~$mins-min nap for review.")
                     }
                 }

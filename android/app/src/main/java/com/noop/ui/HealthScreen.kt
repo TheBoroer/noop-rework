@@ -1711,7 +1711,9 @@ private fun vitalsFor(
     // WHOOP 4.0 raw SpO₂: the (red + IR) / 2 ADC mean per night, present only when both channels
     // decoded for the day. Averaged for a single "signal decoded" tile; both channels stay in the DB. (#93)
     val spo2RawMean: (DailyMetric) -> Double? = { row ->
-        if (row.spo2Red != null && row.spo2Ir != null) (row.spo2Red + row.spo2Ir) / 2.0 else null
+        val red = row.spo2Red
+        val ir = row.spo2Ir
+        if (red != null && ir != null) (red + ir) / 2.0 else null
     }
     val spo2rawRangeCaption =
         rangeCaption(days.mapNotNull(spo2RawMean), "ADC") { String.format(Locale.US, "%.0f", it) }

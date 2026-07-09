@@ -1419,7 +1419,7 @@ class WhoopRepository(private val dao: WhoopDao) {
          * carries), so the day resolves to its own Rest. Consistency is left to the scorer's neutral
          * default here (the daily row carries no regularity term).
          */
-        internal fun dailyColumn(key: String, d: DailyMetric): Double? = when (key) {
+        fun dailyColumn(key: String, d: DailyMetric): Double? = when (key) {
             "recovery" -> d.recovery
             "hrv" -> d.avgHrv
             "rhr", "resting_hr" -> d.restingHr?.toDouble()
@@ -1558,7 +1558,7 @@ class WhoopRepository(private val dao: WhoopDao) {
          * bedtime-SCHEDULE span (a constant 450 min target on the reporter's Pixel) out of every sleep
          * surface while a session-grade import (WHOOP CSV / Xiaomi) still wins exactly as before.
          */
-        internal fun mergeDaily(
+        fun mergeDaily(
             imported: List<DailyMetric>,
             computed: List<DailyMetric>,
             userEditedDays: Set<String> = emptySet(),

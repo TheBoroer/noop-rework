@@ -332,7 +332,7 @@ object RangeReportEngine {
     }
 
     /** Parse "yyyy-MM-dd" into validated integer components (real calendar date only). */
-    internal fun parseYMD(str: String): Triple<Int, Int, Int>? {
+    fun parseYMD(str: String): Triple<Int, Int, Int>? {
         val parts = str.split("-")
         if (parts.size != 3) return null
         val y = parts[0].toIntOrNull() ?: return null

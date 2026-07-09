@@ -327,7 +327,8 @@ private fun caffeineHoursLabel(hrs: Double): String {
 private fun caffeineIntakeLabel(intake: CaffeineIntake, context: Context): String {
     val time = android.text.format.DateFormat.getTimeFormat(context)
         .format(java.util.Date(intake.atEpochSec * 1000L))
-    return if (intake.mg != null) "$time · ${intake.mg.roundToInt()} mg" else "$time · amount not logged"
+    val mg = intake.mg
+    return if (mg != null) "$time · ${mg.roundToInt()} mg" else "$time · amount not logged"
 }
 
 /** A minutes-since-midnight value as a wall-clock label (e.g. "2:30 PM" / "14:30"), respecting the

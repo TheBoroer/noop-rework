@@ -263,10 +263,10 @@ fun HrvSnapshotScreen(
             }
 
             val r = result
-            if (phase == HrvPhase.Done && r != null && r.rmssd != null) {
+            val rmssd = r?.rmssd
+            if (phase == HrvPhase.Done && rmssd != null) {
                 OutlinedButton(
                     onClick = {
-                        val rmssd = r.rmssd
                         val day = hrvDayKey(Date())
                         val row = MetricSeriesRow(
                             deviceId = HRV_SNAPSHOT_SOURCE_ID,

@@ -2833,9 +2833,10 @@ internal fun buildSleepModel(
     // Awake estimate: prefer (time-in-bed − asleep) implied by efficiency; else from
     // disturbances; matches the macOS "awake minutes" carried in the stagesJSON.
     val effFrac = latest.efficiency?.let { if (it > 1.0) it / 100.0 else it }
+    val disturbances = latest.disturbances
     val awake = when {
         effFrac != null && effFrac in 0.01..0.999 -> max(0.0, asleep / effFrac - asleep)
-        latest.disturbances != null -> latest.disturbances * 6.0
+        disturbances != null -> disturbances * 6.0
         else -> 0.0
     }
     val stages = Stages(awake = awake, light = light, deep = deep, rem = rem)

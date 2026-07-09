@@ -1352,10 +1352,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // A session with no scored strain still gets a summary (duration + HR), but without an Effort line.
         val scale = UnitPrefs.effortScale(appContext)
         val durMin = ((row.durationS ?: (row.endTs - row.startTs).toDouble()) / 60.0).roundToInt()
-        val (title, body) = if (row.strain != null) {
+        val strain = row.strain
+        val (title, body) = if (strain != null) {
             ScheduledReportPolicy.workoutCopy(
                 sportLabel = WorkoutEditing.displaySport(row.sport),
-                effortDisplay = UnitFormatter.effortDisplay(row.strain, scale),
+                effortDisplay = UnitFormatter.effortDisplay(strain, scale),
                 effortMaxLabel = UnitFormatter.effortScaleMax(scale),
                 durationLabel = ScheduledReportPolicy.durationLabel(durMin),
                 avgHr = row.avgHr,

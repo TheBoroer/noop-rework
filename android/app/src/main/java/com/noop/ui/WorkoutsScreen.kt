@@ -1285,12 +1285,15 @@ private fun WorkoutDetailSheet(vm: AppViewModel, row: WorkoutRow, onDismiss: () 
             DetailRow("Duration", durationLabel(row.durationS))
             if (row.avgHr != null) DetailRow("Avg HR", "${row.avgHr} bpm")
             if (row.maxHr != null) DetailRow("Max HR", "${row.maxHr} bpm")
-            if (row.energyKcal != null) DetailRow("Calories", "${grouped(row.energyKcal)} kcal")
-            if (row.distanceM != null) {
+            val energyKcal = row.energyKcal
+            if (energyKcal != null) DetailRow("Calories", "${grouped(energyKcal)} kcal")
+            val distanceM = row.distanceM
+            if (distanceM != null) {
                 val unitSystem = UnitPrefs.system(LocalContext.current)
-                DetailRow("Distance", UnitFormatter.distanceFromKilometers(row.distanceM / 1000.0, unitSystem))
+                DetailRow("Distance", UnitFormatter.distanceFromKilometers(distanceM / 1000.0, unitSystem))
             }
-            if (!row.notes.isNullOrBlank()) DetailRow("Notes", row.notes)
+            val notes = row.notes
+            if (!notes.isNullOrBlank()) DetailRow("Notes", notes)
 
             // #796 - per-session Effort contribution. The session's captured strain re-homed from a plain
             // value row into a prominent Effort-amber card (the big count-up value + the "This session"
@@ -1328,7 +1331,8 @@ private fun WorkoutDetailSheet(vm: AppViewModel, row: WorkoutRow, onDismiss: () 
                 // Parity with macOS WorkoutDetailView.avgHrEditedDisclosure.
                 val traceMean = hrCurve.sum() / hrCurve.size
                 val captured = row.strain != null || !row.zonesJSON.isNullOrEmpty()
-                if (captured && row.avgHr != null && kotlin.math.abs(row.avgHr - traceMean) > 3.0) {
+                val avgHr = row.avgHr
+                if (captured && avgHr != null && kotlin.math.abs(avgHr - traceMean) > 3.0) {
                     Text(
                         "The average above was edited. The graph, zones and Effort stay from the recorded session.",
                         style = NoopType.footnote,

@@ -52,7 +52,7 @@ object WhoopCsvExporter {
      * "literal text". Numbers never pass through csvField (they use num()), so this only ever
      * touches free text such as source names. Mirrors the Swift exporter's field().
      */
-    internal fun csvField(raw: String?): String {
+    fun csvField(raw: String?): String {
         if (raw.isNullOrEmpty()) return ""
         val safe = if (raw.first() in "=+-@\t\r") "'$raw" else raw
         if (safe.none { it == ',' || it == '"' || it == '\n' || it == '\r' }) return safe
@@ -61,13 +61,13 @@ object WhoopCsvExporter {
 
     /** Locale-proof numbers: integral Doubles print without a trailing ".0"; Double.toString uses
      *  '.' regardless of locale, so the importer's parse can't be defeated by a comma decimal. */
-    internal fun num(v: Double?): String = when {
+    fun num(v: Double?): String = when {
         v == null -> ""
         v == floor(v) && abs(v) < 1e12 -> v.toLong().toString()
         else -> v.toString()
     }
 
-    internal fun num(v: Int?): String = v?.toString() ?: ""
+    fun num(v: Int?): String = v?.toString() ?: ""
 
     // --- Tolerant decoders for the cache's polymorphic JSON columns ---
 
