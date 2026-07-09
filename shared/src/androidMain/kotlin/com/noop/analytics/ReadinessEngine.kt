@@ -1,3 +1,4 @@
+// PHASE2: hoist (java.util.Locale-based formatting, plus com.noop.data dependency; needs multiplatform work beyond Task 8)
 package com.noop.analytics
 
 import com.noop.data.DailyMetric

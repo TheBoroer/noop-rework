@@ -1,3 +1,4 @@
+// PHASE2: hoist (java.util.TimeZone usage, plus com.noop.data dependency; needs kotlinx-datetime work beyond Task 8)
 package com.noop.analytics
 
 import com.noop.data.MetricSeriesRow

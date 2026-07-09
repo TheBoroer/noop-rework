@@ -1,3 +1,4 @@
+// PHASE2: hoist (transitively blocked via Auth.kt's javax.crypto dependency)
 package com.noop.oura
 
 // OuraDriver: the transport-agnostic protocol state machine. Kotlin twin of OuraDriver.swift. It holds

@@ -1,3 +1,4 @@
+// PHASE2: hoist (java.time + org.json usage, plus com.noop.data dependency; needs multiplatform date/JSON work beyond Task 8)
 package com.noop.analytics
 
 import com.noop.data.DailyMetric

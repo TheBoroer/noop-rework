@@ -1,3 +1,4 @@
+// PHASE2: hoist (java.lang.Character.getType Unicode-category classification has no multiplatform stdlib equivalent)
 package com.noop.analytics
 
 // ImportTrace.kt - Kotlin twin of ImportTrace.swift. Pure line formatters + the live-readout parser for

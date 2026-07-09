@@ -1,3 +1,4 @@
+// PHASE2: hoist (transitively blocked via ExerciseTypes.kt's androidx.health.connect dependency, Android-platform-only)
 package com.noop.analytics
 
 import com.noop.ingest.ExerciseTypes

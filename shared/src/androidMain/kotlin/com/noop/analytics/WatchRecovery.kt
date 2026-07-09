@@ -1,3 +1,4 @@
+// PHASE2: hoist (transitively blocked via Baselines.kt's android.content.SharedPreferences + java.time usage)
 package com.noop.analytics
 
 /**

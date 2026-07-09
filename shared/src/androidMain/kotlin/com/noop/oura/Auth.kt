@@ -1,3 +1,4 @@
+// PHASE2: hoist (javax.crypto Cipher/SecretKeySpec usage needs a multiplatform crypto library)
 package com.noop.oura
 
 import javax.crypto.Cipher

@@ -1,3 +1,4 @@
+// PHASE2: hoist (android.content.Context dependency needs a multiplatform settings/preferences abstraction)
 package com.noop.analytics
 
 import android.content.Context

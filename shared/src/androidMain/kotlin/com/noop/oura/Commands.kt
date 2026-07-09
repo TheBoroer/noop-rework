@@ -1,3 +1,4 @@
+// PHASE2: hoist (transitively blocked via Auth.kt's javax.crypto dependency)
 package com.noop.oura
 
 // Commands: byte-exact opcode builders (OURA_PROTOCOL.md s4 / s5). Kotlin twin of Commands.swift.

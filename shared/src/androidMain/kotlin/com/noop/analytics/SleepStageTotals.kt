@@ -1,3 +1,4 @@
+// PHASE2: hoist (org.json JSONArray/JSONObject usage, no multiplatform JSON parser in scope this phase)
 package com.noop.analytics
 
 import org.json.JSONArray

@@ -1,3 +1,4 @@
+// PHASE2: hoist (String.format with java.util.Locale for %.1f formatting needs a multiplatform decimal formatter)
 package com.noop.analytics
 
 // DisplayTrace.kt - Kotlin twin of DisplayTrace.swift. Pure values + line formatters for the Display &
