@@ -10,12 +10,13 @@ import platform.Foundation.systemTimeZone
 import platform.Foundation.timeZoneWithName
 
 /**
- * iOS actual: `NSDateFormatter`'s own SHORT time style - the same "device's own 12-/24-hour
- * convention" contract as the Android actual. Foundation ships with every Kotlin/Native iOS target
- * (no extra cinterop config needed; this repo already depends on it elsewhere, e.g.
- * `NSTemporaryDirectory` in `WhoopDatabaseSmokeTest`). `dateStyle` is forced to `.none` so the output
- * is time-only, matching `DateFormat.getTimeInstance`'s time-only contract on the Android side.
- * `zoneId = null` uses `NSTimeZone.systemTimeZone`, iOS's analogue of `TimeZone.getDefault()`.
+ * Apple actual (iOS + macOS, generalized from iosMain to appleMain in Phase 2b Task 1):
+ * `NSDateFormatter`'s own SHORT time style - the same "device's own 12-/24-hour convention"
+ * contract as the Android actual. Foundation ships with every Kotlin/Native Apple target (no extra
+ * cinterop config needed; this repo already depends on it elsewhere, e.g. `NSTemporaryDirectory` in
+ * `WhoopDatabaseSmokeTest`). `dateStyle` is forced to `.none` so the output is time-only, matching
+ * `DateFormat.getTimeInstance`'s time-only contract on the Android side. `zoneId = null` uses
+ * `NSTimeZone.systemTimeZone`, the Apple analogue of `TimeZone.getDefault()`.
  */
 actual fun formatShortTime(epochSeconds: Long, zoneId: String?): String {
     val date = NSDate.dateWithTimeIntervalSince1970(epochSeconds.toDouble())

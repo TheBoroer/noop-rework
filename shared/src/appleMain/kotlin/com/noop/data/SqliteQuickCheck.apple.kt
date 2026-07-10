@@ -6,12 +6,13 @@ import androidx.sqlite.driver.bundled.SQLITE_OPEN_READONLY
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 
 /**
- * iOS actuals for the [BackupRestore] SQLite probes, on the bundled SQLite driver (the same
- * driver the shared Room database uses on iOS, Task 5). Read-only open first: the probe must
- * never mutate the file it judges; the read-write fallback mirrors the Android actual (a
- * checkpointed backup is ours to touch, and open-time recovery is not a content change). The
- * bundled driver never deletes a corrupt file (unlike Android's framework default handler), so
- * no preserve-on-corruption armour is needed here.
+ * Apple actuals (iOS + macOS, generalized from iosMain to appleMain in Phase 2b Task 1) for the
+ * [BackupRestore] SQLite probes, on the bundled SQLite driver (the same driver the shared Room
+ * database uses on Apple targets, Task 5). Read-only open first: the probe must never mutate the
+ * file it judges; the read-write fallback mirrors the Android actual (a checkpointed backup is
+ * ours to touch, and open-time recovery is not a content change). The bundled driver never
+ * deletes a corrupt file (unlike Android's framework default handler), so no
+ * preserve-on-corruption armour is needed here.
  */
 
 private fun openConnection(path: String): Result<SQLiteConnection> =
