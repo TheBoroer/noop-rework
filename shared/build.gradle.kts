@@ -3,6 +3,7 @@ plugins {
     id("com.android.library")
     id("com.google.devtools.ksp")
     id("androidx.room") version "2.7.1"
+    kotlin("plugin.serialization")
 }
 
 kotlin {
@@ -21,6 +22,12 @@ kotlin {
             // Room 2.7 entity/DAO annotations are commonMain-safe; the entities/DAOs hoisted from
             // androidMain need this to resolve. The database builder itself stays androidMain (Task 8).
             implementation("androidx.room:room-runtime:2.7.1")
+
+            // Phase 2a: KMP multiplatform deps.
+            implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+            implementation("org.jetbrains.kotlinx:atomicfu:0.26.1")
+            implementation("com.squareup.okio:okio:3.9.0")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
