@@ -1,9 +1,9 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.test.Test
 import kotlin.math.sqrt
 
 /**
@@ -25,17 +25,17 @@ class Whoop4HistoricalV25Test {
     @Test fun v25DecodesUnixAndGravity() {
         for (rec in records) {
             val p = decodeHistorical(rec, DeviceFamily.WHOOP4)
-            assertNotNull("v25 record must decode (not rejected)", p)
+            assertNotNull(p, "v25 record must decode (not rejected)")
             assertEquals(25, p!!["hist_version"])
             val unix = p["unix"] as? Int
             assertNotNull(unix)
             assertTrue(unix!! > 1_781_000_000)
             val gx = p["gravity_x"] as? Double
-            assertNotNull("v25 must decode gravity (the sleep-staging input)", gx)
+            assertNotNull(gx, "v25 must decode gravity (the sleep-staging input)")
             val gy = (p["gravity_y"] as? Double) ?: 0.0
             val gz = (p["gravity_z"] as? Double) ?: 0.0
             val mag = sqrt(gx!! * gx + gy * gy + gz * gz)
-            assertTrue("|gravity| ~1 g, got $mag", mag in 0.8..1.2)
+            assertTrue(mag in 0.8..1.2, "|gravity| ~1 g, got $mag")
         }
         // unix increments 1 Hz across the three.
         val ts = records.map { decodeHistorical(it, DeviceFamily.WHOOP4)!!["unix"] as Int }
@@ -43,8 +43,7 @@ class Whoop4HistoricalV25Test {
     }
 
     @Test fun v25NotRejected() {
-        assertTrue("v25 records carry gravity and must not be treated as undecodable",
-            rejectedHistoricalRecords(records, DeviceFamily.WHOOP4).isEmpty())
+        assertTrue(rejectedHistoricalRecords(records, DeviceFamily.WHOOP4).isEmpty(), "v25 records carry gravity and must not be treated as undecodable")
     }
 
     @Test fun v25ProducesGravityStream() {

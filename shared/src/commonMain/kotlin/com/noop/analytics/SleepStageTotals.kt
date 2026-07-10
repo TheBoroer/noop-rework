@@ -1,8 +1,18 @@
-// PHASE2: hoist (org.json JSONArray/JSONObject usage, no multiplatform JSON parser in scope this phase)
 package com.noop.analytics
 
-import org.json.JSONArray
-import org.json.JSONObject
+import com.noop.util.optDouble
+import com.noop.util.optLong
+import com.noop.util.optString
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.roundToLong
+import kotlin.math.sin
+import kotlin.math.sqrt
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Decode a sleep session's `stagesJSON` into stage MINUTE totals, and aggregate a night's blocks into
@@ -54,32 +64,39 @@ object SleepStageTotals {
      */
     fun minutes(stagesJSON: String?): Minutes? {
         val json = stagesJSON ?: return null
-        val arr = try {
-            JSONArray(json)
+        // Parse ONCE and branch on the decoded shape, rather than the original's try-JSONArray-then-
+        // fall-back-to-JSONObject: `Json.parseToJsonElement` throws on malformed input exactly like
+        // `JSONArray(json)` did (caught below, -> null); a well-formed non-array/non-object payload
+        // falls into the same "nothing usable" null the original's outer catch-all reached.
+        val element = try {
+            Json.parseToJsonElement(json)
         } catch (_: Throwable) {
+            return null
+        }
+        if (element is JsonObject) {
             // Object/dict shape {"awake":N,"light":N,"deep":N,"rem":N} of minute totals (imported
             // sessions). Mirrors Swift minutes(fromStagesJSON:)'s dict branch so imported sleep decodes
             // on Android too, not just the segment-array shapes.
-            val dict = try { JSONObject(json) } catch (_: Throwable) { return null }
             val md = Minutes()
-            md.awake = dict.optDouble("awake", 0.0)
-            md.light = dict.optDouble("light", 0.0)
-            md.deep = dict.optDouble("deep", 0.0)
-            md.rem = dict.optDouble("rem", 0.0)
+            md.awake = element.optDouble("awake", 0.0)
+            md.light = element.optDouble("light", 0.0)
+            md.deep = element.optDouble("deep", 0.0)
+            md.rem = element.optDouble("rem", 0.0)
             return if (md.inBed > 0.0) md else null
         }
+        val arr = element as? JsonArray ?: return null
         val m = Minutes()
-        for (i in 0 until arr.length()) {
-            val seg = arr.optJSONObject(i) ?: continue
+        for (item in arr) {
+            val seg = item as? JsonObject ?: continue
             val name = seg.optString("stage", "")
             // Per-segment SECONDS span (computed/edited) → minutes; else a direct minute total (imported).
             val mins = when {
-                seg.has("start") && seg.has("end") -> {
+                seg.containsKey("start") && seg.containsKey("end") -> {
                     val s = seg.optLong("start")
                     val e = seg.optLong("end")
                     if (e > s) (e - s) / 60.0 else continue
                 }
-                seg.has("min") -> seg.optDouble("min", 0.0)
+                seg.containsKey("min") -> seg.optDouble("min", 0.0)
                 else -> continue
             }
             if (mins <= 0.0) continue
@@ -174,7 +191,7 @@ object SleepStageTotals {
     /** Smallest circular distance (seconds, 0..43200) between two times-of-day, so 23:30 and 00:30 are
      *  3600s apart, not 82800. Both inputs are seconds-of-day in [0, 86400). Mirrors Swift. */
     internal fun circularDistanceSec(a: Long, b: Long): Long {
-        val raw = Math.abs(a - b) % SECONDS_PER_DAY
+        val raw = abs(a - b) % SECONDS_PER_DAY
         return minOf(raw, SECONDS_PER_DAY - raw)
     }
 
@@ -700,18 +717,22 @@ object SleepStageTotals {
         if (secs.isEmpty()) return null
         var sumSin = 0.0
         var sumCos = 0.0
-        val k = 2.0 * Math.PI / SECONDS_PER_DAY.toDouble()
+        val k = 2.0 * PI / SECONDS_PER_DAY.toDouble()
         for (s in secs) {
             val a = s.toDouble() * k
-            sumSin += Math.sin(a)
-            sumCos += Math.cos(a)
+            sumSin += sin(a)
+            sumCos += cos(a)
         }
         // Resultant length R = |(Σsin, Σcos)| / n. Below epsilon the direction is meaningless.
-        val resultant = Math.sqrt(sumSin * sumSin + sumCos * sumCos) / secs.size.toDouble()
+        val resultant = sqrt(sumSin * sumSin + sumCos * sumCos) / secs.size.toDouble()
         if (resultant < CIRCULAR_MEAN_MIN_RESULTANT) return null
-        var ang = Math.atan2(sumSin, sumCos)          // [-π, π]
-        if (ang < 0) ang += 2.0 * Math.PI             // → [0, 2π)
-        val sec = Math.round(ang / k) % SECONDS_PER_DAY
+        var ang = atan2(sumSin, sumCos)                // [-π, π]
+        if (ang < 0) ang += 2.0 * PI                   // → [0, 2π)
+        // Math.round(double): Long semantics (floor(x + 0.5), ties toward +infinity) == Kotlin's
+        // roundToLong() (this repo's established Task 2 mapping for java.lang.Math.round on
+        // Kotlin/Native, which has no java.lang.Math). ang/k is always >= 0 here (ang in [0,2π)), so
+        // "ties toward +infinity" and "ties away from zero" coincide -- no sign-edge-case difference.
+        val sec = (ang / k).roundToLong() % SECONDS_PER_DAY
         return ((sec % SECONDS_PER_DAY) + SECONDS_PER_DAY) % SECONDS_PER_DAY
     }
 }

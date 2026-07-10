@@ -1,12 +1,12 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 /**
  * #525 — sleep numbers must agree across screens. A day can hold an overnight AND a daytime nap; the
@@ -67,17 +67,11 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(f3, f3 + 150 * 60),
             SleepStageTotals.NightBlock(nap, nap + 3600),
         )
-        assertEquals(
-            "all three bridged night fragments are the main group; the afternoon nap is excluded",
-            listOf(0, 1, 2), SleepStageTotals.mainNightGroupIndices(blocks, 0L),
-        )
+        assertEquals(listOf(0, 1, 2), SleepStageTotals.mainNightGroupIndices(blocks, 0L), "all three bridged night fragments are the main group; the afternoon nap is excluded")
         val single = SleepStageTotals.mainNightIndex(blocks, 0L)
         assertNotNull(single)
-        assertTrue("the bare winner is one of the night fragments, never the nap", single!! in listOf(0, 1, 2))
-        assertTrue(
-            "the afternoon nap is never in the main-night group",
-            SleepStageTotals.mainNightGroupIndices(blocks, 0L)?.contains(3) == false,
-        )
+        assertTrue(single!! in listOf(0, 1, 2), "the bare winner is one of the night fragments, never the nap")
+        assertTrue(SleepStageTotals.mainNightGroupIndices(blocks, 0L)?.contains(3) == false, "the afternoon nap is never in the main-night group")
     }
 
     @Test
@@ -114,10 +108,10 @@ class MainNightConsistencyTest {
             offsetSec = 0L,
         )
         assertNotNull(r)
-        assertEquals("day total = MAIN night, not night+nap sum", mainOnly.totalSleepMin, r!!.sleep.totalSleepMin, 1e-6)
+        assertEquals(mainOnly.totalSleepMin, r!!.sleep.totalSleepMin, 1e-6, "day total = MAIN night, not night+nap sum")
         assertEquals(mainOnly.deepMin, r.sleep.deepMin, 1e-6)
         assertEquals(mainOnly.remMin, r.sleep.remMin, 1e-6)
-        assertNotEquals("must NOT sum the nap in", 440.0, r.sleep.totalSleepMin, 1e-6)
+        assertNotEquals(440.0, r.sleep.totalSleepMin, 1e-6, "must NOT sum the nap in")
     }
 
     @Test
@@ -135,7 +129,7 @@ class MainNightConsistencyTest {
         )
         assertNotNull(r)
         assertTrue(r!!.editApplied)
-        assertEquals("tracks the EDITED main night, nap excluded", 296.0, r.sleep.totalSleepMin, 1e-6)
+        assertEquals(296.0, r.sleep.totalSleepMin, 1e-6, "tracks the EDITED main night, nap excluded")
     }
 
     @Test
@@ -197,11 +191,11 @@ class MainNightConsistencyTest {
         assertNotNull(r)
         assertFalse(r!!.editApplied)
         // Asleep is the SUM of the two fragments (400 min); the gap is awake, not sleep.
-        assertEquals("asleep is the sum of both fragments", 400.0, r.sleep.totalSleepMin, 1e-6)
+        assertEquals(400.0, r.sleep.totalSleepMin, 1e-6, "asleep is the sum of both fragments")
         // In-bed = 180 + 220 + 20 (gap) = 420 min. Awake = in-bed − asleep = 20 min (the gap), NOT ~0.
         val awakeMin = r.sleep.totalSleepMin / r.sleep.efficiency - r.sleep.totalSleepMin
-        assertEquals("the 20-min out-of-bed gap reads as ~20 min awake (#777)", 20.0, awakeMin, 0.01)
-        assertEquals("efficiency reflects the gap", 400.0 / 420.0, r.sleep.efficiency, 1e-4)
+        assertEquals(20.0, awakeMin, 0.01, "the 20-min out-of-bed gap reads as ~20 min awake (#777)")
+        assertEquals(400.0 / 420.0, r.sleep.efficiency, 1e-4, "efficiency reflects the gap")
     }
 
     /** The seam definition and the standalone aggregate agree to the minute (no double-count): feeding the
@@ -232,8 +226,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(dayLong, dayLong + 7 * 3600),       // 420 + ~0 bonus
             SleepStageTotals.NightBlock(nightFrag, nightFrag + 90 * 60),    // 90 + up-to-90 bonus
         )
-        assertEquals("7h daytime sleep outscores a 1.5h overnight fragment", 0,
-            SleepStageTotals.mainNightIndex(blocks, 0L))
+        assertEquals(0, SleepStageTotals.mainNightIndex(blocks, 0L), "7h daytime sleep outscores a 1.5h overnight fragment")
     }
 
     /** The reconciled window: a 10:30 onset is overnight under [20:00,11:00) (off-by-one fixed), so it no
@@ -247,8 +240,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(nap, nap + 3 * 3600),
             SleepStageTotals.NightBlock(early, early + 3 * 3600),
         )
-        assertEquals("score tie → earlier onset; the [10,11) boundary no longer disagrees", 1,
-            SleepStageTotals.mainNightIndex(blocks, 0L))
+        assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L), "score tie → earlier onset; the [10,11) boundary no longer disagrees")
     }
 
     /** A late/shift sleeper: a 14:00 habitual midsleep makes a daytime sleep the MAIN block. */
@@ -261,10 +253,8 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(nightBlock, nightBlock + 6 * 3600),
             SleepStageTotals.NightBlock(dayBlock, dayBlock + 6 * 3600),
         )
-        assertEquals("with a 14:00 habitual midsleep the daytime sleep is main", 1,
-            SleepStageTotals.mainNightIndex(blocks, 0L, habitual))
-        assertEquals("cold-start band still favors the overnight block", 0,
-            SleepStageTotals.mainNightIndex(blocks, 0L))
+        assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L, habitual), "with a 14:00 habitual midsleep the daytime sleep is main")
+        assertEquals(0, SleepStageTotals.mainNightIndex(blocks, 0L), "cold-start band still favors the overnight block")
     }
 
     /** #518 intent preserved via TIMING, not a gate: a 4h habitual-night block beats a 5h afternoon block. */
@@ -277,8 +267,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(afternoon, afternoon + 5 * 3600),
             SleepStageTotals.NightBlock(night, night + 4 * 3600),
         )
-        assertEquals("habitual-aligned 4h night beats a 5h afternoon (timing, not a hard floor)", 1,
-            SleepStageTotals.mainNightIndex(blocks, 0L, habitual))
+        assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L, habitual), "habitual-aligned 4h night beats a 5h afternoon (timing, not a hard floor)")
     }
 
     // ── #518 invariant (R1): a realistic daytime nap can NEVER out-rank the real night ───────────────
@@ -306,10 +295,7 @@ class MainNightConsistencyTest {
                 SleepStageTotals.NightBlock(pStart, pStart + pm * 60L),
                 SleepStageTotals.NightBlock(nStart, nStart + nh * 3600L),
             )
-            assertEquals(
-                "cold-start: a ${pm}min nap must NOT out-rank a ${nh}h night",
-                1, SleepStageTotals.mainNightIndex(blocks, 0L),
-            )
+            assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L), "cold-start: a ${pm}min nap must NOT out-rank a ${nh}h night")
         }
     }
 
@@ -327,10 +313,7 @@ class MainNightConsistencyTest {
                 SleepStageTotals.NightBlock(pStart, pStart + pm * 60L),
                 SleepStageTotals.NightBlock(nStart, nStart + nh * 3600L),
             )
-            assertEquals(
-                "learned: a ${pm}min nap must NOT out-rank a ${nh}h night",
-                1, SleepStageTotals.mainNightIndex(blocks, 0L, habitual),
-            )
+            assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L, habitual), "learned: a ${pm}min nap must NOT out-rank a ${nh}h night")
         }
     }
 
@@ -346,8 +329,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(bestNap, bestNap + 180 * 60L),
             SleepStageTotals.NightBlock(night, night + 4 * 3600L),
         )
-        assertEquals("worst-case realistic doze (210) still loses to a barely-timed 4h night (240)",
-            1, SleepStageTotals.mainNightIndex(blocks, 0L))
+        assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L), "worst-case realistic doze (210) still loses to a barely-timed 4h night (240)")
     }
 
     /** The genuinely-ambiguous case is NOT a regression and is DEFENSIBLE: a short 4h night + a LONG 6h
@@ -362,10 +344,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(night, night + 4 * 3600L),
             SleepStageTotals.NightBlock(dayLong, dayLong + 6 * 3600L),
         )
-        assertEquals(
-            "a 6h daytime sleep (360) beats a 4h night even WITH its bonus (315) — longest wins, by design",
-            1, SleepStageTotals.mainNightIndex(blocks, 0L),
-        )
+        assertEquals(1, SleepStageTotals.mainNightIndex(blocks, 0L), "a 6h daytime sleep (360) beats a 4h night even WITH its bonus (315) — longest wins, by design")
     }
 
     /** Nap-only day (NO hard duration floor): a lone short nap still resolves to a main block. */
@@ -380,7 +359,7 @@ class MainNightConsistencyTest {
             onsetByStart = mapOf(nap to nap), offsetSec = 0L,
         )
         assertNotNull(r)
-        assertEquals("nap-only day reports the nap's sleep", 38.0, r!!.sleep.totalSleepMin, 1e-6)
+        assertEquals(38.0, r!!.sleep.totalSleepMin, 1e-6, "nap-only day reports the nap's sleep")
     }
 
     /** Biphasic / bridged night: two runs separated by a < 60 min wake are one block for selection. */
@@ -392,7 +371,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(a, a + 3 * 3600),
             SleepStageTotals.NightBlock(bStart, bStart + 3 * 3600),
         ))
-        assertEquals("a < 60 min wake gap bridges the two runs", 1, bridged.size)
+        assertEquals(1, bridged.size, "a < 60 min wake gap bridges the two runs")
         assertEquals(a, bridged[0].start)
         assertEquals(bStart + 3 * 3600, bridged[0].end)
         val cStart = a + 3 * 3600 + 75 * 60
@@ -400,7 +379,7 @@ class MainNightConsistencyTest {
             SleepStageTotals.NightBlock(a, a + 3 * 3600),
             SleepStageTotals.NightBlock(cStart, cStart + 3 * 3600),
         ))
-        assertEquals("a >= 60 min wake gap stays two blocks", 2, unbridged.size)
+        assertEquals(2, unbridged.size, "a >= 60 min wake gap stays two blocks")
     }
 
     /** Cross-midnight onset: a 23:30 onset is overnight and its midpoint math wraps correctly. */
@@ -450,7 +429,7 @@ class MainNightConsistencyTest {
         }
         val mid = SleepStageTotals.habitualMidsleepSec(hist, 0L)
         assertNotNull(mid)
-        assertEquals("midsleep is the night's midpoint, naps excluded", sod(2, 30), mid!!)
+        assertEquals(sod(2, 30), mid!!, "midsleep is the night's midpoint, naps excluded")
     }
 
     /** Circular learning across midnight: mids at 23:30 and 00:30 average to ~midnight, not noon. */
@@ -466,7 +445,7 @@ class MainNightConsistencyTest {
         val mid = SleepStageTotals.habitualMidsleepSec(hist, 0L)
         assertNotNull(mid)
         val dist = SleepStageTotals.circularDistanceSec(mid!!, sod(0, 0))
-        assertTrue("circular mean of 23:30/00:30 ≈ midnight, not noon", dist < 120L)
+        assertTrue(dist < 120L, "circular mean of 23:30/00:30 ≈ midnight, not noon")
     }
 
     // ── #547 Caveat A: the UI selector and the engine selector agree for a SHIFT sleeper ───────────
@@ -493,9 +472,8 @@ class MainNightConsistencyTest {
             hist.add(SleepStageTotals.HistoryBlock(onset, onset + 6 * 3600, "day-$d"))
         }
         val habitual = SleepStageTotals.habitualMidsleepSec(hist, 0L)
-        assertNotNull("20 afternoon nights clear the cold-start threshold", habitual)
-        assertTrue("learned midsleep is ~15:00 for this shift sleeper",
-            SleepStageTotals.circularDistanceSec(habitual!!, sod(15, 0)) < 120L)
+        assertNotNull(habitual, "20 afternoon nights clear the cold-start threshold")
+        assertTrue(SleepStageTotals.circularDistanceSec(habitual!!, sod(15, 0)) < 120L, "learned midsleep is ~15:00 for this shift sleeper")
 
         // 2) A target day with BOTH an afternoon main sleep (mid ~15:00, on the habitual) AND a shorter
         //    overnight block. Index 0 = overnight, index 1 = afternoon (input order is irrelevant).
@@ -508,16 +486,16 @@ class MainNightConsistencyTest {
 
         // The shared selector WITH the learned habitual (what BOTH the UI hero AND the engine now use).
         val withHabitual = SleepStageTotals.mainNightIndex(blocks, 0L, habitual)
-        assertEquals("with the learned ~15:00 habitual, the afternoon block is main (engine + UI agree)",
-            1, withHabitual)
+        assertEquals(1, withHabitual, "with the learned ~15:00 habitual, the afternoon block is main (engine + UI agree)")
 
         // The OLD cold-start UI call (null habitual) diverged — it picked the overnight block. This is the
         // exact bug Caveat A removes by feeding the same learned habitual to the UI selector.
         val coldStart = SleepStageTotals.mainNightIndex(blocks, 0L)
-        assertEquals("cold-start band picks the overnight block — the pre-fix UI/engine divergence",
-            0, coldStart)
-        assertNotEquals("the learned habitual is exactly what makes the UI agree with the engine",
-            withHabitual, coldStart)
+        assertEquals(0, coldStart, "cold-start band picks the overnight block — the pre-fix UI/engine divergence")
+        assertNotEquals(
+            withHabitual, coldStart,
+            "the learned habitual is exactly what makes the UI agree with the engine",
+        )
     }
 
     // ── #547 Caveat B: circularMeanSec degenerate-vector guard ────────────────────────────────────
@@ -528,8 +506,7 @@ class MainNightConsistencyTest {
     @Test
     fun circularMeanReturnsNullForAntipodalMidpoints() {
         val secs = (0 until 8).flatMap { listOf(sod(0, 0), sod(12, 0)) }   // 16 values, perfectly antipodal
-        assertNull("antipodal midpoints → degenerate resultant → null (no meaningless angle)",
-            SleepStageTotals.circularMeanSec(secs))
+        assertNull(SleepStageTotals.circularMeanSec(secs), "antipodal midpoints → degenerate resultant → null (no meaningless angle)")
     }
 
     /** The guard also fires end-to-end: a 16-day history split evenly between two antipodal sleep times
@@ -544,8 +521,7 @@ class MainNightConsistencyTest {
             val onset = baseOnset + d * 86_400L
             hist.add(SleepStageTotals.HistoryBlock(onset, onset + 7 * 3600, "day-$d"))
         }
-        assertNull("antipodal learned timing → null (cold-start fallback), not a meaningless anchor",
-            SleepStageTotals.habitualMidsleepSec(hist, 0L))
+        assertNull(SleepStageTotals.habitualMidsleepSec(hist, 0L), "antipodal learned timing → null (cold-start fallback), not a meaningless anchor")
     }
 
     // ── #547 wire-through: effective (edited) onset crosses the boundary (audit finding C / #8) ────
@@ -564,15 +540,9 @@ class MainNightConsistencyTest {
         val napStages = """{"awake":0,"light":170,"deep":90,"rem":80}"""    // 340 asleep (longer)
         val blocksByStages = listOf(detectedStart to mainStages, napStart to napStages)
         val onEffective = mapOf(detectedStart to effectiveStart, napStart to napStart)
-        assertEquals(
-            "effective overnight onset earns the bonus → the main block wins", 0,
-            SleepStageTotals.mainNightIndexByStages(blocksByStages, onEffective, 0L),
-        )
+        assertEquals(0, SleepStageTotals.mainNightIndexByStages(blocksByStages, onEffective, 0L), "effective overnight onset earns the bonus → the main block wins")
         val onDetected = mapOf(detectedStart to detectedStart, napStart to napStart)
-        assertEquals(
-            "detected onset misses the bonus → the longer nap mis-wins (the finding-C bug)", 1,
-            SleepStageTotals.mainNightIndexByStages(blocksByStages, onDetected, 0L),
-        )
+        assertEquals(1, SleepStageTotals.mainNightIndexByStages(blocksByStages, onDetected, 0L), "detected onset misses the bonus → the longer nap mis-wins (the finding-C bug)")
         val r = SleepStageTotals.dailyAggregateHonoringEdits(
             detected = listOf(detectedStart to mainStages, napStart to napStages),
             edited = mapOf(detectedStart to mainStages),
@@ -580,10 +550,7 @@ class MainNightConsistencyTest {
         )
         assertNotNull(r)
         assertTrue(r!!.editApplied)
-        assertEquals(
-            "seam scores on the EFFECTIVE onset → the corrected overnight block is the day total",
-            300.0, r.sleep.totalSleepMin, 1e-6,
-        )
+        assertEquals(300.0, r.sleep.totalSleepMin, 1e-6, "seam scores on the EFFECTIVE onset → the corrected overnight block is the day total")
     }
 
     /** The habitual midsleep threads through the seam: an afternoon habitual makes a longer afternoon
@@ -603,10 +570,7 @@ class MainNightConsistencyTest {
             habitualMidsleepSec = habitual,
         )
         assertNotNull(r)
-        assertEquals(
-            "afternoon habitual → the on-timing afternoon block is the headline total",
-            360.0, r!!.sleep.totalSleepMin, 1e-6,
-        )
+        assertEquals(360.0, r!!.sleep.totalSleepMin, 1e-6, "afternoon habitual → the on-timing afternoon block is the headline total")
     }
 
     // ── selection REASON (explainability — one test per branch) ──────────────────────────────────
@@ -630,7 +594,7 @@ class MainNightConsistencyTest {
         assertNotNull(sel)
         assertEquals(0, sel!!.index)
         assertEquals(SleepStageTotals.MainNightReason.onlyBlock, sel.reason)
-        assertEquals("asleep span carried for the copy (7h 12m)", 7 * 3600L + 12 * 60L, sel.asleepSec)
+        assertEquals(7 * 3600L + 12 * 60L, sel.asleepSec, "asleep span carried for the copy (7h 12m)")
         assertEquals(432L, sel.asleepMin)  // 7h12m = 432 min
     }
 
@@ -651,8 +615,7 @@ class MainNightConsistencyTest {
         val sel = SleepStageTotals.mainNightSelection(blocks, 0L)   // null habitual = cold-start
         assertNotNull(sel)
         assertEquals(1, sel!!.index)
-        assertEquals("cold-start (null habitual) → longest, never longestNearUsual",
-            SleepStageTotals.MainNightReason.longest, sel.reason)
+        assertEquals(SleepStageTotals.MainNightReason.longest, sel.reason, "cold-start (null habitual) → longest, never longestNearUsual")
         assertEquals(6 * 3600L, sel.asleepSec)
     }
 
@@ -674,8 +637,7 @@ class MainNightConsistencyTest {
         val sel = SleepStageTotals.mainNightSelection(blocks, 0L, habitual)
         assertNotNull(sel)
         assertEquals(1, sel!!.index)
-        assertEquals("learned habitual + longest is also bonus-aligned → longestNearUsual",
-            SleepStageTotals.MainNightReason.longestNearUsual, sel.reason)
+        assertEquals(SleepStageTotals.MainNightReason.longestNearUsual, sel.reason, "learned habitual + longest is also bonus-aligned → longestNearUsual")
         assertEquals(6 * 3600L, sel.asleepSec)
     }
 
@@ -697,10 +659,8 @@ class MainNightConsistencyTest {
         val sel = SleepStageTotals.mainNightSelection(blocks, 0L, habitual)
         assertNotNull(sel)
         assertEquals(1, sel!!.index)
-        assertEquals("a shorter well-timed block out-scored the longest → alignedToUsual (timing flipped it)",
-            SleepStageTotals.MainNightReason.alignedToUsual, sel.reason)
-        assertEquals("carries the CHOSEN (4h night) block's asleep span, not the longer afternoon's",
-            4 * 3600L, sel.asleepSec)
+        assertEquals(SleepStageTotals.MainNightReason.alignedToUsual, sel.reason, "a shorter well-timed block out-scored the longest → alignedToUsual (timing flipped it)")
+        assertEquals(4 * 3600L, sel.asleepSec, "carries the CHOSEN (4h night) block's asleep span, not the longer afternoon's")
     }
 
     /** The selection's index and the chosen block always agree with the bare [SleepStageTotals.mainNightIndex]
@@ -874,7 +834,7 @@ class MainNightConsistencyTest {
             offsetSec = 0L,
         )
         assertNotNull(r)
-        assertEquals("the seam SUMS the bridged biphasic group", 382.0, r!!.sleep.totalSleepMin, 1e-6)
+        assertEquals(382.0, r!!.sleep.totalSleepMin, 1e-6, "the seam SUMS the bridged biphasic group")
         assertEquals(172.0, r.sleep.deepMin, 1e-6)   // 82 + 90
     }
 }

@@ -1,8 +1,8 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 /**
  * FIX #72: a grossly-stale strap RTC (the strap sat unused for months, so its clock is months behind)
@@ -84,7 +84,7 @@ class HistoricalStreamsClockCorrectionTest {
         val st = extractHistoricalStreams(
             listOf(bytes(wornV18)), 0, 0, DeviceFamily.WHOOP5, wallNow = now,
         )
-        assertTrue("future-dated record must produce no rows", st.hr.isEmpty())
+        assertTrue(st.hr.isEmpty(), "future-dated record must produce no rows")
         assertEquals(1, st.droppedImplausibleTs)
     }
 
@@ -105,7 +105,7 @@ class HistoricalStreamsClockCorrectionTest {
         val st = extractHistoricalStreams(
             listOf(wornV18WithUnix(farPast)), 0, 0, DeviceFamily.WHOOP5, wallNow = 1_780_916_150L,
         )
-        assertTrue("far-past record must produce no rows", st.hr.isEmpty())
+        assertTrue(st.hr.isEmpty(), "far-past record must produce no rows")
         assertEquals(1, st.droppedImplausibleTs)
     }
 
@@ -147,7 +147,7 @@ class HistoricalStreamsClockCorrectionTest {
             listOf(wornV18WithUnix(badYule)), 0, 0, DeviceFamily.WHOOP5,
             wallNow = newest, sessionOldestUnix = oldest, sessionNewestUnix = newest,
         )
-        assertTrue("a floor-clearing record months before the strap's own window is dropped", st.hr.isEmpty())
+        assertTrue(st.hr.isEmpty(), "a floor-clearing record months before the strap's own window is dropped")
         assertEquals(1, st.droppedImplausibleTs)
     }
 

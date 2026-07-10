@@ -1,8 +1,8 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.Test
 
 /**
  * [rejectedHistoricalRecords] — the genuinely-undecodable type-47 record frames the Backfiller must
@@ -49,11 +49,7 @@ class RejectedHistoricalRecordsTest {
         val console = bytes(realV24Hex)
         console[4] = 0x32             // packet type byte → CONSOLE_LOGS (50)
         repairCrc32(console)         // keep the envelope valid so only the type guard excludes it
-        assertEquals(
-            "type-50 console frame must not be counted as a lost record",
-            emptyList<ByteArray>(),
-            rejectedHistoricalRecords(listOf(console), DeviceFamily.WHOOP4),
-        )
+        assertEquals(emptyList<ByteArray>(), rejectedHistoricalRecords(listOf(console), DeviceFamily.WHOOP4), "type-50 console frame must not be counted as a lost record")
     }
 
     @Test

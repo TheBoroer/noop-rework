@@ -1,4 +1,5 @@
-// PHASE2: hoist (System.currentTimeMillis usage, plus com.noop.data.StreamPersistence.encodePayload dependency (org.json), which stays androidMain this phase)
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.protocol
 
 import com.noop.data.BatteryRow
@@ -14,6 +15,9 @@ import com.noop.data.Spo2Row
 import com.noop.data.StepRow
 import com.noop.data.StreamBatch
 import com.noop.data.StreamPersistence
+import kotlin.math.sqrt
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 /*
  * Historical (offload) decode for the WHOOP 4.0 — the type-47 HISTORICAL_DATA path.
@@ -197,7 +201,7 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
         }
         val gx = grav(73); val gy = grav(75); val gz = grav(77)
         if (gx != null && gy != null && gz != null) {
-            val mag = Math.sqrt(gx * gx + gy * gy + gz * gz)
+            val mag = sqrt(gx * gx + gy * gy + gz * gz)
             if (mag in 0.5..1.5) {   // a real DSP orientation vector is ~1 g; reject garbage
                 out["gravity_x"] = gx; out["gravity_y"] = gy; out["gravity_z"] = gz
             }
@@ -251,7 +255,7 @@ fun decodeHistorical(frame: ByteArray, family: DeviceFamily = DeviceFamily.WHOOP
         val gx = (out["gravity_x"] as? Double) ?: Double.NaN
         val gy = (out["gravity_y"] as? Double) ?: Double.NaN
         val gz = (out["gravity_z"] as? Double) ?: Double.NaN
-        val mag = Math.sqrt(gx * gx + gy * gy + gz * gz)
+        val mag = sqrt(gx * gx + gy * gy + gz * gz)
         val hr = (out["heart_rate"] as? Int) ?: 0
         if (!(mag in 0.8..1.2 && hr in 25..230)) return null
     }
@@ -490,7 +494,7 @@ fun extractHistoricalStreams(
     // path (which would otherwise reject everything). Take the LATER of the supplied correlation wall and
     // the real clock so a test that passes a recent wallClockRef still has a sane upper bound, and the
     // replay path's wallClockRef=0 falls back to the real clock. Mirrors the Swift wallNow seam.
-    wallNow: Long = maxOf(wallClockRef.toLong(), System.currentTimeMillis() / 1000L),
+    wallNow: Long = maxOf(wallClockRef.toLong(), Clock.System.now().toEpochMilliseconds() / 1000L),
     // SESSION-RELATIVE bounds (#547): the strap's own GET_DATA_RANGE oldest/newest markers for THIS sync.
     // null on the replay/import/no-range paths — the gate then falls back to the absolute-only floor
     // (unchanged). Kept in lockstep with the Swift extractHistoricalStreams session args.

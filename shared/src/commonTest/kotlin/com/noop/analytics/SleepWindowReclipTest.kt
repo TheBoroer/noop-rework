@@ -1,11 +1,15 @@
 package com.noop.analytics
 
-import org.json.JSONArray
-import org.json.JSONObject
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Test
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.long
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 /**
  * Pure-function tests for [SleepWindowReclip], the Android twin of
@@ -20,16 +24,20 @@ class SleepWindowReclipTest {
     private data class Seg(val start: Long, val end: Long, val stage: String)
 
     private fun segments(json: String): List<Seg> {
-        val arr = JSONArray(json)
-        return (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            Seg(o.optLong("start"), o.optLong("end"), o.optString("stage"))
+        val arr = Json.parseToJsonElement(json) as JsonArray
+        return arr.map { el ->
+            val o = el as JsonObject
+            Seg(
+                (o.getValue("start") as JsonPrimitive).long,
+                (o.getValue("end") as JsonPrimitive).long,
+                (o.getValue("stage") as JsonPrimitive).content,
+            )
         }
     }
 
     private fun minutes(json: String): Map<String, Double> {
-        val o = JSONObject(json)
-        return o.keys().asSequence().associateWith { o.optDouble(it) }
+        val o = Json.parseToJsonElement(json) as JsonObject
+        return o.mapValues { (_, v) -> (v as JsonPrimitive).double }
     }
 
     // ── segment array (computed nights) ──────────────────────────────────────────────────────────
@@ -43,10 +51,10 @@ class SleepWindowReclipTest {
         """.trimIndent()
         val out = SleepWindowReclip.reclip(json, 1000, 4000, 1000, 2500)!!
         val segs = segments(out)
-        assertEquals("the wholly-after segment is dropped", 2, segs.size)
+        assertEquals(2, segs.size, "the wholly-after segment is dropped")
         assertEquals("light", segs[0].stage)
         assertEquals("deep", segs[1].stage)
-        assertEquals("the segment spanning the new wake is clipped to it", 2500, segs[1].end)
+        assertEquals(2500, segs[1].end, "the segment spanning the new wake is clipped to it")
     }
 
     @Test
@@ -72,7 +80,7 @@ class SleepWindowReclipTest {
         val segs = segments(out)
         assertEquals(1, segs.size)
         assertEquals("wake", segs[0].stage)
-        assertEquals("no stage extends past the corrected wake", 1500, segs.maxOf { it.end })
+        assertEquals(1500, segs.maxOf { it.end }, "no stage extends past the corrected wake")
     }
 
     // ── minute dict (imported nights) ────────────────────────────────────────────────────────────
@@ -112,12 +120,12 @@ class SleepWindowReclipTest {
         """.trimIndent()
         val out = SleepWindowReclip.reclip(json, 1000, 4000, 2000, 4000)!!
         val segs = segments(out)
-        assertEquals("the segment wholly before the new bed time is dropped", 2, segs.size)
-        assertEquals("no segment starts before the new bed time", 2000, segs.minOf { it.start })
+        assertEquals(2, segs.size, "the segment wholly before the new bed time is dropped")
+        assertEquals(2000, segs.minOf { it.start }, "no segment starts before the new bed time")
         assertEquals("deep", segs[0].stage)
-        assertEquals("the straddling segment's start clips up to the new bed time", 2000, segs[0].start)
+        assertEquals(2000, segs[0].start, "the straddling segment's start clips up to the new bed time")
         val total = segs.sumOf { it.end - it.start }
-        assertEquals("stage total equals the corrected [newStart, newEnd] window", 4000L - 2000L, total)
+        assertEquals(4000L - 2000L, total, "stage total equals the corrected [newStart, newEnd] window")
     }
 
     @Test
@@ -136,8 +144,10 @@ class SleepWindowReclipTest {
         assertEquals(80.0, m["deep"]!!, 0.001)
         assertEquals(90.0, m["rem"]!!, 0.001)
         val total = m.values.sum()
-        assertEquals("imported-night total trims by the onset delta (400 to 360), not the window",
-            360.0, total, 0.001)
+        assertEquals(
+            360.0, total, 0.001,
+            "imported-night total trims by the onset delta (400 to 360), not the window",
+        )
     }
 
     // ── degenerate input ─────────────────────────────────────────────────────────────────────────

@@ -1,9 +1,9 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.Test
 
 /**
  * The unmapped-firmware-version fallback for WHOOP 4.0 type-47 records (#30/#77).
@@ -53,11 +53,11 @@ class HistoricalFallbackTest {
         frame[5] = 99.toByte()           // unmapped version (not in {5,7,9,12,24})
         repairCrc32(frame)
         val p = decodeHistorical(frame, DeviceFamily.WHOOP4)
-        assertNotNull("unmapped-but-v24-compatible record must decode via fallback, not drop", p)
+        assertNotNull(p, "unmapped-but-v24-compatible record must decode via fallback, not drop")
         assertEquals(99, p!!["hist_version"])
         assertEquals(109, p["heart_rate"])
         @Suppress("UNCHECKED_CAST")
-        assertEquals("R-R intervals must survive the fallback", 2, (p["rr_intervals"] as List<Int>).size)
+        assertEquals(2, (p["rr_intervals"] as List<Int>).size, "R-R intervals must survive the fallback")
     }
 
     @Test

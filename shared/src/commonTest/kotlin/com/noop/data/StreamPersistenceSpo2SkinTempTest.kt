@@ -3,8 +3,8 @@ package com.noop.data
 import com.noop.protocol.SkinTempSample
 import com.noop.protocol.Spo2Sample
 import com.noop.protocol.Streams
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.assertEquals
+import kotlin.test.Test
 
 /**
  * Pins that [StreamPersistence.toBatch] widens the live protocol [Streams]' new spo2/skinTemp lists

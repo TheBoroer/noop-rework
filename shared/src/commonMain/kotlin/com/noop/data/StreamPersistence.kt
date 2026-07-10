@@ -1,8 +1,7 @@
-// PHASE2: hoist (org.json JSONObject.quote usage, no multiplatform JSON parser in scope this phase)
 package com.noop.data
 
 import com.noop.protocol.Streams
-import org.json.JSONObject
+import com.noop.util.orgJsonQuote
 
 /**
  * Bridge between the protocol-layer decode (`com.noop.protocol.Streams`) and the Room data layer's
@@ -11,7 +10,7 @@ import org.json.JSONObject
  * The live persistence path decodes frames with `extractStreams(...)` (which yields a protocol
  * `Streams` of hr/rr/events/battery) and then needs a [StreamBatch] to hand to
  * [WhoopRepository.insert]. This mapper performs that conversion, including the deterministic
- * sorted-keys JSON encoding of each event's residual payload — the exact analog of Swift
+ * sorted-keys JSON encoding of each event's residual payload, the exact analog of Swift
  * `WhoopStore.encodePayload(_:)` (JSONEncoder with `.sortedKeys`), so the same payload always
  * serializes byte-identically (important for the event natural-key dedupe + macOS parity).
  *
@@ -42,9 +41,13 @@ object StreamPersistence {
     /**
      * Deterministic sorted-keys JSON for an event payload. Port of `WhoopStore.encodePayload`.
      *
-     * `org.json.JSONObject` does NOT guarantee key order, so we build the JSON manually with keys
-     * sorted ascending (the same ordering `JSONEncoder.outputFormatting = [.sortedKeys]` produces),
-     * quoting each value by its Kotlin type. Empty payloads encode to `{}`, matching Swift.
+     * `org.json.JSONObject` did NOT guarantee key order (confirmed: it was backed by a plain
+     * `HashMap`, not insertion-ordered), so this builds the JSON manually with keys sorted ascending
+     * (the same ordering `JSONEncoder.outputFormatting = [.sortedKeys]` produces), quoting each value
+     * by its Kotlin type via [orgJsonQuote] (a byte-identical port of org.json's `JSONObject.quote`,
+     * needed because the persisted string doubles as a cross-platform natural-key dedupe input, so
+     * old stored rows and new ones must escape identically). Empty payloads encode to `{}`, matching
+     * Swift.
      *
      * Public so the historical-offload extractor (`com.noop.protocol.extractHistoricalStreams`) can
      * encode offloaded EVENT payloads through the SAME canonical encoder the live path uses.
@@ -55,7 +58,7 @@ object StreamPersistence {
         val keys = payload.keys.sorted()
         for ((i, k) in keys.withIndex()) {
             if (i > 0) sb.append(',')
-            sb.append(JSONObject.quote(k)).append(':').append(encodeValue(payload[k]))
+            sb.append(orgJsonQuote(k)).append(':').append(encodeValue(payload[k]))
         }
         sb.append('}')
         return sb.toString()
@@ -80,7 +83,7 @@ object StreamPersistence {
             }
             append(']')
         }
-        is String -> JSONObject.quote(v)
-        else -> JSONObject.quote(v.toString())
+        is String -> orgJsonQuote(v)
+        else -> orgJsonQuote(v.toString())
     }
 }
