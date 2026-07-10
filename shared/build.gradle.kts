@@ -100,6 +100,12 @@ room {
     schemaDirectory("$projectDir/schemas")
 }
 
+skie {
+    analytics {
+        enabled.set(false)
+    }
+}
+
 // Task 8: the backup-restore tests read the committed .noopbak fixture from disk. All test targets
 // get the fixtures directory via NOOP_FIXTURES; the iOS simulator child process only inherits
 // variables carrying the SIMCTL_CHILD_ prefix, so the same value is exported twice for it.
