@@ -20,8 +20,14 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 
             // Room 2.7 entity/DAO annotations are commonMain-safe; the entities/DAOs hoisted from
-            // androidMain need this to resolve. The database builder itself stays androidMain (Task 8).
+            // androidMain need this to resolve. Phase 2a Task 5: the @Database class + KMP-form
+            // migrations now live in commonMain too.
             implementation("androidx.room:room-runtime:2.7.1")
+
+            // Bundled SQLite driver — used by the iOS builder (and the JVM/iOS smoke tests). Version
+            // pinned to what androidx.room 2.7.1 resolves for androidx.sqlite:sqlite (2.5.0), verified
+            // via `./gradlew :shared:dependencies --configuration debugRuntimeClasspath | grep sqlite`.
+            implementation("androidx.sqlite:sqlite-bundled:2.5.0")
 
             // Phase 2a: KMP multiplatform deps.
             implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
@@ -31,6 +37,8 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            // Smoke test drives suspend DAO calls (insert + count) inside runTest on JVM and iOS.
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
         }
         // Versions below are matched exactly to what android/app/build.gradle.kts uses today, so the
         // lifted-and-shifted protocol/analytics/data/ingest/oura/update packages compile unchanged.
@@ -70,4 +78,8 @@ room {
 
 dependencies {
     add("kspAndroid", "androidx.room:room-compiler:2.7.1")
+    // Phase 2a Task 5: the @Database class moved to commonMain, so Room's KSP must also run for the
+    // iOS targets to generate WhoopDatabase_Impl + the actual WhoopDatabaseConstructor there.
+    add("kspIosArm64", "androidx.room:room-compiler:2.7.1")
+    add("kspIosSimulatorArm64", "androidx.room:room-compiler:2.7.1")
 }

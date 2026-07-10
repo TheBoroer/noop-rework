@@ -1,11 +1,16 @@
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.data
 
-import android.content.Context
+import androidx.room.ConstructedBy
 import androidx.room.Database
-import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.RoomDatabaseConstructor
 import androidx.room.migration.Migration
-import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 /**
  * Local Room database, the Android port of the GRDB store in
@@ -20,6 +25,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * re-send it). The destructive fallback is deliberately GONE: with exportSchema=false there's no
  * build-time schema check, so a hand-written-SQL mismatch would otherwise SILENTLY wipe that history;
  * without the fallback Room throws loudly instead, and MigrationRoundTripTest guards the SQL in CI.
+ *
+ * Phase 2a KMP: the @Database class, the migrations (now in the KMP [SQLiteConnection] form) and the
+ * schema-pinning SQL constants live in commonMain. The Android open path (the process-wide singleton,
+ * the [CorruptionPreservingOpenHelperFactory] wiring and the fresh-install seed callback) stays in
+ * androidMain (WhoopDatabase.android.kt); iOS builds with the bundled driver (WhoopDatabase.ios.kt).
+ * The @Database annotation, entity list and version are UNCHANGED from the androidMain original, so
+ * Room's generated schema (and its identity hash) are byte-identical.
  */
 @Database(
     entities = [
@@ -51,20 +63,20 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     version = 17,
     exportSchema = false,
 )
+@ConstructedBy(WhoopDatabaseConstructor::class)
 abstract class WhoopDatabase : RoomDatabase() {
     abstract fun whoopDao(): WhoopDao
 
     companion object {
         const val DB_NAME = "noop_whoop.db"
 
-        @Volatile
-        private var instance: WhoopDatabase? = null
-
-        /** Process-wide singleton. Safe to call from any thread. */
-        fun get(context: Context): WhoopDatabase =
-            instance ?: synchronized(this) {
-                instance ?: build(context.applicationContext).also { instance = it }
-            }
+        /**
+         * Process-wide singleton. Safe to call from any thread. The real factory (singleton state,
+         * driver/open-helper wiring, fresh-install seed) lives in the platform [openWhoopDatabase];
+         * on iOS build the database with [whoopDatabase] instead. Kept as a companion member so the
+         * Android call site `WhoopDatabase.get(context)` is unchanged.
+         */
+        fun get(context: PlatformContext): WhoopDatabase = openWhoopDatabase(context)
 
         /**
          * Close and forget the singleton so all file handles on [DB_NAME] are released.
@@ -72,10 +84,7 @@ abstract class WhoopDatabase : RoomDatabase() {
          * [DataBackup.importFrom] to swap the database file underneath the app.
          */
         fun close() {
-            synchronized(this) {
-                instance?.close()
-                instance = null
-            }
+            closeWhoopDatabase()
         }
 
         /**
@@ -87,14 +96,14 @@ abstract class WhoopDatabase : RoomDatabase() {
          * the two new dailyMetric columns. Guarded by MigrationRoundTripTest.
          */
         internal val MIGRATION_2_3 = object : Migration(2, 3) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `stepSample` (`deviceId` TEXT NOT NULL, " +
                         "`ts` INTEGER NOT NULL, `counter` INTEGER NOT NULL, " +
                         "`synced` INTEGER NOT NULL, PRIMARY KEY(`deviceId`, `ts`))",
                 )
-                db.execSQL("ALTER TABLE `dailyMetric` ADD COLUMN `steps` INTEGER")
-                db.execSQL("ALTER TABLE `dailyMetric` ADD COLUMN `activeKcalEst` REAL")
+                connection.execSQL("ALTER TABLE `dailyMetric` ADD COLUMN `steps` INTEGER")
+                connection.execSQL("ALTER TABLE `dailyMetric` ADD COLUMN `activeKcalEst` REAL")
             }
         }
 
@@ -104,8 +113,8 @@ abstract class WhoopDatabase : RoomDatabase() {
          * column exactly (TEXT, no NOT NULL, no default). Mirrors MIGRATION_2_3's additive form.
          */
         internal val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `workout` ADD COLUMN `routePolyline` TEXT")
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE `workout` ADD COLUMN `routePolyline` TEXT")
             }
         }
 
@@ -117,8 +126,8 @@ abstract class WhoopDatabase : RoomDatabase() {
          * composite PRIMARY KEY in declaration order. Guarded by MigrationRoundTripTest like the others.
          */
         internal val MIGRATION_4_5 = object : Migration(4, 5) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `dismissedWorkout` (`deviceId` TEXT NOT NULL, " +
                         "`startTs` INTEGER NOT NULL, `endTs` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`deviceId`, `startTs`))",
@@ -135,8 +144,8 @@ abstract class WhoopDatabase : RoomDatabase() {
          * declaration order. Guarded by MigrationRoundTripTest like the others.
          */
         internal val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `ppgHrSample` (`deviceId` TEXT NOT NULL, " +
                         "`ts` INTEGER NOT NULL, `bpm` INTEGER NOT NULL, `conf` REAL NOT NULL, " +
                         "`synced` INTEGER NOT NULL, PRIMARY KEY(`deviceId`, `ts`))",
@@ -156,9 +165,9 @@ abstract class WhoopDatabase : RoomDatabase() {
          * silently wiping non-resendable strap history.
          */
         internal val MIGRATION_6_7 = object : Migration(6, 7) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `sleepSession` ADD COLUMN `userEdited` INTEGER NOT NULL DEFAULT 0")
-                db.execSQL("ALTER TABLE `sleepSession` ADD COLUMN `startTsAdjusted` INTEGER")
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE `sleepSession` ADD COLUMN `userEdited` INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE `sleepSession` ADD COLUMN `startTsAdjusted` INTEGER")
             }
         }
 
@@ -170,7 +179,8 @@ abstract class WhoopDatabase : RoomDatabase() {
          * The SQL MUST match Room's generated schema for [PairedDeviceRow]/[DayOwnershipRow] exactly:
          *  - pairedDevice: `nickname` is the only nullable column (TEXT, no NOT NULL); every other is
          *    NOT NULL with no SQL DEFAULT (Kotlin construction defaults don't emit a schema default).
-         *  - dayOwnership: `locked` is a non-null Kotlin Boolean with a *constructor* default of false,          *    Room stores it as INTEGER NOT NULL with NO SQL DEFAULT (the Kotlin default never reaches the
+         *  - dayOwnership: `locked` is a non-null Kotlin Boolean with a *constructor* default of false,
+         *    Room stores it as INTEGER NOT NULL with NO SQL DEFAULT (the Kotlin default never reaches the
          *    schema), so the migration must NOT add `DEFAULT 0` or MigrationRoundTripTest would flag a
          *    schema mismatch.
          *
@@ -182,20 +192,20 @@ abstract class WhoopDatabase : RoomDatabase() {
          * silently wiping non-resendable strap history; CI's MigrationRoundTripTest guards the SQL.
          */
         internal val MIGRATION_7_8 = object : Migration(7, 8) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `pairedDevice` (`id` TEXT NOT NULL, " +
                         "`brand` TEXT NOT NULL, `model` TEXT NOT NULL, `nickname` TEXT, " +
                         "`sourceKind` TEXT NOT NULL, `capabilities` TEXT NOT NULL, " +
                         "`status` TEXT NOT NULL, `addedAt` INTEGER NOT NULL, " +
                         "`lastSeenAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
                 )
-                db.execSQL(
+                connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `dayOwnership` (`day` TEXT NOT NULL, " +
                         "`deviceId` TEXT NOT NULL, `locked` INTEGER NOT NULL, PRIMARY KEY(`day`))",
                 )
-                val now = System.currentTimeMillis() / 1000
-                db.execSQL(
+                val now = Clock.System.now().toEpochMilliseconds() / 1000
+                connection.execSQL(
                     "INSERT OR IGNORE INTO `pairedDevice` " +
                         "(`id`, `brand`, `model`, `nickname`, `sourceKind`, `capabilities`, " +
                         "`status`, `addedAt`, `lastSeenAt`) VALUES " +
@@ -221,8 +231,8 @@ abstract class WhoopDatabase : RoomDatabase() {
          * CI's MigrationRoundTripTest guards the SQL.
          */
         internal val MIGRATION_8_9 = object : Migration(8, 9) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `pairedDevice` ADD COLUMN `peripheralId` TEXT")
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE `pairedDevice` ADD COLUMN `peripheralId` TEXT")
             }
         }
 
@@ -234,8 +244,8 @@ abstract class WhoopDatabase : RoomDatabase() {
          * KEY (deviceId, startTs) in declaration order. Mirrors MIGRATION_4_5 (the dismissedWorkout table).
          */
         internal val MIGRATION_9_10 = object : Migration(9, 10) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
                     "CREATE TABLE IF NOT EXISTS `dismissedSleep` (`deviceId` TEXT NOT NULL, " +
                         "`startTs` INTEGER NOT NULL, `endTs` INTEGER NOT NULL, " +
                         "PRIMARY KEY(`deviceId`, `startTs`))",
@@ -288,8 +298,8 @@ abstract class WhoopDatabase : RoomDatabase() {
             listOf(LAB_MARKER_CREATE_SQL) + LAB_MARKER_INDEX_SQL
 
         internal val MIGRATION_10_11 = object : Migration(10, 11) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in LAB_MARKER_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in LAB_MARKER_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
@@ -315,8 +325,8 @@ abstract class WhoopDatabase : RoomDatabase() {
         )
 
         internal val MIGRATION_11_12 = object : Migration(11, 12) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in SLEEP_MOTION_STATE_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in SLEEP_MOTION_STATE_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
@@ -343,8 +353,8 @@ abstract class WhoopDatabase : RoomDatabase() {
         )
 
         internal val MIGRATION_12_13 = object : Migration(12, 13) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in STEP_ACTIVITY_CLASS_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in STEP_ACTIVITY_CLASS_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
@@ -369,8 +379,8 @@ abstract class WhoopDatabase : RoomDatabase() {
         )
 
         internal val MIGRATION_13_14 = object : Migration(13, 14) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in JOURNAL_NUMERIC_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in JOURNAL_NUMERIC_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
@@ -396,8 +406,8 @@ abstract class WhoopDatabase : RoomDatabase() {
         )
 
         internal val MIGRATION_14_15 = object : Migration(14, 15) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in SLEEP_STATE_SAMPLE_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in SLEEP_STATE_SAMPLE_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
@@ -421,8 +431,8 @@ abstract class WhoopDatabase : RoomDatabase() {
         )
 
         internal val MIGRATION_15_16 = object : Migration(15, 16) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in LIVE_SESSION_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in LIVE_SESSION_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
@@ -441,44 +451,41 @@ abstract class WhoopDatabase : RoomDatabase() {
         )
 
         internal val MIGRATION_16_17 = object : Migration(16, 17) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                for (stmt in DAILY_SPO2_RAW_MIGRATION_SQL) db.execSQL(stmt)
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in DAILY_SPO2_RAW_MIGRATION_SQL) connection.execSQL(stmt)
             }
         }
 
-        private fun build(appContext: Context): WhoopDatabase =
-            Room.databaseBuilder(appContext, WhoopDatabase::class.java, DB_NAME)
-                // #1014: replace ONLY the corruption handling of the default open-helper. The
-                // platform default silently DELETES a corrupt database file (non-resendable strap
-                // history gone without a trace); this factory logs + preserves the file instead.
-                // Every migration/lifecycle callback is delegated to Room unchanged.
-                .openHelperFactory(CorruptionPreservingOpenHelperFactory())
-                // Real additive migration, NO destructive fallback (see the class doc): with
-                // exportSchema=false a silent rebuild would lose already-acked, non-resendable strap
-                // history on any schema mismatch. Room throws loudly instead; CI guards the SQL.
-                .addMigrations(
-                    MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
-                    MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
-                    MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
-                    MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
-                )
-                // #1037: a FRESH install builds the schema straight at the current version and runs NO
-                // migrations, so the MIGRATION_7_8 "my-whoop" registry seed never fires and the WHOOP,
-                // though paired and streaming fine, never appears in the Devices list. Seed the canonical
-                // row on create too (same idempotent INSERT OR IGNORE as the migration) so a first-ever
-                // install still lists its WHOOP. iOS/GRDB re-runs migrations on a fresh DB, so it never hit this.
-                .addCallback(object : RoomDatabase.Callback() {
-                    override fun onCreate(db: SupportSQLiteDatabase) {
-                        val now = System.currentTimeMillis() / 1000
-                        db.execSQL(
-                            "INSERT OR IGNORE INTO `pairedDevice` " +
-                                "(`id`, `brand`, `model`, `nickname`, `sourceKind`, `capabilities`, " +
-                                "`status`, `addedAt`, `lastSeenAt`) VALUES " +
-                                "('my-whoop', 'WHOOP', 'WHOOP', NULL, 'liveBLE', " +
-                                "'hr,hrv,spo2,skinTemp,sleep,strainLoad', 'active', $now, $now)",
-                        )
-                    }
-                })
-                .build()
+        /** Every migration, in order, for the Android upgrade path (WhoopDatabase.android.kt registers
+         *  them). iOS builds fresh at the current version (no in-place upgrade), matching GRDB. */
+        internal val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+            MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
+            MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
+            MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
+        )
     }
 }
+
+/**
+ * Room's KMP database-constructor hook. The @[ConstructedBy] annotation on [WhoopDatabase] wires this
+ * `expect object` to it; Room's KSP generates the `actual` for each platform (kspAndroid,
+ * kspIosArm64, kspIosSimulatorArm64), so there is no hand-written actual. See the Room KMP guide.
+ */
+@Suppress("NO_ACTUAL_FOR_EXPECT", "KotlinNoActualForExpect")
+expect object WhoopDatabaseConstructor : RoomDatabaseConstructor<WhoopDatabase> {
+    override fun initialize(): WhoopDatabase
+}
+
+/**
+ * Platform handle for [WhoopDatabase.get]. On Android this is [android.content.Context]; on iOS it is
+ * an unused placeholder because iOS builds the database with [whoopDatabase] (a file path), never with
+ * the Android context factory. Kept so the Android call site `WhoopDatabase.get(context)` is unchanged.
+ */
+expect abstract class PlatformContext
+
+/** Build (once) and return the process-wide singleton for [platform-specific] open semantics. */
+internal expect fun openWhoopDatabase(context: PlatformContext): WhoopDatabase
+
+/** Close and forget the process-wide singleton (Android). */
+internal expect fun closeWhoopDatabase()
