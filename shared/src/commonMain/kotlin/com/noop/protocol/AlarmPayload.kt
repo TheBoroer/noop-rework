@@ -1,9 +1,15 @@
-// PHASE2: hoist (java.time usage needs kotlinx-datetime replacement)
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.protocol
 
-import java.time.Instant
-import java.time.LocalTime
-import java.time.ZoneId
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atTime
+import kotlinx.datetime.plus
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /**
  * WHOOP 5.0/MG ("puffin") firmware wake-alarm command payload encoder.
@@ -29,11 +35,12 @@ object AlarmPayload {
      * Next future epoch-millis for local wake [hour]:[minute], relative to [nowMs] in [zone].
      * Today's occurrence if strictly in the future, else tomorrow's (next occurrence after now).
      */
-    fun nextWakeEpochMs(hour: Int, minute: Int, nowMs: Long, zone: ZoneId): Long {
-        val now = Instant.ofEpochMilli(nowMs).atZone(zone)
-        val candidate = now.with(LocalTime.of(hour, minute, 0, 0)) // second + nanos cleared → subseconds 0
-        val target = if (candidate.toInstant().toEpochMilli() > nowMs) candidate else candidate.plusDays(1)
-        return target.toInstant().toEpochMilli()
+    fun nextWakeEpochMs(hour: Int, minute: Int, nowMs: Long, zone: TimeZone): Long {
+        val now = Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(zone)
+        val candidate = now.date.atTime(hour, minute) // second + nanos cleared → subseconds 0
+        val target = if (candidate.toInstant(zone).toEpochMilliseconds() > nowMs) candidate
+        else candidate.date.plus(1, DateTimeUnit.DAY).atTime(hour, minute)
+        return target.toInstant(zone).toEpochMilliseconds()
     }
 
     /**
@@ -59,7 +66,7 @@ object AlarmPayload {
         out[5] = ((seconds ushr 24) and 0xFF).toByte()
         out[6] = (subseconds and 0xFF).toByte()
         out[7] = ((subseconds ushr 8) and 0xFF).toByte()
-        System.arraycopy(WAVEFORM_EFFECTS, 0, out, 8, 8)
+        WAVEFORM_EFFECTS.copyInto(out, destinationOffset = 8)
         out[16] = 0x00 // loopControlForEffects LE lo
         out[17] = 0x00 // loopControlForEffects LE hi
         out[18] = OVERALL_LOOP

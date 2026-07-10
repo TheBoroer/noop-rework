@@ -1,9 +1,10 @@
 package com.noop.data
 
 import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import kotlinx.datetime.LocalDate
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /**
  * MoodStore contract tests — the cross-platform Mind-lane storage contract:
@@ -135,6 +136,6 @@ class MoodStoreTest {
 
     @Test
     fun todayKeyIsLocalIsoDay() {
-        assertEquals("2026-06-12", MoodStore.todayKey(java.time.LocalDate.of(2026, 6, 12)))
+        assertEquals("2026-06-12", MoodStore.todayKey(LocalDate(2026, 6, 12)))
     }
 }

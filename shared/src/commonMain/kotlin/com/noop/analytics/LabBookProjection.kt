@@ -1,7 +1,8 @@
-// PHASE2: hoist (java.time.LocalDate usage needs kotlinx-datetime replacement)
 package com.noop.analytics
 
-import java.time.LocalDate
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.plus
 
 /*
  * LabBookProjection.kt — value-for-value Kotlin twin of
@@ -19,8 +20,8 @@ import java.time.LocalDate
  * Timezone-free by construction: it operates on PRE-DERIVED yyyy-MM-dd day strings (the
  * store derives the day from a reading's takenAt), so there is no Calendar/ZoneId
  * divergence between Swift and Kotlin. The trailing-window day arithmetic uses
- * java.time.LocalDate.minusDays — the calendar-correct, timezone-free equivalent of the
- * Swift UTC-calendar shiftDay.
+ * kotlinx.datetime.LocalDate.plus(delta, DateTimeUnit.DAY) — the calendar-correct,
+ * timezone-free equivalent of the Swift UTC-calendar shiftDay.
  *
  * NON-CLINICAL: folds and lines up the user's own numbers. Never judges a value
  * normal/abnormal and ships no thresholds.
@@ -172,6 +173,6 @@ object LabBookProjection {
     fun shiftDay(day: String, delta: Int): String? {
         if (delta == 0) return day
         val base = runCatching { LocalDate.parse(day) }.getOrNull() ?: return null
-        return base.plusDays(delta.toLong()).toString() // LocalDate.toString() is ISO yyyy-MM-dd
+        return base.plus(delta, DateTimeUnit.DAY).toString() // LocalDate.toString() is ISO yyyy-MM-dd
     }
 }

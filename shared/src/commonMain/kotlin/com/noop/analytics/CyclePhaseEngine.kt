@@ -1,7 +1,8 @@
-// PHASE2: hoist (java.time.LocalDate usage needs kotlinx-datetime replacement)
 package com.noop.analytics
 
-import java.time.LocalDate
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.plus
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -226,7 +227,7 @@ object CyclePhaseEngine {
     internal fun daysBetween(a: String, b: String): Int? {
         val da = parseDay(a) ?: return null
         val db = parseDay(b) ?: return null
-        return (db.toEpochDay() - da.toEpochDay()).toInt()
+        return (db.toEpochDays() - da.toEpochDays()).toInt()
     }
 
     /** Most recent entry in [days] on or before [day] (ISO string compare is valid). */
@@ -237,5 +238,5 @@ object CyclePhaseEngine {
 
     /** Shift a "yyyy-MM-dd" by [delta] days. UTC, deterministic. null if unparseable. */
     internal fun shiftDay(day: String, delta: Int): String? =
-        parseDay(day)?.plusDays(delta.toLong())?.toString()
+        parseDay(day)?.plus(delta, DateTimeUnit.DAY)?.toString()
 }

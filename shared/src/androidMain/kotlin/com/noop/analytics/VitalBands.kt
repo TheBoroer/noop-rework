@@ -1,4 +1,9 @@
-// PHASE2: hoist (java.time.LocalDate.parse/isAfter/plusDays usage needs kotlinx-datetime replacement)
+// PHASE2: hoist (blocked on Baselines: band() calls Baselines.foldHistory/Baselines.deviation, and
+// Baselines.kt is androidMain-only — android.content.SharedPreferences.Editor + its own
+// java.time.LocalDate/ZoneOffset usage. Discovered during Task 3 (kotlinx-datetime adoption); this
+// file's OWN java.time.LocalDate.parse/isAfter/plusDays usage in calendarSeries maps cleanly per
+// that task's convention, but converting it here would not unblock the hoist, so it was left
+// unconverted. Convert calendarSeries and hoist together once Baselines itself moves.)
 package com.noop.analytics
 
 import kotlin.math.abs

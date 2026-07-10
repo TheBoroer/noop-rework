@@ -1,16 +1,18 @@
 package com.noop.protocol
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /**
- * Split out of FramingTest (Task 6, protocol hoist): the only Framing test that also exercises
- * [AlarmPayload], which stays in androidMain (java.time). Kept here so the rest of FramingTest can
- * hoist to commonTest and run on the iOS simulator too.
+ * Split out of FramingTest (Task 6, protocol hoist) when [AlarmPayload] still needed java.time and
+ * stayed in androidMain; hoisted to commonTest itself in Task 3 (kotlinx-datetime adoption) once
+ * AlarmPayload moved to commonMain. Kept as its own file rather than merged back into FramingTest
+ * to keep this task's diff scoped to date-logic conversion.
  */
 class AlarmPayloadFramingParityTest {
 
-    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+    private fun hex(bytes: ByteArray): String =
+        bytes.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
     @Test
     fun puffinCommandFrame_alarmFramesMatchSwiftParityGoldens() {

@@ -1,12 +1,14 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
-import java.time.LocalDateTime
-import java.time.ZoneId
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
 
 /**
  * #940 (Android twin of SleepEditGuardTests.swift): the sleep-time editor accepted an impossible bed
@@ -14,12 +16,13 @@ import java.time.ZoneId
  * "corrected" bed landed on the coming evening: a future-dated (here, INVERTED, since Android keeps
  * the wake) night the Sleep tab could not render. These pin the three pure guard rules.
  */
+@OptIn(ExperimentalTime::class)
 class SleepEditGuardTest {
 
-    private val zone: ZoneId = ZoneId.of("UTC")
+    private val zone: TimeZone = TimeZone.UTC
 
     private fun ts(y: Int, mo: Int, d: Int, h: Int, mi: Int): Long =
-        LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toEpochSecond()
+        LocalDateTime(y, mo, d, h, mi).toInstant(zone).epochSeconds
 
     // MARK: Rule 1: cross-midnight bed auto-correct
 

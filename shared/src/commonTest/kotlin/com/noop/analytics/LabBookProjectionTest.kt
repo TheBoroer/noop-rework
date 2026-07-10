@@ -1,9 +1,9 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
 import kotlin.math.sqrt
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Kotlin parity for StrandAnalytics/LabBookProjectionTests.swift — SAME fixtures, SAME

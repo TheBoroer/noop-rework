@@ -1,13 +1,18 @@
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.protocol
 
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
-import java.time.LocalDate
-import java.time.LocalTime
-import java.time.ZoneId
-import java.time.ZonedDateTime
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atTime
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /**
  * Byte-exact tests for the WHOOP 5.0/MG firmware wake-alarm payload encoder [AlarmPayload]. The
@@ -18,11 +23,11 @@ import java.time.ZonedDateTime
  */
 class AlarmPayloadTest {
 
-    private val utc: ZoneId = ZoneId.of("UTC")
+    private val utc: TimeZone = TimeZone.UTC
 
     /** Fixed "now": 2026-06-07 08:00:00 UTC. */
     private fun nowMs(): Long =
-        ZonedDateTime.of(LocalDate.of(2026, 6, 7), LocalTime.of(8, 0), utc).toInstant().toEpochMilli()
+        LocalDate(2026, 6, 7).atTime(8, 0).toInstant(utc).toEpochMilliseconds()
 
     private fun bytes(vararg ints: Int): ByteArray = ByteArray(ints.size) { ints[it].toByte() }
 
@@ -60,7 +65,7 @@ class AlarmPayloadTest {
         val body = AlarmPayload.build(AlarmPayload.nextWakeEpochMs(7, 15, nowMs(), utc))
         val tail = body.copyOfRange(body.size - 12, body.size)
         val expected = bytes(47, 152, 0, 0, 0, 0, 0, 0, /*loopCtl*/ 0, 0, /*overall*/ 7, /*dur*/ 30)
-        assertArrayEquals(expected, tail)
+        assertContentEquals(expected, tail)
     }
 
     @Test
@@ -71,30 +76,30 @@ class AlarmPayloadTest {
     @Test
     fun nextWake_laterToday_staysToday() {
         val wake = AlarmPayload.nextWakeEpochMs(18, 30, nowMs(), utc)
-        val zdt = java.time.Instant.ofEpochMilli(wake).atZone(utc)
-        assertEquals(LocalDate.of(2026, 6, 7), zdt.toLocalDate())
-        assertEquals(18, zdt.hour)
-        assertEquals(30, zdt.minute)
+        val local = Instant.fromEpochMilliseconds(wake).toLocalDateTime(utc)
+        assertEquals(LocalDate(2026, 6, 7), local.date)
+        assertEquals(18, local.hour)
+        assertEquals(30, local.minute)
         assertTrue(wake > nowMs())
     }
 
     @Test
     fun nextWake_earlierThanNow_rollsToTomorrow() {
         val wake = AlarmPayload.nextWakeEpochMs(6, 0, nowMs(), utc)
-        val zdt = java.time.Instant.ofEpochMilli(wake).atZone(utc)
-        assertEquals(LocalDate.of(2026, 6, 8), zdt.toLocalDate())
+        val local = Instant.fromEpochMilliseconds(wake).toLocalDateTime(utc)
+        assertEquals(LocalDate(2026, 6, 8), local.date)
         assertTrue(wake > nowMs())
     }
 
     @Test
     fun nextWake_equalToNow_rollsToTomorrow() {
         val wake = AlarmPayload.nextWakeEpochMs(8, 0, nowMs(), utc)
-        val zdt = java.time.Instant.ofEpochMilli(wake).atZone(utc)
-        assertEquals(LocalDate.of(2026, 6, 8), zdt.toLocalDate())
+        val local = Instant.fromEpochMilliseconds(wake).toLocalDateTime(utc)
+        assertEquals(LocalDate(2026, 6, 8), local.date)
     }
 
     @Test
     fun disableAlarm_rev2_isSentinelFF() {
-        assertArrayEquals(bytes(0x02, 0xFF), AlarmPayload.disableRev2())
+        assertContentEquals(bytes(0x02, 0xFF), AlarmPayload.disableRev2())
     }
 }

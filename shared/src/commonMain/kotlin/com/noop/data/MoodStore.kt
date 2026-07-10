@@ -1,7 +1,12 @@
-// PHASE2: hoist (java.time.LocalDate usage needs kotlinx-datetime replacement)
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.data
 
-import java.time.LocalDate
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.todayIn
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 /**
  * MoodStore — the Mind lane's storage layer. Kotlin mirror of the Swift Mind lane;
@@ -21,8 +26,9 @@ import java.time.LocalDate
  * Health re-import can therefore never silently overwrite (or delete) in-app moods.
  *
  * The constructor takes the two storage functions rather than the repository class so
- * the contract is unit-testable with a plain in-memory map (no Room/Robolectric);
- * the secondary constructor binds the real [WhoopRepository].
+ * the contract is unit-testable with a plain in-memory map (no Room/Robolectric); the
+ * real [WhoopRepository] binds via the [MoodStore] factory function in MoodStoreAndroid.kt
+ * (androidMain, since [WhoopRepository] itself is still androidMain-only pending Task 6).
  */
 class MoodStore(
     private val upsertRows: suspend (List<MetricSeriesRow>) -> Unit,
@@ -33,10 +39,6 @@ class MoodStore(
         to: String,
     ) -> List<MetricSeriesRow>,
 ) {
-    constructor(repo: WhoopRepository) : this(
-        { rows -> repo.upsertMetricSeries(rows) },
-        { deviceId, key, from, to -> repo.metricSeries(deviceId, key, from, to) },
-    )
 
     /** Save (or overwrite) the mood for [day] ("YYYY-MM-DD"). Value clamps to 1.0–5.0. */
     suspend fun setMood(day: String, value: Double) {
@@ -80,6 +82,7 @@ class MoodStore(
 
         /** Day key for a check-in: the LOCAL calendar day ("YYYY-MM-DD"). Unlike the
          *  journal's wake-day attribution, "today's mood" is literally today. */
-        fun todayKey(today: LocalDate = LocalDate.now()): String = today.toString()
+        fun todayKey(today: LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefault())): String =
+            today.toString()
     }
 }

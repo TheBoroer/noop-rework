@@ -1,4 +1,10 @@
-// PHASE2: hoist (java.util.TimeZone usage, plus com.noop.data dependency; needs kotlinx-datetime work beyond Task 8)
+// PHASE2: hoist (blocked on WhoopRepository: every public function here — log/set/remove/total/
+// history — takes a WhoopRepository parameter, and WhoopRepository.kt is androidMain-only pending
+// Task 6's hoist. Confirmed during Task 3 (kotlinx-datetime adoption) that localOffsetSec's
+// java.util.TimeZone.getDefault().getOffset(...) maps cleanly to
+// Instant.fromEpochMilliseconds(atMillis).offsetIn(TimeZone.currentSystemDefault()).totalSeconds,
+// but it was left unconverted since the file can't move until WhoopRepository does; convert both
+// together once Task 6 lands.)
 package com.noop.analytics
 
 import com.noop.data.MetricSeriesRow

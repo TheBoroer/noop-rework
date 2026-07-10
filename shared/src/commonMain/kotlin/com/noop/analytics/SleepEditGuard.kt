@@ -1,8 +1,15 @@
-// PHASE2: hoist (java.time.Instant/ZoneId usage needs kotlinx-datetime replacement)
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.analytics
 
-import java.time.Instant
-import java.time.ZoneId
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /**
  * Pure guards for the hand-edit sleep-time pickers (#940). The reporter corrected a late-tracked
@@ -49,13 +56,15 @@ object SleepEditGuard {
         candidateBedTs: Long,
         originalWakeTs: Long?,
         nowTs: Long,
-        zone: ZoneId = ZoneId.systemDefault(),
+        zone: TimeZone = TimeZone.currentSystemDefault(),
     ): Long {
-        val prevDay = Instant.ofEpochSecond(previousBedTs).atZone(zone).toLocalDate()
-        val candZoned = Instant.ofEpochSecond(candidateBedTs).atZone(zone)
-        if (candZoned.toLocalDate() != prevDay) return candidateBedTs
-        // minusDays is DST-correct: "the same wall-clock time one calendar day earlier".
-        val decremented = candZoned.minusDays(1).toEpochSecond()
+        val prevDay = Instant.fromEpochSeconds(previousBedTs).toLocalDateTime(zone).date
+        val candLocal = Instant.fromEpochSeconds(candidateBedTs).toLocalDateTime(zone)
+        if (candLocal.date != prevDay) return candidateBedTs
+        // Subtracting a calendar day from the LOCAL date-time (not the instant) then re-resolving
+        // it in this zone is DST-correct: "the same wall-clock time one calendar day earlier".
+        val decrementedLocal = LocalDateTime(candLocal.date.minus(1, DateTimeUnit.DAY), candLocal.time)
+        val decremented = decrementedLocal.toInstant(zone).epochSeconds
         if (decremented > nowTs) return candidateBedTs
         val futureViolation = candidateBedTs > nowTs
         val wakeViolation = originalWakeTs != null && candidateBedTs >= originalWakeTs &&

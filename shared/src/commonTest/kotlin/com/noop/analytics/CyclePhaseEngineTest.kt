@@ -1,12 +1,12 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
 import kotlin.math.abs
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Mirror of the Swift CyclePhaseEngineTests — identical fixtures and expected classifications (parity guard). */
 class CyclePhaseEngineTest {
@@ -119,7 +119,7 @@ class CyclePhaseEngineTest {
         }
         for (nights in listOf(biphasic(3), follicular, flat)) {
             val note = CyclePhaseEngine.classify(nights, baselineUsable = true).note.lowercase()
-            for (b in banned) assertFalse("note contained $b: $note", note.contains(b))
+            for (b in banned) assertFalse(note.contains(b), "note contained $b: $note")
         }
         val awareness = CyclePhaseEngine.awarenessLine.lowercase()
         for (b in banned) {
