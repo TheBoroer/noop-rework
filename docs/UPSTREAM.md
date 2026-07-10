@@ -9,6 +9,10 @@ We do not merge. We hand-port Kotlin diffs for protocol/BLE/analytics fixes.
    Our copies live under `shared/src/commonMain/kotlin/com/noop/` and
    `shared/src/androidMain/kotlin/com/noop/` with unchanged package names,
    so diffs apply with a path prefix swap. Ignore all Swift-side changes.
+   As of Phase 2a, most `data`/`analytics` files (Room, repository, sleep staging, and the
+   bulk of the analytics engines) live in `commonMain`; a shrinking `androidMain` remainder
+   still carries the `PHASE2: hoist` tag (see `docs/superpowers/plans/phase1-baseline.md`'s
+   Phase 2a close-out for the current list). Check both source sets for the file being patched.
 4. Run the protocol golden tests and full suite:
    `cd android && ./gradlew :shared:testDebugUnitTest :shared:iosSimulatorArm64Test :app:testDemoDebugUnitTest :app:testFullDebugUnitTest`
 5. Record the reviewed range in this file.
