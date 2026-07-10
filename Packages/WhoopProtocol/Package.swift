@@ -11,7 +11,12 @@ let package = Package(
     targets: [
         .target(
             name: "WhoopProtocol",
+            dependencies: ["Shared"],
             resources: [.process("Resources/whoop_protocol.json")]
+        ),
+        .binaryTarget(
+            name: "Shared",
+            path: "../../shared/build/XCFrameworks/release/Shared.xcframework"
         ),
         .executableTarget(
             name: "whoop-decode",

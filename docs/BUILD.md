@@ -86,6 +86,22 @@ brew install xcodegen
 The packages themselves only need a Swift toolchain — they build and test with plain `swift build`
 / `swift test`, no Xcode project required.
 
+### Shared.xcframework (Kotlin Multiplatform)
+
+`WhoopProtocol` depends on a binary target, `Shared`, built from the Kotlin `shared/` module
+(`android/shared`) and consumed as `shared/build/XCFrameworks/release/Shared.xcframework`. Before
+`swift build`, `swift test`, `xcodegen generate`, or any Xcode build that touches `WhoopProtocol`
+(directly or transitively), build the xcframework once:
+
+```bash
+Tools/build-shared-xcframework.sh
+```
+
+This wraps `./gradlew :shared:assembleSharedReleaseXCFramework` with `JAVA_HOME` detection (JDK 17
+or 21; it tries Android Studio's bundled JBR first, then `/usr/libexec/java_home`). Re-run it
+whenever `shared/` changes; CI does this automatically before `xcodegen generate` in
+`.github/workflows/app-build.yml`.
+
 ---
 
 ## macOS build & run (reference implementation)
