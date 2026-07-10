@@ -93,7 +93,10 @@ fun orgJsonDoubleString(d: Double): String {
  * org.json `JSONObject.optLong(key, default)`-equivalent: [default] when [key] is absent, null, or
  * not coercible to a `Long`. Every writer in this codebase stores minute/second fields as genuine
  * JSON numbers, so the deeper org.json leniency (parsing a JSON STRING like `"5"` as a number) is
- * intentionally not ported here: no stored payload in this app has ever needed it.
+ * intentionally not ported here: no stored payload in this app has ever needed it. Also un-ported:
+ * org.json's optLong truncates a decimal-formatted numeric value (e.g. `80.0` to `80`), while this
+ * port returns [default] for it instead; inert for current writers, since none emit
+ * decimal-formatted integer fields.
  */
 fun JsonObject.optLong(key: String, default: Long = 0L): Long =
     (this[key] as? JsonPrimitive)?.longOrNull ?: default
@@ -103,10 +106,11 @@ fun JsonObject.optDouble(key: String, default: Double = 0.0): Double =
     (this[key] as? JsonPrimitive)?.doubleOrNull ?: default
 
 /**
- * org.json `JSONObject.optString(key, default)`-equivalent: [default] only when [key] is absent or
- * not a primitive at all (a nested array/object); a present primitive's [JsonPrimitive.content] is
- * returned verbatim, INCLUDING a JSON-null entry's literal `"null"` text, matching org.json's own
- * `String.valueOf(JSONObject.NULL)` stringification of an explicit null value.
+ * org.json `JSONObject.optString(key, default)`-equivalent, with one documented divergence: for an
+ * explicit JSON null (org.json's `JSONObject.NULL` sentinel), org.json returns [default], but this
+ * port returns the literal string `"null"` (from [JsonPrimitive.content] on a `JsonNull` element).
+ * [default] is otherwise returned only when [key] is absent or not a primitive at all (a nested
+ * array/object); any other present primitive's [JsonPrimitive.content] is returned verbatim.
  */
 fun JsonObject.optString(key: String, default: String = ""): String =
     (this[key] as? JsonPrimitive)?.content ?: default

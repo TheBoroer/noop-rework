@@ -13,7 +13,7 @@ import kotlin.test.assertEquals
 /**
  * Smoke test for the Phase 2a KMP [WhoopDatabase]. iOS-only, and deliberately so: the round-trip needs
  * a real Room instance, and on the JVM (`androidUnitTest`) Room's Android builders require a
- * `Context` — i.e. Robolectric/instrumentation — which this module intentionally does not use (see the
+ * `Context` (i.e. Robolectric/instrumentation), which this module intentionally does not use (see the
  * SQL-only migration tests). The iOS simulator target (`iosSimulatorArm64Test`, part of the gate) can
  * open a real Room database with the bundled SQLite driver directly, so it carries the open+round-trip
  * proof: a fresh store is empty, one inserted HR sample persists through Room's generated schema and

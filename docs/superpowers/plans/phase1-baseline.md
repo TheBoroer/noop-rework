@@ -132,7 +132,8 @@ The backup fixture is archived locally at NOOP/backups/noop-backup-2026-07-09.no
 Date: 2026-07-10
 Final code commit: `0e60b9f2` (Task 8, "feat: multiplatform backup restore engine, synthetic v17
 fixture restores in ios simulator test"). Task 9 is docs-only, no code changes; it commits on top
-of this sha. Branch: `phase2a-shared-groundwork` (8 commits on top of Phase 1 baseline `23a5c59e`).
+of this sha. Branch: `phase2a-shared-groundwork` (12 commits (10 code + 2 docs) on top of Phase 1
+baseline `23a5c59e`).
 
 Phase 2a moved the multiplatform dependency set (kotlinx-datetime, kotlinx-serialization,
 atomicfu, okio), a shared LRU cache, a locale-independent `toFixed` formatter, and a

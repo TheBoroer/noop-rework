@@ -9,9 +9,10 @@ package com.noop.data
  * stored on the per-row sample models , it is supplied to [WhoopRepository.insert]).
  *
  * Extracted out of WhoopRepository.kt (Task 8 data hoist): this shape plus the device-agnostic
- * decoded rows below are pure (no Room/Android/JVM dependency), so they hoist to commonMain even
- * though [WhoopRepository] itself (java.time/System.currentTimeMillis/org.json/Context usage) stays
- * androidMain this phase.
+ * decoded rows below are pure (no Room/Android/JVM dependency), so they hoisted to commonMain ahead
+ * of [WhoopRepository] itself, which at the time still had androidMain-only usage
+ * (java.time/System.currentTimeMillis/org.json/Context). [WhoopRepository] has since moved to
+ * commonMain too (commit 9c90a983); only its Context-owning factory wiring stays androidMain now.
  */
 data class StreamBatch(
     val hr: List<HrRow> = emptyList(),

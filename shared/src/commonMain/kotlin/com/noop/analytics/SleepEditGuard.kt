@@ -63,6 +63,9 @@ object SleepEditGuard {
         if (candLocal.date != prevDay) return candidateBedTs
         // Subtracting a calendar day from the LOCAL date-time (not the instant) then re-resolving
         // it in this zone is DST-correct: "the same wall-clock time one calendar day earlier".
+        // During a DST fall-back overlap hour (a wall-clock time that occurs twice), this fresh
+        // offset resolution may pick a different offset than the old ZonedDateTime
+        // preferred-offset behavior, differing by the DST shift; accepted divergence.
         val decrementedLocal = LocalDateTime(candLocal.date.minus(1, DateTimeUnit.DAY), candLocal.time)
         val decremented = decrementedLocal.toInstant(zone).epochSeconds
         if (decremented > nowTs) return candidateBedTs

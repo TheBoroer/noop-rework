@@ -36,6 +36,9 @@ object AlarmPayload {
      * Today's occurrence if strictly in the future, else tomorrow's (next occurrence after now).
      */
     fun nextWakeEpochMs(hour: Int, minute: Int, nowMs: Long, zone: TimeZone): Long {
+        // During a DST fall-back overlap hour (a wall-clock time that occurs twice), toInstant's
+        // fresh offset resolution below may pick a different offset than the old ZonedDateTime
+        // preferred-offset behavior, differing by the DST shift; accepted divergence.
         val now = Instant.fromEpochMilliseconds(nowMs).toLocalDateTime(zone)
         val candidate = now.date.atTime(hour, minute) // second + nanos cleared → subseconds 0
         val target = if (candidate.toInstant(zone).toEpochMilliseconds() > nowMs) candidate

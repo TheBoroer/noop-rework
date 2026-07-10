@@ -24,7 +24,7 @@ kotlin {
             // migrations now live in commonMain too.
             implementation("androidx.room:room-runtime:2.7.1")
 
-            // Bundled SQLite driver — used by the iOS builder (and the JVM/iOS smoke tests). Version
+            // Bundled SQLite driver, used by the iOS builder (and the JVM/iOS smoke tests). Version
             // pinned to what androidx.room 2.7.1 resolves for androidx.sqlite:sqlite (2.5.0), verified
             // via `./gradlew :shared:dependencies --configuration debugRuntimeClasspath | grep sqlite`.
             implementation("androidx.sqlite:sqlite-bundled:2.5.0")

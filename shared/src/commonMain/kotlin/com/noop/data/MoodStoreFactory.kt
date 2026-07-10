@@ -5,7 +5,7 @@ package com.noop.data
  * MoodStore.kt (Task 3, kotlinx-datetime adoption) so the class itself could hoist to commonMain
  * while [WhoopRepository] was still androidMain-only; Task 6 hoisted the repository, so the
  * factory now lives in commonMain too (was androidMain MoodStoreAndroid.kt). Call sites (e.g.
- * `MoodStore(vm.repo)` in MindSection.kt) are unaffected — Kotlin resolves a top-level function
+ * `MoodStore(vm.repo)` in MindSection.kt) are unaffected: Kotlin resolves a top-level function
  * with the same name as a class exactly like a constructor call.
  */
 fun MoodStore(repo: WhoopRepository): MoodStore = MoodStore(

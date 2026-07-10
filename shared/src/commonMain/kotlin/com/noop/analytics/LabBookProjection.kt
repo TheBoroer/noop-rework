@@ -20,7 +20,7 @@ import kotlinx.datetime.plus
  * Timezone-free by construction: it operates on PRE-DERIVED yyyy-MM-dd day strings (the
  * store derives the day from a reading's takenAt), so there is no Calendar/ZoneId
  * divergence between Swift and Kotlin. The trailing-window day arithmetic uses
- * kotlinx.datetime.LocalDate.plus(delta, DateTimeUnit.DAY) — the calendar-correct,
+ * kotlinx.datetime.LocalDate.plus(delta, DateTimeUnit.DAY), the calendar-correct,
  * timezone-free equivalent of the Swift UTC-calendar shiftDay.
  *
  * NON-CLINICAL: folds and lines up the user's own numbers. Never judges a value
