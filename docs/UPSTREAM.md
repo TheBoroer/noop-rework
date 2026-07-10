@@ -4,11 +4,23 @@ Upstream: https://github.com/ryanbr/noop (remote `upstream`). This fork diverged
 We do not merge. We hand-port Kotlin diffs for protocol/BLE/analytics fixes.
 
 1. `git fetch upstream`
-2. `git log --oneline <last-reviewed>..upstream/main -- android/app/src/main/java/com/noop/protocol android/app/src/main/java/com/noop/ble android/app/src/main/java/com/noop/analytics`
+2. `git log --oneline <last-reviewed>..upstream/main -- android/app/src/main/java/com/noop/protocol android/app/src/main/java/com/noop/ble android/app/src/main/java/com/noop/analytics android/app/src/main/java/com/noop/data`
 3. For each relevant commit: `git show <sha>` and hand-apply the Kotlin-side diff.
-   Our copies live under `shared/src/commonMain/kotlin/com/noop/` and
-   `shared/src/androidMain/kotlin/com/noop/` with unchanged package names,
-   so diffs apply with a path prefix swap. Ignore all Swift-side changes.
+   Our `protocol` and `analytics` copies live under `shared/src/commonMain/kotlin/com/noop/` and
+   `shared/src/androidMain/kotlin/com/noop/` with unchanged package names, so those diffs apply
+   with a path prefix swap. `com.noop.ble` (24 files) is the exception: it still lives at
+   `android/app/src/main/java/com/noop/ble/`, the same path as upstream, so its diffs apply with
+   no path change at all. Ignore all Swift-side changes.
+   As of Phase 2a, most `data`/`analytics` files (Room, repository, sleep staging, and the
+   bulk of the analytics engines) live in `commonMain`; a shrinking `androidMain` remainder
+   still carries the `PHASE2: hoist` tag (see `docs/superpowers/plans/phase1-baseline.md`'s
+   Phase 2a close-out for the current list). Check both source sets for the file being patched.
+   Caveat since Phase 2a: an upstream diff touching `org.json` or `java.time` code in a hoisted
+   `commonMain` file (`WhoopRepository`, `StreamPersistence`, `SleepStager`, `AnalyticsEngine`,
+   and others under `shared/src/commonMain`) needs API translation to this codebase's
+   `JsonCompat`/kotlinx-datetime conventions, not just a path swap. See
+   `shared/src/commonMain/kotlin/com/noop/util/JsonCompat.kt` and `TimeCompat.kt` for the
+   reference conventions to translate against.
 4. Run the protocol golden tests and full suite:
    `cd android && ./gradlew :shared:testDebugUnitTest :shared:iosSimulatorArm64Test :app:testDemoDebugUnitTest :app:testFullDebugUnitTest`
 5. Record the reviewed range in this file.

@@ -161,6 +161,19 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
+    // --- kotlinx-datetime (Task 3, Phase 2a): :shared declares this `implementation`, matching this
+    // module's existing pattern of declaring its own copy of shared's transitive deps rather than
+    // relying on API leakage (see the Coroutines block above). Needed directly here because
+    // MoodStore.todayKey/SleepEditGuard.autoCorrectedBed/AlarmPayload.nextWakeEpochMs now default a
+    // parameter to a kotlinx.datetime type (LocalDate/TimeZone), and call sites in this module
+    // (MindSection.kt, SleepScreen.kt) omit that argument, so the compiler needs the type resolvable.
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
+
+    // --- okio (Task 8, Phase 2a): same own-copy pattern as kotlinx-datetime above. DataBackup
+    // delegates the .noopbak stage/validate/swap flow to the shared BackupRestore engine, whose
+    // API takes okio FileSystem/Path (FileSystem.SYSTEM + File.toOkioPath at the call site).
+    implementation("com.squareup.okio:okio:3.15.0")
+
     // --- Room (local-only persistence; on-device, nothing leaves the phone) ---
     val roomVersion = "2.7.1"
     implementation("androidx.room:room-runtime:$roomVersion")
