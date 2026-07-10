@@ -12,11 +12,15 @@ on:
     branches: [main]
     paths:
       - 'Packages/**'
+      - 'shared/**'
+      - 'android/**'
       - '.github/workflows/swift-packages.yml'
   push:
     branches: [main]
     paths:
       - 'Packages/**'
+      - 'shared/**'
+      - 'android/**'
       - '.github/workflows/swift-packages.yml'
   workflow_dispatch:
 
@@ -40,6 +44,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # WhoopProtocol's SPM package consumes Shared.xcframework as a local binaryTarget,
+      # which is built from the Kotlin shared module and is gitignored: build it here
+      # before this package can be compiled, same as app-build.yml does for the app targets.
+      - name: Set up JDK 21
+        if: matrix.package == 'WhoopProtocol'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build Shared.xcframework
+        if: matrix.package == 'WhoopProtocol'
+        run: ./Tools/build-shared-xcframework.sh Release
 
       - name: Build ${{ matrix.package }}
         run: swift build
