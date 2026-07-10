@@ -169,6 +169,11 @@ dependencies {
     // (MindSection.kt, SleepScreen.kt) omit that argument, so the compiler needs the type resolvable.
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
 
+    // --- okio (Task 8, Phase 2a): same own-copy pattern as kotlinx-datetime above. DataBackup
+    // delegates the .noopbak stage/validate/swap flow to the shared BackupRestore engine, whose
+    // API takes okio FileSystem/Path (FileSystem.SYSTEM + File.toOkioPath at the call site).
+    implementation("com.squareup.okio:okio:3.15.0")
+
     // --- Room (local-only persistence; on-device, nothing leaves the phone) ---
     val roomVersion = "2.7.1"
     implementation("androidx.room:room-runtime:$roomVersion")

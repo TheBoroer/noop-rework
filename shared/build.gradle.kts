@@ -76,6 +76,16 @@ room {
     schemaDirectory("$projectDir/schemas")
 }
 
+// Task 8: the backup-restore tests read the committed .noopbak fixture from disk. Both test targets
+// get the fixtures directory via NOOP_FIXTURES; the iOS simulator child process only inherits
+// variables carrying the SIMCTL_CHILD_ prefix, so the same value is exported twice.
+tasks.withType<Test>().configureEach {
+    environment("NOOP_FIXTURES", "$projectDir/src/commonTest/fixtures")
+}
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
+    environment("SIMCTL_CHILD_NOOP_FIXTURES", "$projectDir/src/commonTest/fixtures")
+}
+
 dependencies {
     add("kspAndroid", "androidx.room:room-compiler:2.7.1")
     // Phase 2a Task 5: the @Database class moved to commonMain, so Room's KSP must also run for the
