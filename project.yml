@@ -31,7 +31,7 @@ settings:
     # Build for both Apple Silicon and Intel so the release runs on every Mac.
     ARCHS: "$(ARCHS_STANDARD)"
     # Shared.xcframework (Kotlin/Native, Packages/WhoopProtocol's Shared binaryTarget) ships an
-    # arm64-only iOS Simulator slice (no Intel simulator target in the Kotlin Multiplatform build) —
+    # arm64-only iOS Simulator slice (no Intel simulator target in the Kotlin Multiplatform build):
     # linking a generic/iOS-Simulator build without this fails with "missing architecture x86_64".
     # SDK-scoped so it only drops Intel Simulator support; the macOS ARCHS_STANDARD above (and iOS
     # device arm64 builds) are unaffected.
