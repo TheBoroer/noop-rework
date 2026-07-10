@@ -6,6 +6,12 @@ plugins {
     id("com.google.devtools.ksp")
     id("androidx.room") version "2.7.1"
     kotlin("plugin.serialization")
+    // Phase 2b Task 2: SKIE rewrites the Apple framework API surface at link time: suspend
+    // functions become Swift async, Flow becomes AsyncSequence, sealed classes become Swift
+    // enums with associated values. 0.10.13 is the newest stable; it supports Kotlin 2.0.0
+    // through 2.4.0, covering the pinned 2.1.21 (2.1.21 support landed in 0.10.2). SKIE with
+    // Kotlin 2.1.20+ requires Gradle 8.8+, hence the wrapper bump from 8.7 in this commit.
+    id("co.touchlab.skie") version "0.10.13"
 }
 
 kotlin {
