@@ -191,12 +191,18 @@ object RecoveryDrivers {
         }
         if (skinIdx >= 0 && skinTempDev != null) {
             // Skin temp is a SYMMETRIC penalty: only |deviation| matters. Surface it as a RELATIVE
-            // deviation (signed +/- C from baseline), never an absolute temperature.
+            // deviation (signed +/- C from baseline), never an absolute temperature. The sign is
+            // read off the FORMATTED string (not `skinTempDev >= 0.0`): toFixed preserves the sign
+            // bit of -0.0, so a `>= 0.0` guard would print "+-0.0" for -0.0. Matches the JVM's own
+            // "%+.1f" of -0.0, which is "-0.0".
+            val formattedSkinTempDev = skinTempDev.toFixed(1)
+            val signedSkinTempDev =
+                if (formattedSkinTempDev.startsWith("-")) formattedSkinTempDev else "+$formattedSkinTempDev"
             drivers.add(
                 ChargeDriver(
                     label = "Skin temperature",
                     deltaPoints = delta(skinIdx),
-                    valueText = "${if (skinTempDev >= 0.0) "+" else ""}${skinTempDev.toFixed(1)} C vs baseline",
+                    valueText = "$signedSkinTempDev C vs baseline",
                     baselineText = "",   // a deviation already; the reference is the personal baseline (0)
                     verdict = skinTempVerdict(skinTempDev),
                 ),

@@ -99,6 +99,28 @@ class RecoveryDriversTest {
         assertTrue(skin.deltaPoints <= 0)
     }
 
+    @Test fun skinTempNegativeZeroRendersWithMinusSignNotPlusMinus() {
+        // Guards against a `skinTempDev >= 0.0` sign check, which is true for -0.0 (Kotlin/IEEE
+        // comparison treats -0.0 == 0.0), while toFixed preserves the -0.0 sign bit: that mismatch
+        // used to render "+-0.0 C vs baseline". The sign must be read off the formatted string.
+        val negZero = RecoveryDrivers.chargeDrivers(
+            hrv = 50.0, rhr = 55.0, resp = null,
+            hrvBaseline = baseline(50.0, 6.0),
+            rhrBaseline = baseline(55.0, 3.0),
+            respBaseline = null, sleepPerf = null, skinTempDev = -0.0,
+        ).first { it.label == "Skin temperature" }
+        assertEquals("-0.0 C vs baseline", negZero.valueText)
+        assertFalse(negZero.valueText.contains("+-"))
+
+        val posZero = RecoveryDrivers.chargeDrivers(
+            hrv = 50.0, rhr = 55.0, resp = null,
+            hrvBaseline = baseline(50.0, 6.0),
+            rhrBaseline = baseline(55.0, 3.0),
+            respBaseline = null, sleepPerf = null, skinTempDev = 0.0,
+        ).first { it.label == "Skin temperature" }
+        assertEquals("+0.0 C vs baseline", posZero.valueText)
+    }
+
     @Test fun coldStartYieldsEmptyDrivers() {
         val coldHRV = BaselineState(
             baseline = 50.0, spread = 5.0, nValid = 2, nightsSinceUpdate = 0,
