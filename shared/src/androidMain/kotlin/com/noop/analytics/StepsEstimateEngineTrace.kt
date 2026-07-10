@@ -1,4 +1,6 @@
-// PHASE2: hoist (transitively blocked via StepsEstimateEngine.kt's java.util.Locale-based formatK)
+// PHASE2: hoist (transitively blocked via AnalyticsEngine.dayString/analyzeDay, androidMain-only pending
+// AnalyticsEngine's own java.time/org.json hoist; the Locale-based formatK blocker in StepsEstimateEngine.kt
+// is resolved as of Task 2, this file's only remaining blocker is the AnalyticsEngine dependency)
 package com.noop.analytics
 
 import com.noop.data.StepSample

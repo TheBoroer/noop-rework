@@ -1,7 +1,6 @@
-// PHASE2: hoist (java.util.Locale-based formatting needs a multiplatform replacement)
 package com.noop.analytics
 
-import java.util.Locale
+import com.noop.util.toFixed
 import kotlin.math.roundToLong
 
 /**
@@ -240,13 +239,13 @@ object BatteryEstimator {
         return estimate(samples, ratedHours) to lines
     }
 
-    private fun soc(v: Double) = String.format(Locale.US, "%.1f", v)
-    private fun hrs(v: Double) = String.format(Locale.US, "%.1f", v)
-    private fun slope(v: Double) = String.format(Locale.US, "%.1f", v)
+    private fun soc(v: Double) = v.toFixed(1)
+    private fun hrs(v: Double) = v.toFixed(1)
+    private fun slope(v: Double) = v.toFixed(1)
 
     /** Display rule from #713: hours under 48h ("~14h"), days above ("~4.5 days"). Unit text only, the UI
      *  adds the "left" / "remaining" copy. Locale-fixed so the tests stay stable. */
     fun label(hours: Double): String =
         if (hours < 48) "~${hours.roundToLong()}h"
-        else "~${String.format(Locale.US, "%.1f", hours / 24)} days"
+        else "~${(hours / 24).toFixed(1)} days"
 }

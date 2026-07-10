@@ -1,10 +1,10 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Tests for the SHARED-CONTRACT Charge "What shaped it" driver rows (RecoveryDrivers.chargeDrivers).
@@ -79,8 +79,8 @@ class RecoveryDriversTest {
         )
         val hrv = drivers.first { it.label == "Heart rate variability" }
         val rhr = drivers.first { it.label == "Resting heart rate" }
-        assertTrue("HRV above baseline should lift Charge", hrv.deltaPoints > 0)
-        assertTrue("Elevated resting HR should pull Charge down", rhr.deltaPoints < 0)
+        assertTrue(hrv.deltaPoints > 0, "HRV above baseline should lift Charge")
+        assertTrue(rhr.deltaPoints < 0, "Elevated resting HR should pull Charge down")
         assertTrue(hrv.verdict.contains("supporting recovery"))
         assertTrue(rhr.verdict.contains("limiting recovery"))
     }
@@ -93,7 +93,7 @@ class RecoveryDriversTest {
             respBaseline = null, sleepPerf = null, skinTempDev = 0.4,
         )
         val skin = drivers.first { it.label == "Skin temperature" }
-        assertTrue("skin temp must read as a +/- deviation", skin.valueText.contains("vs baseline"))
+        assertTrue(skin.valueText.contains("vs baseline"), "skin temp must read as a +/- deviation")
         assertTrue(skin.valueText.contains("+0.4"))
         // The symmetric penalty never lifts Charge.
         assertTrue(skin.deltaPoints <= 0)
@@ -122,7 +122,7 @@ class RecoveryDriversTest {
         )
         drivers.forEach { d ->
             val all = "${d.label}${d.valueText}${d.baselineText}${d.verdict}"
-            assertFalse("driver row must not contain an em-dash", all.contains("\u2014"))
+            assertFalse(all.contains("\u2014"), "driver row must not contain an em-dash")
         }
     }
 

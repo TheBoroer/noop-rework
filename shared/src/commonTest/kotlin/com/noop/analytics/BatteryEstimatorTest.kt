@@ -1,8 +1,8 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /** Mirror of the Swift BatteryEstimatorTests: same fixtures, same expectations (#713). */
 class BatteryEstimatorTest {

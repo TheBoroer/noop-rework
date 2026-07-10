@@ -1,10 +1,10 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Twin of the Swift BatteryEstimatorTraceTests: same fixtures, same trace lines, and the same proof that
  *  the emitter never changes the engine value estimate() returns (#713, Test Centre). No em-dashes. */

@@ -1,5 +1,7 @@
-// PHASE2: hoist (String.format with java.util.Locale for %.1f formatting needs a multiplatform decimal formatter)
 package com.noop.analytics
+
+import com.noop.util.toFixed
+import kotlin.math.roundToInt
 
 // DisplayTrace.kt - Kotlin twin of DisplayTrace.swift. Pure values + line formatters for the Display &
 // Performance test mode: the device-metrics summary, the rolling frame-time / hitch summary, and the
@@ -85,7 +87,7 @@ object DisplayTrace {
 
     /** Round a point value to a whole number; negatives clamp to 0 (an inset is never negative). Mirrors
      *  the Swift helper (Int(rounded())). */
-    internal fun pt(v: Double): String = maxOf(0.0, v).let { Math.round(it).toInt().toString() }
+    internal fun pt(v: Double): String = maxOf(0.0, v).roundToInt().toString()
 
     /** Backing scale to one decimal; "?" when the caller could not read it (0). Mirrors the Swift helper. */
     internal fun scaleLabel(v: Double): String = if (v > 0) oneDecimal(v) else "?"
@@ -94,8 +96,8 @@ object DisplayTrace {
     internal fun ms(v: Double): String = oneDecimal(maxOf(0.0, v))
 
     /** Locale-stable one-decimal format so the line reads identically everywhere (the Swift `%.1f` is
-     *  locale-independent; String.format with Locale.US matches it). */
-    private fun oneDecimal(v: Double): String = String.format(java.util.Locale.US, "%.1f", v)
+     *  locale-independent; toFixed matches it). */
+    private fun oneDecimal(v: Double): String = v.toFixed(1)
 }
 
 /**

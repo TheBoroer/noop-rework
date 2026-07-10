@@ -1,7 +1,7 @@
 package com.noop.analytics
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
 
 /** The Android (t, soc) bank line must match the Swift "bank soc=.. t=..s" shape (#713, Test Centre).
  *  No em-dashes. */

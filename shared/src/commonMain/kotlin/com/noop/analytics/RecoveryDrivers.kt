@@ -1,6 +1,6 @@
-// PHASE2: hoist (String.format with java.util.Locale for %.1f formatting needs a multiplatform decimal formatter)
 package com.noop.analytics
 
+import com.noop.util.toFixed
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.roundToInt
@@ -182,8 +182,8 @@ object RecoveryDrivers {
                 ChargeDriver(
                     label = "Respiratory rate",
                     deltaPoints = delta(respIdx),
-                    valueText = String.format(java.util.Locale.US, "%.1f br/min", resp),
-                    baselineText = String.format(java.util.Locale.US, "%.1f br/min baseline", respBaseline.baseline),
+                    valueText = "${resp.toFixed(1)} br/min",
+                    baselineText = "${respBaseline.baseline.toFixed(1)} br/min baseline",
                     verdict = directionVerdict(terms[respIdx].z, good = "below baseline, supporting recovery",
                         flat = "at baseline", bad = "above baseline, limiting recovery"),
                 ),
@@ -196,7 +196,7 @@ object RecoveryDrivers {
                 ChargeDriver(
                     label = "Skin temperature",
                     deltaPoints = delta(skinIdx),
-                    valueText = String.format(java.util.Locale.US, "%+.1f C vs baseline", skinTempDev),
+                    valueText = "${if (skinTempDev >= 0.0) "+" else ""}${skinTempDev.toFixed(1)} C vs baseline",
                     baselineText = "",   // a deviation already; the reference is the personal baseline (0)
                     verdict = skinTempVerdict(skinTempDev),
                 ),

@@ -1,10 +1,10 @@
 package com.noop.analytics
 
 import com.noop.data.GravitySample
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /** Mirror of the Swift StepsEstimateEngineTests — same numbers, same expectations. */
 class StepsEstimateEngineTest {

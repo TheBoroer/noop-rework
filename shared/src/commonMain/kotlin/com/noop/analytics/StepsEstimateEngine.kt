@@ -1,9 +1,10 @@
-// PHASE2: hoist (java.util.Locale-based String.format in formatK, entangled with the CalibrationStatus sealed hierarchy; needs a multiplatform decimal formatter)
 package com.noop.analytics
 
 import com.noop.data.GravitySample
+import com.noop.util.toFixed
 import kotlin.math.abs
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -126,7 +127,7 @@ object StepsEstimateEngine {
 
     /** Format the steps coefficient `k` to one decimal place for the status line (US-neutral, locale-free so
      *  iOS + Android match byte-for-byte). Mirror of Swift `formatK`. (#760/#792) */
-    internal fun formatK(k: Double): String = String.format(java.util.Locale.US, "%.1f", k)
+    internal fun formatK(k: Double): String = k.toFixed(1)
 
     /**
      * Classify the current calibration state from the same inputs [calibrate] sees, so the UI can explain
@@ -203,7 +204,7 @@ object StepsEstimateEngine {
      */
     fun estimate(motion: Double, calibration: Calibration): Int? {
         if (motion < MIN_MOTION_FOR_FIT || calibration.coefficient <= 0) return null
-        return Math.round(motion * calibration.coefficient).toInt().coerceIn(0, MAX_DAILY_STEPS)
+        return (motion * calibration.coefficient).roundToInt().coerceIn(0, MAX_DAILY_STEPS)
     }
 
     internal fun median(xs: List<Double>): Double {
