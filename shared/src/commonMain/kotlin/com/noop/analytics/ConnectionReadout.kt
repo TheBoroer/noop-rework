@@ -1,10 +1,10 @@
-// PHASE2: hoist (java.text.SimpleDateFormat/java.util.Date/TimeZone/Locale usage needs kotlinx-datetime replacement)
 package com.noop.analytics
 
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.number
+import kotlinx.datetime.toLocalDateTime
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 // ConnectionReadout.kt - Kotlin twin of ConnectionReadout.swift. Pure values + line formatters for the
 // Connection & Sync test mode: the clock-drift summary line (strap-reported banked-record range vs wall
@@ -89,11 +89,32 @@ object ConnectionTrace {
     fun noCursorLine(): String =
         "offload trim=0xFFFFFFFF noCursor (strap has no banked history to offload)"
 
-    /** Compact ISO-8601 date-time (no fractional seconds), UTC, matching the Swift line. */
+    /** Compact ISO-8601 date-time (no fractional seconds), UTC, matching the Swift line. A FIXED
+     *  character pattern ("yyyy-MM-dd HH:mm:ss"), not a locale STYLE - Locale.US in the original
+     *  SimpleDateFormat never affected this output (no textual month/day names in the pattern), so
+     *  this maps directly to kotlinx-datetime here in commonMain rather than needing a per-platform
+     *  expect/actual (see `formatShortTime` in `com.noop.util` for the genuinely locale-STYLE case).
+     *  Built from the individual zero-padded fields rather than `LocalDateTime.toString()`, whose
+     *  ISO-8601 form OMITS the seconds component when it is zero (e.g. "12:00" not "12:00:00") -
+     *  this pattern always wants seconds. Pinned byte-for-byte against the original
+     *  SimpleDateFormat output by ConnectionTraceTest (isoDateZeroPadsSingleDigitFieldsAndKeepsZeroSeconds
+     *  plus the pre-existing clockDriftLine fixtures), before and after this port. */
+    @OptIn(ExperimentalTime::class)
     internal fun isoDate(unix: Long): String {
-        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
-        fmt.timeZone = TimeZone.getTimeZone("UTC")
-        return fmt.format(Date(unix * 1000L))
+        val dt = Instant.fromEpochSeconds(unix).toLocalDateTime(TimeZone.UTC)
+        return buildString {
+            append(dt.year.toString().padStart(4, '0'))
+            append('-')
+            append(dt.month.number.toString().padStart(2, '0'))
+            append('-')
+            append(dt.day.toString().padStart(2, '0'))
+            append(' ')
+            append(dt.hour.toString().padStart(2, '0'))
+            append(':')
+            append(dt.minute.toString().padStart(2, '0'))
+            append(':')
+            append(dt.second.toString().padStart(2, '0'))
+        }
     }
 
     /** Sign-prefixed integer so the newest-vs-wall delta reads as a signed offset. */

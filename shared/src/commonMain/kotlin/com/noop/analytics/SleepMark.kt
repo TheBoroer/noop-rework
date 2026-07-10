@@ -1,14 +1,17 @@
-// PHASE2: hoist (java.text.SimpleDateFormat/java.util date-formatting usage needs a kotlinx-datetime
-// formatting port; the com.noop.data dependency this tag also named is RESOLVED as of Task 6, so the
-// date formatting is the only remaining blocker)
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.analytics
 
 import com.noop.data.MetricSeriesRow
-import java.text.DateFormat
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
+import com.noop.util.formatShortTime
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.toLocalDateTime
+import kotlin.math.roundToInt
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
+import kotlin.time.Instant
 
 /*
  * SleepMark.kt — tap-to-mark "going to sleep" / "awake" (#461 Phase 1).
@@ -38,9 +41,12 @@ enum class SleepMarkType(val seriesValue: Int) {
 
     companion object {
         /** Decode a persisted series value back to a type. Tolerant of float drift (rounds) and
-         *  clamps any unexpected value to the nearest valid case so a corrupt row never crashes. */
+         *  clamps any unexpected value to the nearest valid case so a corrupt row never crashes.
+         *  `roundToInt()` ties round towards positive infinity, same as the `Math.round` this
+         *  replaces (JVM-only, not available in commonMain) - not a date-formatting API, but a second
+         *  blocker this file's original PHASE2 tag didn't name, found while hoisting. */
         fun fromSeriesValue(value: Double): SleepMarkType =
-            if (Math.round(value).toInt() == WAKE.seriesValue) WAKE else BEDTIME
+            if (value.roundToInt() == WAKE.seriesValue) WAKE else BEDTIME
     }
 }
 
@@ -53,8 +59,12 @@ data class SleepMark(
     val tsMs: Long,
 ) {
     /** The mark's local calendar day (yyyy-MM-dd) — the `day` of the store's natural key. Local zone
-     *  so the mark lands on the day the user actually tapped it. */
-    val dayKey: String get() = dayFormatter().format(Date(tsMs))
+     *  so the mark lands on the day the user actually tapped it. `kotlinx.datetime.LocalDate.toString()`
+     *  is already the zero-padded ISO "yyyy-MM-dd" form (no locale-sensitive text in it), so this maps
+     *  directly - unlike `ConnectionTrace.isoDate`'s date-TIME case, `LocalDate.toString()` has no
+     *  "omit if zero" quirk to work around. */
+    val dayKey: String get() =
+        Instant.fromEpochMilliseconds(tsMs).toLocalDateTime(TimeZone.currentSystemDefault()).date.toString()
 
     /** Project this mark into a `metricSeries` row: key "sleep_mark", value 0/1 = type, day = local
      *  calendar day. Upsert is idempotent by (deviceId, day, key); a later same-day mark replaces the
@@ -65,14 +75,14 @@ data class SleepMark(
     /** The human-readable strap-log line, e.g. "Sleep mark · bedtime (going to sleep) @ 23:42".
      *  Appended to the shared strap log so the mark appears in a debug export. Carries no PII. */
     fun logLine(): String {
-        val clock = clockFormatter().format(Date(tsMs))
+        val clock = formatShortTime(tsMs / 1000L, zoneId = null)
         val phrase = if (type == SleepMarkType.BEDTIME) "going to sleep" else "awake"
         return "Sleep mark · ${type.word} ($phrase) @ $clock"
     }
 
     /** The confirming toast, e.g. "Logged bedtime at 23:42." */
     fun confirmation(): String {
-        val clock = clockFormatter().format(Date(tsMs))
+        val clock = formatShortTime(tsMs / 1000L, zoneId = null)
         val what = if (type == SleepMarkType.BEDTIME) "bedtime" else "wake-up"
         return "Logged $what at $clock."
     }
@@ -81,8 +91,11 @@ data class SleepMark(
         /** The metric-series key all sleep marks share. Identical to Swift. */
         const val SERIES_KEY = "sleep_mark"
 
-        /** Capture a mark at the current instant. */
-        fun now(type: SleepMarkType): SleepMark = SleepMark(type, System.currentTimeMillis())
+        /** Capture a mark at the current instant. `Clock.System.now().toEpochMilliseconds()` replaces
+         *  `System.currentTimeMillis()` (`java.lang.System`, JVM-only, not available in commonMain) -
+         *  the kotlinx-datetime 0.8.0 convention this repo's Phase 2a tasks follow (task-3-report.md);
+         *  a second blocker this file's original PHASE2 tag didn't name, found while hoisting. */
+        fun now(type: SleepMarkType): SleepMark = SleepMark(type, Clock.System.now().toEpochMilliseconds())
 
         /** Capture a mark at the current instant for a NON-UI caller (the double-tap automation), which
          *  has no bedtime/wake picker. A single physical double-tap can't tell us which boundary the user
@@ -95,18 +108,9 @@ data class SleepMark(
          *  Returns null for a row that isn't a sleep-mark or whose day won't parse. */
         fun fromRow(row: MetricSeriesRow): SleepMark? {
             if (row.key != SERIES_KEY) return null
-            val date = runCatching { dayFormatter().parse(row.day) }.getOrNull() ?: return null
-            return SleepMark(SleepMarkType.fromSeriesValue(row.value), date.time)
+            val date = runCatching { LocalDate.parse(row.day) }.getOrNull() ?: return null
+            val tsMs = date.atStartOfDayIn(TimeZone.currentSystemDefault()).toEpochMilliseconds()
+            return SleepMark(SleepMarkType.fromSeriesValue(row.value), tsMs)
         }
-
-        // Formatters are created per-call (SimpleDateFormat is not thread-safe); these are tiny.
-        private fun dayFormatter(): SimpleDateFormat =
-            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getDefault() }
-
-        // Device-locale SHORT clock for the log/toast lines — follows the locale's 12-/24-hour
-        // convention (the locale's own preference), pure and context-free. Local time zone.
-        private fun clockFormatter(): DateFormat =
-            DateFormat.getTimeInstance(DateFormat.SHORT, Locale.getDefault())
-                .apply { timeZone = TimeZone.getDefault() }
     }
 }

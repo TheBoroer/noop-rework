@@ -1,10 +1,10 @@
 package com.noop.analytics
 
 import com.noop.data.MetricSeriesRow
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * #461 Phase 1 — sleep-marks. Kotlin twin of StrandTests/SleepMarkTests.swift. Covers the pure
@@ -62,11 +62,11 @@ class SleepMarkTest {
     fun logLineIsHumanReadableAndTyped() {
         val bed = SleepMark(SleepMarkType.BEDTIME, 1_710_000_000_000L).logLine()
         val wake = SleepMark(SleepMarkType.WAKE, 1_710_000_000_000L).logLine()
-        assertTrue(bed, bed.startsWith("Sleep mark · bedtime"))
-        assertTrue(bed, bed.contains("going to sleep"))
-        assertTrue(wake, wake.startsWith("Sleep mark · wake"))
-        assertTrue(wake, wake.contains("awake"))
-        assertTrue(bed, bed.contains("@"))
+        assertTrue(bed.startsWith("Sleep mark · bedtime"), bed)
+        assertTrue(bed.contains("going to sleep"), bed)
+        assertTrue(wake.startsWith("Sleep mark · wake"), wake)
+        assertTrue(wake.contains("awake"), wake)
+        assertTrue(bed.contains("@"), bed)
     }
 
     @Test
@@ -89,7 +89,7 @@ class SleepMarkTest {
         fake.upsert(listOf(wakeMark.metricPoint(deviceId)))
 
         val points = fake.query(deviceId, "sleep_mark", "0000-00-00", "9999-99-99")
-        assertEquals("two distinct days -> two rows", 2, points.size)
+        assertEquals(2, points.size, "two distinct days -> two rows")
 
         val decoded = points.mapNotNull { SleepMark.fromRow(it) }
         assertEquals(2, decoded.size)
@@ -109,13 +109,13 @@ class SleepMarkTest {
         val base = 1_710_000_000_000L
         val first = SleepMark(SleepMarkType.BEDTIME, base)
         val second = SleepMark(SleepMarkType.WAKE, base + 60_000L)  // 1 min later, same day
-        assertEquals("fixture must be same-day", first.dayKey, second.dayKey)
+        assertEquals(first.dayKey, second.dayKey, "fixture must be same-day")
 
         fake.upsert(listOf(first.metricPoint(deviceId)))
         fake.upsert(listOf(second.metricPoint(deviceId)))
 
         val points = fake.query(deviceId, "sleep_mark", "0000-00-00", "9999-99-99")
-        assertEquals("same day upserts to one row", 1, points.size)
+        assertEquals(1, points.size, "same day upserts to one row")
         assertEquals(SleepMarkType.WAKE, SleepMark.fromRow(points[0])?.type)
     }
 }
