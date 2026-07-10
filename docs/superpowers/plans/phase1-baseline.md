@@ -113,3 +113,14 @@ Carried forward from the concerns sections of Tasks 6 through 8, plus this task'
   2 planning so it isn't lumped in with the kotlinx-datetime/JSON items above.
 - **`javax.crypto` in `com.noop.oura`** (`Auth.kt` and its two transitive dependents) needs a
   multiplatform crypto library before it can hoist.
+
+## Release-gate verification (2026-07-09, post-merge)
+
+User-performed device pass on the fullDebug build (com.noop.whoop.debug):
+- Restored a real v8.5.2 staging backup (119 MB zip, 604 MB sqlite) via in-app restore: SUCCESS
+- Sleep history renders with full data: PASS
+- Devices screen renders: PASS
+
+This closes the pending-manual items for the upstream-to-fork restore direction on real data.
+Still optional: fork-to-upstream direction (export from this build, restore in stock noop).
+The backup fixture is archived locally at NOOP/backups/noop-backup-2026-07-09.noopbak.zip.
