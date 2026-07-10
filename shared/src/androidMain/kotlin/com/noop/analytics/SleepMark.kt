@@ -1,4 +1,6 @@
-// PHASE2: hoist (java.text/java.util date-formatting usage, plus com.noop.data dependency; needs multiplatform work beyond Task 8)
+// PHASE2: hoist (java.text.SimpleDateFormat/java.util date-formatting usage needs a kotlinx-datetime
+// formatting port; the com.noop.data dependency this tag also named is RESOLVED as of Task 6, so the
+// date formatting is the only remaining blocker)
 package com.noop.analytics
 
 import com.noop.data.MetricSeriesRow

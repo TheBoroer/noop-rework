@@ -1,4 +1,9 @@
-// PHASE2: hoist (System.currentTimeMillis + java.time.LocalDate.parse + java.util.TimeZone usage, plus com.noop.data.WhoopRepository dependency; needs multiplatform date work beyond Task 8)
+// PHASE2: hoist (blocked on Baselines: this engine folds baselines via Baselines.metricCfg/
+// foldHistory/deviation and threads Baselines-derived recalibration epochs throughout, and
+// Baselines' android.content.SharedPreferences boundary legitimately stays androidMain this phase
+// (plan Global Constraints). The Task 6 blockers this tag named before (WhoopRepository/data deps,
+// System.currentTimeMillis/java.time/java.util.TimeZone) are NOT the remaining blocker; convert
+// them together with the Baselines split when that lands.)
 package com.noop.analytics
 
 import com.noop.data.DailyMetric
@@ -88,8 +93,10 @@ object IntelligenceEngine {
     /** Minimum HR samples in a day's window before it is worth scoring. */
     const val MIN_HR_SAMPLES: Int = 200
 
-    /** Read cap per stream read , matches the Swift 200_000 bound. */
-    const val STREAM_LIMIT: Int = 200_000
+    // NOTE (Task 6): STREAM_LIMIT (the per-stream read cap, Swift 200_000 bound) moved to a
+    // top-level const in commonMain SleepStageHealer.kt: the healer hoisted to commonMain and this
+    // engine stays androidMain, so the shared definition lives on the common side. Unqualified
+    // STREAM_LIMIT references below resolve to it (same package).
 
     private const val SECONDS_PER_DAY: Long = 86_400L
 
