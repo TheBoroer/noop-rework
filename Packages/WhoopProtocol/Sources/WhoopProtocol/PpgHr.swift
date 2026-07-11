@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 
 /// Per-second heart rate derived from the WHOOP 5.0 type-47 **v26** optical PPG buffer (issue #156).
 ///
@@ -25,11 +26,13 @@ public struct PpgHrSample: Equatable, Codable, Sendable {
 }
 
 public enum PpgHr {
-    public static let sampleRateHz = 24          // v26 carries 24 samples per 1-second record
-    public static let windowSeconds = 8          // autocorrelation window (stable at low HR)
-    public static let hrLoBpm = 30.0
-    public static let hrHiBpm = 220.0
-    public static let minConfidence = 0.3        // reject a window whose best peak is weaker than this
+    // Values of record: the shared Kotlin `com.noop.protocol.PpgHr` constants, read once here so the
+    // Swift tunable-estimator defaults and the Kotlin pipeline can never drift.
+    public static let sampleRateHz = Int(Shared.PpgHr.shared.SAMPLE_RATE_HZ)  // v26: 24 samples per 1-second record
+    public static let windowSeconds = Int(Shared.PpgHr.shared.WINDOW_SECONDS) // autocorrelation window (stable at low HR)
+    public static let hrLoBpm = Shared.PpgHr.shared.MIN_BPM
+    public static let hrHiBpm = Shared.PpgHr.shared.MAX_BPM
+    public static let minConfidence = Shared.PpgHr.shared.MIN_CONFIDENCE     // reject a window whose best peak is weaker
 
     /// Linear-detrend a waveform: subtract the least-squares best-fit line to remove DC + baseline
     /// wander (slow respiration/perfusion drift) before the autocorrelation, so the pulse dominates.
@@ -98,6 +101,12 @@ public enum PpgHr {
 
     /// Estimate (bpm, confidence) from one PPG window via autocorrelation, or nil when the window is
     /// too short or no pulsatile peak clears `minConfidence` (flat/garbage PPG → no fabricated HR).
+    ///
+    /// STAYS SWIFT (Phase 2b): the Kotlin twin of this per-window estimator (`estimateWindow`) is
+    /// `private` and hardcodes the 24 Hz / 30-220 bpm / 0.3-conf configuration, so this TUNABLE public
+    /// API has no public Kotlin shape to route through. The canonical full pipeline (`derivePpgHr`
+    /// with the default configuration, the only one any production caller uses) delegates below;
+    /// `PpgHrTests` pins this estimator and the delegated pipeline against the same waveforms.
     public static func estimate(_ samples: [Int],
                                 fs: Int = sampleRateHz,
                                 loBpm: Double = hrLoBpm,
@@ -145,13 +154,33 @@ public enum PpgHr {
     /// Records are grouped into consecutive-second runs (PPG phase is only continuous within a run); a
     /// window centred on each second is autocorrelated. Returns one `PpgHrSample` per second that
     /// yielded a confident estimate, ascending by ts. Records may be unsorted / contain gaps.
+    ///
+    /// DELEGATED (Phase 2b) for the canonical configuration (`fs == sampleRateHz`,
+    /// `windowSeconds == windowSeconds`: the shared constants, and the only configuration any
+    /// caller or test uses): the whole pipeline runs on the shared Kotlin `PpgHr.estimate`, so
+    /// macOS/iOS/Android derive the SAME per-second HR from the same offload. Swift semantics are
+    /// preserved at the seam: on a duplicate ts the LAST record wins (the Kotlin pipeline would
+    /// concatenate, so the wrapper dedupes before flattening). A non-canonical `fs`/`windowSeconds`
+    /// falls through to the Swift windowing lane over the tunable Swift `estimate` above, because
+    /// the Kotlin pipeline hardcodes the canonical rate.
     public static func derivePpgHr(records: [(ts: Int, samples: [Int])],
                                    fs: Int = sampleRateHz,
                                    windowSeconds: Int = windowSeconds) -> [PpgHrSample] {
         guard !records.isEmpty else { return [] }
-        // One waveform per second (last write wins on a duplicate ts).
+        // One waveform per second (last write wins on a duplicate ts): BOTH lanes rely on this.
         var secs = [Int: [Int]]()
         for r in records { secs[r.ts] = r.samples }
+
+        if fs == PpgHr.sampleRateHz && windowSeconds == PpgHr.windowSeconds {
+            var kotlinSamples: [Shared.PpgHr.Sample] = []
+            for (ts, vals) in secs {
+                for v in vals { kotlinSamples.append(.init(ts: Int64(ts), value: Int32(v))) }
+            }
+            return Shared.PpgHr.shared.estimate(samples: kotlinSamples).map {
+                PpgHrSample(ts: Int(truncatingIfNeeded: $0.ts), bpm: Int($0.bpm), conf: $0.conf)
+            }
+        }
+
         let order = secs.keys.sorted()
         // Split into consecutive-second runs.
         var runs = [[Int]]()

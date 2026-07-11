@@ -1,9 +1,17 @@
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.library")
     id("com.google.devtools.ksp")
     id("androidx.room") version "2.7.1"
     kotlin("plugin.serialization")
+    // Phase 2b Task 2: SKIE rewrites the Apple framework API surface at link time: suspend
+    // functions become Swift async, Flow becomes AsyncSequence, sealed classes become Swift
+    // enums with associated values. 0.10.13 is the newest stable; it supports Kotlin 2.0.0
+    // through 2.4.0, covering the pinned 2.1.21 (2.1.21 support landed in 0.10.2). SKIE with
+    // Kotlin 2.1.20+ requires Gradle 8.8+, hence the wrapper bump from 8.7 in this commit.
+    id("co.touchlab.skie") version "0.10.13"
 }
 
 kotlin {
@@ -12,8 +20,24 @@ kotlin {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
-    iosArm64()
-    iosSimulatorArm64()
+
+    // Phase 2b Task 1: ship as Shared.xcframework across all four Apple slices. iosArm64/
+    // iosSimulatorArm64 already existed (Phase 2a); this list form adds macosArm64/macosX64
+    // without renaming their source sets. Each target's release framework feeds the same
+    // XCFramework bundle so Xcode links one artifact regardless of which Apple slice it runs on.
+    val xcf = XCFramework("Shared")
+    listOf(
+        iosArm64(),
+        iosSimulatorArm64(),
+        macosArm64(),
+        macosX64(),
+    ).forEach { target ->
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            xcf.add(this)
+        }
+    }
 
     sourceSets {
         commonMain.dependencies {
@@ -76,14 +100,26 @@ room {
     schemaDirectory("$projectDir/schemas")
 }
 
-// Task 8: the backup-restore tests read the committed .noopbak fixture from disk. Both test targets
+skie {
+    analytics {
+        enabled.set(false)
+    }
+}
+
+// Task 8: the backup-restore tests read the committed .noopbak fixture from disk. All test targets
 // get the fixtures directory via NOOP_FIXTURES; the iOS simulator child process only inherits
-// variables carrying the SIMCTL_CHILD_ prefix, so the same value is exported twice.
+// variables carrying the SIMCTL_CHILD_ prefix, so the same value is exported twice for it.
 tasks.withType<Test>().configureEach {
     environment("NOOP_FIXTURES", "$projectDir/src/commonTest/fixtures")
 }
 tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeSimulatorTest>().configureEach {
     environment("SIMCTL_CHILD_NOOP_FIXTURES", "$projectDir/src/commonTest/fixtures")
+}
+// Phase 2b Task 1: macosArm64Test/macosX64Test run their test binary directly on the build host
+// (KotlinNativeHostTest, not the simulator subclass above), so they inherit the process
+// environment unprefixed, same as the plain-JVM Test tasks.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeHostTest>().configureEach {
+    environment("NOOP_FIXTURES", "$projectDir/src/commonTest/fixtures")
 }
 
 dependencies {
@@ -92,4 +128,7 @@ dependencies {
     // iOS targets to generate WhoopDatabase_Impl + the actual WhoopDatabaseConstructor there.
     add("kspIosArm64", "androidx.room:room-compiler:2.7.1")
     add("kspIosSimulatorArm64", "androidx.room:room-compiler:2.7.1")
+    // Phase 2b Task 1: same reason, for the new macOS targets.
+    add("kspMacosArm64", "androidx.room:room-compiler:2.7.1")
+    add("kspMacosX64", "androidx.room:room-compiler:2.7.1")
 }

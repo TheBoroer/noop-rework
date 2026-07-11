@@ -12,11 +12,17 @@ on:
     branches: [main]
     paths:
       - 'Packages/**'
+      - 'shared/**'
+      - 'android/**'
+      - 'Tools/**'
       - '.github/workflows/swift-packages.yml'
   push:
     branches: [main]
     paths:
       - 'Packages/**'
+      - 'shared/**'
+      - 'android/**'
+      - 'Tools/**'
       - '.github/workflows/swift-packages.yml'
   workflow_dispatch:
 
@@ -40,6 +46,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # WhoopProtocol's SPM package consumes Shared.xcframework as a local binaryTarget,
+      # which is built from the Kotlin shared module and is gitignored: build it here
+      # before this package can be compiled, same as app-build.yml does for the app targets.
+      # WhoopStore, StrandAnalytics, and StrandImport all depend on WhoopProtocol via a local
+      # path (`.package(path: "../WhoopProtocol")`), so they compile it from source too and hit
+      # the same missing-binary-artifact error without the framework in place.
+      - name: Set up JDK 21
+        if: contains(fromJSON('["WhoopProtocol","WhoopStore","StrandAnalytics","StrandImport"]'), matrix.package)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build Shared.xcframework
+        if: contains(fromJSON('["WhoopProtocol","WhoopStore","StrandAnalytics","StrandImport"]'), matrix.package)
+        run: ./Tools/build-shared-xcframework.sh Release
 
       - name: Build ${{ matrix.package }}
         run: swift build

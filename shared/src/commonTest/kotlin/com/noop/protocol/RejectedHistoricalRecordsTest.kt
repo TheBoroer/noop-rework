@@ -78,6 +78,34 @@ class RejectedHistoricalRecordsTest {
     }
 
     @Test
+    fun v25RecordWithImplausibleGravityIsRejected() {
+        // A CRC-valid v25 record whose gravity fails the ~1 g magnitude gate decodes to `unix` only:
+        // no heart rate (v25 never stores one) and no gravity vector, so it banks ZERO rows and is
+        // genuinely lost, so it MUST be flagged for archiving. Pins the Swift-parity predicate
+        // (`unix == null || (heart_rate == null && gravity_x == null)`); before that alignment this
+        // record was silently kept because decodeHistorical returned a non-null (timestamp-only) map.
+        val bad = bytes(realV24Hex)
+        bad[5] = 25                           // v25 layout (unix @11, gravity i16/16384 @73/75/77)
+        for (i in 73 until 79) bad[i] = 0     // zero gravity → |g| = 0, fails the 0.5..1.5 gate
+        repairCrc32(bad)
+        val rejected = rejectedHistoricalRecords(listOf(bad), DeviceFamily.WHOOP4)
+        assertEquals(1, rejected.size)
+        assertTrue(rejected[0].contentEquals(bad))
+    }
+
+    @Test
+    fun v25RecordWithPlausibleGravityIsNotRejected() {
+        // Control for the case above: the same v25 record with a real ~1 g orientation vector decodes
+        // gravity (the sleep-staging input), so it is real data and must NOT be flagged (#30).
+        val good = bytes(realV24Hex)
+        good[5] = 25
+        good[73] = 0x00; good[74] = 0x40      // gx = 0x4000 = 16384 → 16384/16384 = 1.0 g
+        for (i in 75 until 79) good[i] = 0    // gy = gz = 0 → |g| = 1.0, inside the gate
+        repairCrc32(good)
+        assertEquals(emptyList<ByteArray>(), rejectedHistoricalRecords(listOf(good), DeviceFamily.WHOOP4))
+    }
+
+    @Test
     fun mixedChunkFlagsOnlyTheUndecodableRecord() {
         // The case the old chunk-level isEmpty check missed: one good row hiding a loss. Only the bad
         // record (not the good one, not the console frame) must be returned.

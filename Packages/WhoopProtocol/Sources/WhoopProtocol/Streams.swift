@@ -1,8 +1,18 @@
 import Foundation
+import Shared
 
 // MARK: - Decoded stream rows (the durable, compact local record)
 // Phase E and WhoopStore depend on these EXACT shapes. ts is wall-clock unix seconds
 // EXCEPT inside extractStreams' inputs; the structs themselves always carry wall-clock ts.
+//
+// STAYS SWIFT (Phase 2b, judged per the Task 6 brief): these row value types are the package's
+// public currency, Codable against the golden fixtures (streams_golden.json /
+// biometric_streams_golden.json), consumed by Phase E / WhoopStore / StrandAnalytics on every
+// sample. The Kotlin `com.noop.protocol.Streams` twin is a NARROWER live-path shape (no resp /
+// gravity / steps / sleepState / ppgHr / droppedImplausible), so replacing these with bridged
+// Kotlin objects would both lose fields and put an interop allocation on every decoded row.
+// Conversion happens only at the seams that actually delegate (skinTempCelsius below;
+// rejectedHistoricalRecords / PpgHr in their own files).
 
 public struct HRSample: Equatable, Codable {
     public let ts: Int          // wall-clock unix seconds
@@ -83,28 +93,28 @@ public struct SkinTempSample: Equatable, Codable {
 ///   point at a markedly different ambient (the reporter offered a colder + a warmer room) pins the
 ///   ADC→°C transfer — including whether it is linear at all. Until then this is a defensible
 ///   worn-range mapping, NOT a claimed-accurate absolute thermometer.
+/// DELEGATED (Phase 2b): the conversion of record is the shared Kotlin
+/// `com.noop.protocol.skinTempCelsius(raw:family:)`; `SkinTempConversionTests` is the parity net.
+/// The Kotlin family is handed over by implicit member (`.whoop4`/`.whoop5`), inferred from the
+/// shared parameter, so no SKIE Swift type is named (keeps the x86_64 iOS-simulator slice
+/// compiling, where only the Objective-C-bridged Shared symbols exist).
 public func skinTempCelsius(raw: Int, family: DeviceFamily) -> Double {
     switch family {
-    case .whoop5:
-        return Double(raw) / 100.0
-    case .whoop4:
-        // Anchor: worn resting raw 826 → 33.0 °C. Provisional slope 0.05 °C per raw unit (a ~35-unit
-        // worn-steady spread ≈ ~1.75 °C of nocturnal variation, within the plausible band). See TODO above.
-        return Whoop4SkinTemp.anchorCelsius
-            + (Double(raw) - Whoop4SkinTemp.anchorRaw) * Whoop4SkinTemp.provisionalSlopeCPerRaw
+    case .whoop4: return StreamsKt.skinTempCelsius(raw: Int32(raw), family: .whoop4)
+    case .whoop5: return StreamsKt.skinTempCelsius(raw: Int32(raw), family: .whoop5)
     }
 }
 
 /// WHOOP 4.0 (v24) skin-temp mapping constants (#938). Named so the single provisional slope + anchor
-/// live in ONE place and the two-point-calibration TODO has an obvious home. Kept in lockstep with the
-/// Android `Whoop4SkinTemp`.
+/// live in ONE place and the two-point-calibration TODO has an obvious home. Values of record: the
+/// shared Kotlin `Whoop4SkinTemp` (read once here, so the two platforms can never drift).
 public enum Whoop4SkinTemp {
     /// Worn resting raw register value the anchor pins (reporter's steady worn baseline, ~826).
-    public static let anchorRaw: Double = 826.0
+    public static let anchorRaw: Double = Shared.Whoop4SkinTemp.shared.ANCHOR_RAW
     /// Physiological nocturnal wrist skin temperature the anchor raw maps to (°C).
-    public static let anchorCelsius: Double = 33.0
+    public static let anchorCelsius: Double = Shared.Whoop4SkinTemp.shared.ANCHOR_CELSIUS
     /// PROVISIONAL °C-per-raw-unit slope. TODO(#938): replace with the two-point anchor slope.
-    public static let provisionalSlopeCPerRaw: Double = 0.05
+    public static let provisionalSlopeCPerRaw: Double = Shared.Whoop4SkinTemp.shared.PROVISIONAL_SLOPE_C_PER_RAW
 }
 
 public struct RespSample: Equatable, Codable {
@@ -239,6 +249,15 @@ private func toWall(_ deviceTs: Int?, _ deviceClockRef: Int, _ wallClockRef: Int
 /// HR/R-R are taken ONLY from REALTIME_DATA (type 40). REALTIME_RAW_DATA (type 43) also
 /// carries an HR byte but streams alongside type-40 during raw collection, so routing both
 /// would double-count HR for the same instants. CRC-failed and non-ok frames are skipped.
+///
+/// STAYS SWIFT (Phase 2b, judged): the Kotlin twin `extractStreams(parsed:...)` consumes KOTLIN
+/// `ParsedFrame`s produced by the Kotlin `Framing.parseFrame` decoder, while this one consumes the
+/// Swift schema-driven Interpreter's `ParsedFrame` (`[String: ParsedValue]`, a typed value enum):
+/// and the Interpreter/Schema/PostHooks subsystem is deliberately NOT delegated (no Kotlin twin).
+/// Bridging would mean rebuilding a Kotlin ParsedFrame per frame through `Any?`/NSNumber round
+/// trips that erase exactly the Int-vs-Double fidelity `ParsedValue` exists to preserve, and the
+/// Kotlin return `Streams` is the narrower live shape. The delegated seams it depends on
+/// (`skinTempCelsius`, CRC via Framing) already route to Kotlin.
 public func extractStreams(_ parsed: [ParsedFrame],
                            deviceClockRef: Int, wallClockRef: Int) -> Streams {
     var out = Streams()
