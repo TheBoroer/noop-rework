@@ -123,9 +123,9 @@ from **their own device**, on a machine **they** control.
 
 | Path | What it is |
 |------|-----------|
-| `shared/` | Kotlin Multiplatform logic: protocol, analytics, data (Room), oura, ingest, update. The data layer (Room, repository, analytics, backup restore) is iOS-ready in `commonMain`; ingest and update remain Android-only pending Phase 2b. `androidMain` holds the not-yet-hoisted remainder. |
+| `shared/` | Kotlin Multiplatform logic: protocol, analytics, data (Room), oura, ingest, update. The data layer (Room, repository, analytics, backup restore) is iOS-ready in `commonMain`; ingest and update remain Android-only pending Phase 2b. `androidMain` holds the not-yet-hoisted remainder. Ships to Apple platforms as `Shared.xcframework` (see below). |
 | `android/` | Android app (Jetpack Compose UI, BLE service, alarms, widgets) depending on `shared`. |
-| `Strand*`, `NOOPWatch*`, `Packages/` | Original Swift apps, untouched until Phase 2/3 of the migration. |
+| `Strand*`, `NOOPWatch*`, `Packages/` | Original Swift apps. As of Phase 2b, `Packages/WhoopProtocol` consumes `shared`'s Kotlin protocol decoders via `Shared.xcframework` (an SPM binary target); its Swift files are now thin wrappers for the delegated pieces (see the "`WhoopProtocol`, the protocol-support core" section below). `WhoopStore`, `StrandAnalytics`, `StrandImport`, `StrandDesign`, and `NOOPWatch*` remain untouched Swift, pending Phase 2c+. |
 | `docs/superpowers/specs/` | Design specs. Start with the 2026-07-09 unification design. The upstream cherry-pick protocol lives in [`docs/UPSTREAM.md`](docs/UPSTREAM.md). |
 
 Rule of thumb: OS API code lives in the platform app or `androidMain`/`iosMain`; decisions, calculations, and byte parsing live in `commonMain`.
@@ -357,6 +357,14 @@ interpretation, and historical-stream reassembly. The app layer (`Strand/BLE/`,
 `Strand/Collect/`) wraps these UUID *strings* in `CBUUID` and handles bonding,
 offload, and live notifications.
 
+As of Phase 2b, several protocol pieces are thin Swift wrappers over the same Kotlin decoders
+`shared/` ships to Android, linked in via `Shared.xcframework`: CRC + frame reassembly, the
+haptic clocks, the WHOOP5 config byte builders, the canonical PPG-derived-HR pipeline, skin-temp
+conversion, and the historical-record plausibility check. The schema-driven interpreter, the
+per-sample stream row shapes, and the `DeviceFamily` enum itself stay Swift; see the Phase 2b
+appendix in [`docs/superpowers/plans/phase1-baseline.md`](docs/superpowers/plans/phase1-baseline.md)
+for the full delegated/stays-Swift breakdown.
+
 ### `WhoopStore` — local SQLite via GRDB
 
 Everything is stored on-device in SQLite (using
@@ -413,23 +421,31 @@ Palette, typography, motion, and reusable components/charts (`RecoveryRing`,
 
 ## Quickstart (macOS)
 
-**Requirements:** macOS 13+, Xcode 15+ (Swift 5.9), and a Mac with Bluetooth. To
-pair live, you need your own WHOOP strap; to just explore, you can import a CSV /
-Apple Health export instead.
+**Requirements:** macOS 13+, Xcode 15+ (Swift 5.9), a JDK 17 or 21 (needed once, to build the
+Kotlin `shared` module below), and a Mac with Bluetooth. To pair live, you need your own WHOOP
+strap; to just explore, you can import a CSV / Apple Health export instead.
 
 The Xcode project is generated from [`project.yml`](project.yml) with
 [XcodeGen](https://github.com/yonaskolb/XcodeGen).
+
+**Build prerequisite:** `Packages/WhoopProtocol` depends on `Shared.xcframework`, built from the
+Kotlin `shared/` module, via an SPM binary target. Run `Tools/build-shared-xcframework.sh` at
+least once before opening `Strand.xcodeproj` or building any package, and again whenever
+`shared/` changes; it is not rebuilt automatically by Xcode.
 
 ```bash
 # 1. Clone
 git clone <your-fork-url> NOOP
 cd NOOP
 
-# 2. (Re)generate the Xcode project from project.yml
+# 2. Build Shared.xcframework from the Kotlin shared module (needed before Xcode / any package build)
+./Tools/build-shared-xcframework.sh Release
+
+# 3. (Re)generate the Xcode project from project.yml
 brew install xcodegen   # if you don't have it
 xcodegen generate
 
-# 3. Open and run
+# 4. Open and run
 open Strand.xcodeproj
 # Select the "Strand" scheme → Run (⌘R). The built app is named NOOP.
 ```
@@ -443,7 +459,9 @@ Notes:
 - Run the tests from Xcode (the `StrandTests` target + each package's test target),
   or per-package with `swift test` inside `Packages/<Name>/`.
 
-To explore without an Xcode project, the packages build on their own:
+To explore without an Xcode project, the packages build on their own (after the
+`Tools/build-shared-xcframework.sh` step above, since `WhoopProtocol` needs `Shared.xcframework`
+on disk to resolve its binary target):
 
 ```bash
 cd Packages/WhoopProtocol && swift build && swift test

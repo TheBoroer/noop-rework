@@ -248,3 +248,186 @@ real-data blob ever reached a remote). This repository is public: real health da
 sleep, journal entries, or any export derived from a real strap/device) must never be committed,
 here or anywhere else in the tree. See `.gitignore`'s "Personal data" section and
 `shared/src/commonTest/fixtures/README.md` for the standing rule.
+
+---
+
+## Phase 2b close-out (Task 7)
+
+Date: 2026-07-11
+Final code commit: `0717be4f` (Task 6, "docs: SharedBridge x86_64 note updated, Task 6 needed no
+packaging change"). Task 7 is docs-only, no code changes; it commits on top of this sha. Branch:
+`phase2b-ios-consumes-shared` (base `bba981fb`).
+
+Phase 2a hoisted the data/analytics layers into `commonMain` for Android and iOS-simulator tests.
+Phase 2b's job was to make that Kotlin code actually reach the Apple *app* targets: ship `shared`
+as a binary framework, wire it into the Swift package graph, and start converting
+`Packages/WhoopProtocol`'s Swift protocol implementations into thin wrappers over the equivalent
+Kotlin decoders, one file (or coherent file pair) at a time, verified the whole way by the
+existing Swift test suite acting as a parity net.
+
+### What ships: Shared.xcframework, and its build/tooling versions
+
+- Three slices: `ios-arm64` (device), `ios-arm64-simulator` (Apple Silicon simulator only), and
+  `macos-arm64_x86_64` (universal macOS). There is no `iosX64` (Intel-simulator) slice; the
+  Kotlin/Native target set doesn't include it.
+- **SKIE 0.10.13** rewrites the generated Objective-C/Swift surface for Swift-friendly bindings
+  (suspend funs to `async`, `Flow` to `AsyncSequence`, sealed classes to Swift enums where
+  reachable). SKIE's analytics upload is explicitly disabled: this is a privacy-first app, it
+  phones home to nobody, including its own build tooling's telemetry.
+- **Gradle wrapper pinned to 8.8** (up from the Phase 2a baseline's 8.7), a hard floor for SKIE
+  0.10.13 paired with the pinned Kotlin 2.1.21. Reviewed and accepted as a deliberate deviation in
+  Task 2.
+- Consumed by `Packages/WhoopProtocol` as an SPM `binaryTarget` at a plain relative path
+  (`shared/build/XCFrameworks/release/Shared.xcframework`, gitignored, built on demand).
+  `Tools/build-shared-xcframework.sh` builds it (auto-detecting a JDK 17/21 `JAVA_HOME`, falling
+  back to Android Studio's bundled JBR); CI (`app-build.yml` for the app targets,
+  `swift-packages.yml` for `WhoopProtocol` specifically) runs this script before every
+  `xcodegen`/`xcodebuild`/`swift build` so a PR can't silently build against a stale or absent
+  framework.
+- The iOS Simulator **x86_64** slice is excluded project-wide via `project.yml`'s
+  `EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64` (Task 3 deviation, reviewed sound): the
+  Kotlin/Native side ships no matching slice, so an Intel-Mac simulator build would fail to link.
+  macOS is different: the shipped app is universal (`ARCHS = x86_64 arm64`), so x86_64 there is a
+  live, non-excluded arch, backed by the `macos-arm64_x86_64` slice.
+  A constraint discovered while writing the Task 5/6 delegations: when Swift compiles for an
+  x86_64 arch, SKIE's Swift-only symbols, Swift-native enum types and Swift-native free
+  functions, are invisible inside the package's own compiled module; only the ObjC-bridged
+  spellings survive, because the Swift-native names live solely in the arm64 swiftinterface.
+  Since the universal macOS build compiles `WhoopProtocol` for x86_64 on every release, every
+  delegation in this phase was written to cross the seam using only arch-agnostic spellings (ObjC
+  header + apinotes names; Kotlin enums passed only in parameter position via implicit member,
+  e.g. `.whoop4`/`.push`), never naming a bare SKIE-Swift enum or free function directly. Net
+  effect: the universal macOS build compiles today, and the delegations would also survive
+  lifting the iOS-simulator exclusion if an `iosX64` slice were ever added.
+
+### What delegates now (Swift wrapper; Kotlin is the source of truth for the delegated part)
+
+| Swift file | Kotlin twin | What moved |
+|---|---|---|
+| `VersionCheck.swift` | `update/VersionCompare.kt` | version-string `isNewer` comparison (first delegation, proved the cross-language pattern) |
+| `Framing.swift` | `protocol/Crc.kt`, `protocol/Framing.kt` | CRC8 / CRC16-Modbus / CRC32 trio, the stateful `Reassembler`, `puffinCommandFrame` |
+| `Whoop5Config.swift` | `protocol/Whoop5Config.kt` | config command bytes, the R22-sequence flag table, `payloadBody`/`deviceConfigBody`/`frame` byte builders |
+| `HapticClock.swift` + `LiveSessionHaptics.swift` | `protocol/HapticClock.kt`, `protocol/LiveSessionHaptics.kt` | pulse-timing constants and both clocks' `pulses(...)` encoders |
+| `PpgHr.swift` | `protocol/PpgHr.kt` | the canonical (fs=24, window=8s) HR-from-PPG pipeline end to end; the tunable non-canonical lane stays Swift |
+| `Streams.swift` | `protocol/Streams.kt` | `skinTempCelsius` + `Whoop4SkinTemp` anchor/slope constants only |
+| `HistoricalStreams.swift` | `protocol/HistoricalStreams.kt` | plausibility-window constants (`MIN_PLAUSIBLE_UNIX`/`FUTURE_MARGIN`/`SESSION_RANGE_MARGIN`) and `rejectedHistoricalRecords` |
+| `DeviceFamily.swift` | `protocol/DeviceFamily.kt` (`PuffinPacketType`) | `PuffinPacketType` constants only |
+
+### What stays Swift, and why
+
+| Swift file / symbol | Reason it stays Swift |
+|---|---|
+| `FTMSDecode.swift`, `FitnessSensorDecode.swift` | No Kotlin twin at all; Kotlin decodes these frame types with its own handwritten decoders |
+| `Schema.swift`, `Interpreter.swift`, `Values.swift`, `PostHooks.swift` | The schema-driven interpreter (`ParsedFrame = [String: ParsedValue]`); Kotlin's decode path for the equivalent records is handwritten per record type, not schema-driven, so there is no 1:1 twin |
+| `PuffinCapture.swift` | Capture/debug tooling, no Kotlin twin |
+| `whoop-decode` (CLI executable target) | Thin consumer of the above; nothing to delegate |
+| `Streams.swift` row types (`HRSample` ... `SleepStateSample`, `Streams`) and `extractStreams` | Kotlin's `Streams` shape is narrower (no resp/gravity/steps/sleepState/ppgHr/droppedImplausible); the Codable rows are golden-fixture currency consumed per-sample downstream (Phase E / `WhoopStore` / `StrandAnalytics`); `extractStreams` also takes the non-delegated Swift `Interpreter`'s `ParsedFrame` as input |
+| `HistoricalStreams.swift`'s `extractHistoricalStreams`, `isPlausibleHistoricalUnix`, `classifyHistoricalMeta`, and `HistoricalMeta.swift` | `extractHistoricalStreams` has a different end-to-end shape (Kotlin returns JSON-string `StreamBatch` events); `isPlausibleHistoricalUnix` has no public Kotlin twin (Kotlin's equivalent is a local closure); `classifyHistoricalMeta`'s sealed-class return has a SKIE Swift enum absent on the x86_64 slice; all three take the non-delegated Swift `ParsedFrame` |
+| `DeviceFamily` enum itself | Package-wide public currency (String-raw, `CaseIterable`), used in nearly every family-aware signature including the app layer. Its Kotlin twin's per-family properties are reachable only by naming the Kotlin type, which is SwiftPrivate (`__DeviceFamily`) via SKIE apinotes and exists only in the arm64 swiftinterface; delegating would break the x86_64 slice. Kotlin instances cross the seam only in parameter position via implicit members |
+| `verifyFrame`, `FrameCheck`, `frameFromPayload` | Kotlin twins are private or absent; checksums already route through the delegated `Crc` object underneath |
+
+### Findings carried from the Task 6 review, recorded here for Phase 2c
+
+1. **The archive/banking decoder split is now empirical, not structural.** Swift's
+   `rejectedHistoricalRecords` now delegates to Kotlin's `decodeHistorical`, while
+   `extractHistoricalStreams` still banks rows via the Swift `Interpreter` (schema-driven, not
+   delegated). The invariant "the archive is exactly what the extractor drops" used to be
+   guaranteed structurally, by both paths sharing one Swift decoder; it now holds only because the
+   two decoders were verified to agree on this codebase's fixture set. If the Kotlin and Swift
+   historical decoders ever diverge, the failure mode is silent, and the divergence direction would
+   silently lose records on iOS/macOS. Watch this in Phase 2c if either decoder changes.
+2. **Kotlin lacks WHOOP5 v20/21 historical decode (v18-only)**: Kotlin's `decodeWhoop5Historical`
+   only handles v18 records. Today this is a verified non-divergence, not a bug: Swift's own
+   decoder likewise emits no `heart_rate`/`gravity_x` for v20/21 records, so the aligned
+   rejected-set predicate archives them identically on both platforms. But Android **banks
+   nothing** from those records where a future, more complete decoder might. Flagged as a future
+   task, not a Phase 2b/2c blocker.
+
+### Deliberate Android behavior change (for release notes)
+
+Task 6 ported Swift's `rejectedHistoricalRecords` predicate into Kotlin
+(`shared/src/commonMain/kotlin/com/noop/protocol/HistoricalStreams.kt`) before delegating to it,
+because the prior Kotlin predicate (`decodeHistorical == null`) was a strictly weaker rejection
+test than Swift's (`unix == nil || (heart_rate == nil && gravity_x == nil)` after decode).
+Concretely, Android used to silently keep two categories of record that Swift always archived: a
+WHOOP4 v25 record whose gravity fails the ~1g plausibility gate (decodes to timestamp-only, banks
+zero real rows), and truncated CRC-valid records with no readable `unix`. The predicate alignment
+makes Android's rejected/archived set a **strict superset** of what it archived before: it now
+also catches records the old predicate silently accepted without archiving. Nothing previously
+banked is removed by this change; it only adds archive coverage. Reviewed safe (Task 6 review, by
+opus), with 2 new commonTest cases pinning the aligned behavior
+(`v25RecordWithImplausibleGravityIsRejected`, `v25RecordWithPlausibleGravityIsNotRejected`).
+Release notes should mention: Android now archives a small number of historical records it
+previously discarded without a trace.
+
+### Env facts for posterity
+
+- **Gradle wrapper 8.8 is a hard floor, not a preference.** SKIE 0.10.13 (the SKIE version
+  compatible with the pinned Kotlin 2.1.21) requires it; the Phase 2a baseline was 8.7.
+- **The iOS Simulator x86_64 slice is excluded project-wide**, via
+  `EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64` in `project.yml`'s `settings.base`, because the
+  Kotlin/Native build ships no `iosX64` target to link against.
+- **SKIE Swift symbols are absent on any x86_64 arch**: on arm64 (device, simulator, Apple
+  Silicon macOS), SKIE's Swift-native enum types and free functions are visible and usable; an
+  x86_64 compile of the package sees only the ObjC-bridged spellings, because the Swift-native
+  names live solely in the arm64 swiftinterface. This is not hypothetical: the shipped macOS app
+  is universal, so its x86_64 half hits this on every release build. All Phase 2b delegations use
+  only arch-agnostic spellings, which is why the universal macOS build (and any future `iosX64`
+  slice) compiles without rewriting them.
+
+### Test totals per target (clean full verification, this task)
+
+`cd android && export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" &&
+./gradlew clean :shared:testDebugUnitTest :shared:iosSimulatorArm64Test :shared:macosArm64Test
+:app:assembleDebug :app:testDemoDebugUnitTest :app:testFullDebugUnitTest --console=plain`
+
+| Target | Result |
+|---|---|
+| `:shared:testDebugUnitTest` (JVM) | 1481 tests / 0 failures / 1 skipped (pre-existing, unchanged) |
+| `:shared:iosSimulatorArm64Test` | 782 tests / 0 failures |
+| `:shared:macosArm64Test` | 782 tests / 0 failures |
+| `:app:testDemoDebugUnitTest` | 940 tests / 0 failures |
+| `:app:testFullDebugUnitTest` | 940 tests / 0 failures |
+| `:app:assembleDebug` | SUCCESS, both `app-demo-debug.apk` and `app-full-debug.apk` produced |
+
+Overall Gradle result: `BUILD SUCCESSFUL`. Counts match exactly what Task 6 carried into this
+task (JVM 1481 / iOS 782 / macOS 782 / app 940 x2), confirming no regression across a clean
+rebuild.
+
+Apple-side clean verification (repo root, after the Gradle gate above):
+
+`./Tools/build-shared-xcframework.sh Release && xcodegen generate` then both app targets
+(`xcodebuild -scheme NOOPiOS -destination "generic/platform=iOS Simulator"` and
+`xcodebuild -scheme Strand -destination "generic/platform=macOS" ARCHS="x86_64 arm64"
+ONLY_ACTIVE_ARCH=NO`), then `swift test --package-path Packages/WhoopProtocol`:
+
+| Step | Result |
+|---|---|
+| `Tools/build-shared-xcframework.sh Release` | SUCCESS |
+| `xcodegen generate` | SUCCESS |
+| `xcodebuild -scheme NOOPiOS` (generic iOS Simulator) | BUILD SUCCEEDED |
+| `xcodebuild -scheme Strand` (macOS universal) | BUILD SUCCEEDED |
+| `swift test --package-path Packages/WhoopProtocol` | 242 tests, 1 skipped, 0 failures (unchanged from Task 6 baseline) |
+
+### Deliberately out of scope (Phase 2c+)
+
+- `WhoopStore`/GRDB replacement by shared Room (the big storage cutover; needs its own plan with a
+  data-migration design: GRDB `whoop.sqlite` to Room `noop_whoop.db` on Apple platforms).
+- `BLEManager.swift` thinning + Kable.
+- `StrandAnalytics`/`StrandImport` package delegation.
+- oura crypto `expect`/`actual`; the remaining `ingest`/`update` hoists.
+- Removing `WhoopProtocol`'s Swift implementations entirely (the wrappers stay until Phase 2c
+  proves nothing regresses in the field).
+
+### Self-review notes
+
+- Spec coverage: Phase 2 step 1 of the original spec ("protocol parsing first, delete the
+  `WhoopModel.swift` cluster") was served via package-internal delegation rather than deletion;
+  deletion is deferred until the wrappers prove out in the field. This is a documented deviation,
+  justified by the 74-shared-files recon finding from Phase 2b Task 1, and the macOS pull-forward
+  (building `Shared.xcframework` for macOS too, not just iOS) serves the spec's Phase 4 ambition
+  early.
+- No Swift test or fixture expectation was touched across all of Phase 2b; the Swift suite served
+  as the untouched parity net for every delegation.
+- No em-dashes in any new content this phase.
+- Nothing pushed by any Phase 2b task; the controller pushes after final whole-branch review.

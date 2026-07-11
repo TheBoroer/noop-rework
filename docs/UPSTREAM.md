@@ -25,4 +25,37 @@ We do not merge. We hand-port Kotlin diffs for protocol/BLE/analytics fixes.
    `cd android && ./gradlew :shared:testDebugUnitTest :shared:iosSimulatorArm64Test :app:testDemoDebugUnitTest :app:testFullDebugUnitTest`
 5. Record the reviewed range in this file.
 
+## Phase 2b: protocol delegation changes where a fix lands
+
+As of Phase 2b, `Packages/WhoopProtocol`'s Swift files are no longer all independent
+implementations: several are now thin wrappers over the same Kotlin decoders `shared/` ships to
+Android, linked in via `Shared.xcframework` (an SPM binary target, built by
+`Tools/build-shared-xcframework.sh`). For these files, an upstream protocol fix should be
+hand-ported into the Kotlin twin under `shared/src/commonMain/kotlin/com/noop/`, not the Swift
+file; the Swift wrapper only needs a change if the delegated call's shape changes (parameter
+types, added cases), which is rare.
+
+| Swift file (wrapper) | Kotlin twin (source of truth for the delegated part) | What is delegated |
+|---|---|---|
+| `VersionCheck.swift` | `update/VersionCompare.kt` | version-string comparison |
+| `Framing.swift` | `protocol/Crc.kt`, `protocol/Framing.kt` | CRC8 / CRC16-Modbus / CRC32, the stateful `Reassembler`, `puffinCommandFrame` |
+| `Whoop5Config.swift` | `protocol/Whoop5Config.kt` | config command bytes, R22-sequence flag table, byte builders |
+| `HapticClock.swift`, `LiveSessionHaptics.swift` | `protocol/HapticClock.kt`, `protocol/LiveSessionHaptics.kt` | pulse timing tables, both clocks' `pulses(...)` encoders |
+| `PpgHr.swift` | `protocol/PpgHr.kt` | the canonical (fs=24, window=8s) HR-from-PPG pipeline only |
+| `Streams.swift` | `protocol/Streams.kt` | `skinTempCelsius` + `Whoop4SkinTemp` constants only |
+| `HistoricalStreams.swift` | `protocol/HistoricalStreams.kt` | plausibility-window constants and `rejectedHistoricalRecords` only |
+| `DeviceFamily.swift` | `protocol/DeviceFamily.kt` (`PuffinPacketType`) | `PuffinPacketType` constants only |
+
+Everything else in `Packages/WhoopProtocol` (`FTMSDecode.swift`, `FitnessSensorDecode.swift`,
+`Schema.swift`/`Interpreter.swift`/`Values.swift`/`PostHooks.swift`, `PuffinCapture.swift`, the
+`whoop-decode` CLI, the `Streams`/`HistoricalStreams` row-shape and extraction functions, the
+`DeviceFamily` enum itself, and `verifyFrame`/`FrameCheck`/`frameFromPayload`) has no Kotlin
+twin: hand-port those diffs Swift-side exactly as before. See the Phase 2b appendix in
+`docs/superpowers/plans/phase1-baseline.md` for the full delegated / stays-Swift table and the
+reasoning behind each stays-Swift decision.
+
+After hand-porting a fix into a delegated Kotlin file, re-run both the Kotlin and Swift suites
+(step 4 above, plus `swift test --package-path Packages/WhoopProtocol`) since the Swift tests are
+the parity net for the delegation.
+
 Last reviewed upstream commit: 7df521c8aace491970df59fbe9c1225837d3e93f (`Release 8.5.2: add to AltStore source`, the last commit on `main` before this fork's Phase 1 KMP migration work began)
