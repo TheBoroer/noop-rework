@@ -9,6 +9,8 @@ name: _diag-ksp
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ci-fix-native-ksp]
 
 jobs:
   diag:
