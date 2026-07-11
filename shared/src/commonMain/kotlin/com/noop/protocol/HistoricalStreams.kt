@@ -386,9 +386,14 @@ private fun decodeWhoop5HistoricalV26(frame: ByteArray): V26Record? {
 
 /**
  * The HISTORICAL_DATA (type-47) record frames in [rawFrames] that genuinely FAIL to decode — a CRC
- * failure, or an unmapped firmware layout whose v24 plausibility gate (see [decodeHistorical]) also
- * rejects it. These are exactly the record frames [extractHistoricalStreams] silently drops: their
- * biometric payload would otherwise be lost forever once the strap trims the acked history.
+ * failure, an unmapped firmware layout whose v24 plausibility gate (see [decodeHistorical]) also
+ * rejects it, or a record that decodes but yields no USABLE biometrics: no timestamp, or neither a
+ * heart rate nor a gravity vector (e.g. a v25 record whose gravity failed the ~1 g gate still
+ * carries `unix` but banks zero rows). These are exactly the record frames
+ * [extractHistoricalStreams] silently drops: their biometric payload would otherwise be lost
+ * forever once the strap trims the acked history. The predicate is kept in lockstep with the Swift
+ * `rejectedHistoricalRecords` (which delegates here since Phase 2b), so both platforms archive the
+ * identical set.
  *
  * EXCLUDED (decode to zero rows BY DESIGN, never "lost" data — must NOT be counted):
  *   - CONSOLE_LOGS (type-50) frames — the strap's own diagnostics text channel. On WHOOP 4.0 the
@@ -415,11 +420,16 @@ fun rejectedHistoricalRecords(
         if (t != PacketType.HISTORICAL_DATA.rawValue) return@filter false // type-50 console / metadata / etc.
         // WHOOP 5/MG v26 = raw PPG block, deliberately not stored — known-skipped, not lost data.
         if (family == DeviceFamily.WHOOP5 && frame.histU8(9) == 26) return@filter false
-        // A type-47 record that [decodeHistorical] cannot turn into usable biometrics — CRC failure or
-        // an unmapped layout the v24-fallback plausibility gate rejected. This is precisely what
-        // [extractHistoricalStreams] drops (`decodeHistorical(...) ?: continue`), so the rejected set
-        // matches the silently-lost set exactly.
-        decodeHistorical(frame, family) == null
+        // A type-47 record that decodes to no USABLE biometrics is genuinely lost: either
+        // [decodeHistorical] rejected it outright (CRC failure / unmapped layout whose v24-fallback
+        // plausibility gate fired), or it decoded but carries no timestamp, or neither a heart rate
+        // nor a gravity vector (a v25 record whose gravity failed the ~1 g gate keeps its `unix`
+        // yet banks zero rows in [extractHistoricalStreams]). Mirrors the Swift predicate exactly
+        // (`unix == nil || (heart_rate == nil && gravity_x == nil)`), so the rejected set matches
+        // the silently-lost set on both platforms.
+        val p = decodeHistorical(frame, family) ?: return@filter true
+        p.intOrNull("unix") == null ||
+            (p.intOrNull("heart_rate") == null && p.doubleOrNull("gravity_x") == null)
     }
 }
 

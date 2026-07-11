@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 
 /// Shared plausibility bounds for a type-47 record's own unix timestamp (#547). A WHOOP strap with a
 /// bad clock/flash (repeated trim=0xFFFFFFFF no-cursor) emits records whose decoded unix is scattered
@@ -8,10 +9,11 @@ import Foundation
 ///
 /// MIN_PLAUSIBLE_UNIX = 2023-11 — the same 1.7B floor `BLEManager.strapDataBounds` already uses.
 /// FUTURE_MARGIN = 1 day — a historical record can never post-date its own capture, so anything more
-/// than a day ahead of wall time is a bad-clock artefact. Keep these in lockstep with the Android
-/// `HistoricalStreams.kt` MIN_PLAUSIBLE_UNIX / FUTURE_MARGIN.
-public let MIN_PLAUSIBLE_UNIX = 1_700_000_000   // 2023-11
-public let FUTURE_MARGIN = 86_400               // 1 day
+/// than a day ahead of wall time is a bad-clock artefact.
+/// Values of record (Phase 2b): the shared Kotlin `HistoricalStreams.kt` constants, read once here
+/// so the two platforms' gates can never drift.
+public let MIN_PLAUSIBLE_UNIX = Int(HistoricalStreamsKt.MIN_PLAUSIBLE_UNIX)   // 2023-11
+public let FUTURE_MARGIN = Int(HistoricalStreamsKt.FUTURE_MARGIN)             // 1 day
 
 /// SESSION-RELATIVE slack (#547): how far OUTSIDE the strap's own GET_DATA_RANGE oldest/newest markers a
 /// record may still be stamped before it's treated as bad-clock pollution. The strap reports its banked
@@ -19,12 +21,16 @@ public let FUTURE_MARGIN = 86_400               // 1 day
 /// post-date the newest by more than benign skew, so a record dated MONTHS off the strap's OWN window is a
 /// wandering-clock artefact even when it clears the absolute 2023-11 floor (e.g. a 2024-12-25 record against
 /// a 2026 strap window). 7 days absorbs marker jitter / a still-banking newest edge / DST while still
-/// catching the months-off garbage. Kept in lockstep with Android `HistoricalStreams.kt` SESSION_RANGE_MARGIN.
-public let SESSION_RANGE_MARGIN = 7 * 86_400    // 7 days
+/// catching the months-off garbage. Value of record: the shared Kotlin `SESSION_RANGE_MARGIN`.
+public let SESSION_RANGE_MARGIN = Int(HistoricalStreamsKt.SESSION_RANGE_MARGIN)    // 7 days
 
 /// True when `ts` is a plausible capture time for a historical record given `wallNow` (#547): on or
 /// after the 2023-11 floor and no more than a day ahead of now. The single predicate the ingest gate
 /// and the one-time DB heal both use, so both platforms reject the exact same set.
+///
+/// STAYS SWIFT (Phase 2b): the Kotlin twin of this predicate is a `plausible()` closure LOCAL to
+/// `extractHistoricalStreams` — nothing public to route through. The bounds it applies are the
+/// delegated shared constants above, so the two platforms' gates are pinned to the same numbers.
 public func isPlausibleHistoricalUnix(_ ts: Int, wallNow: Int) -> Bool {
     ts >= MIN_PLAUSIBLE_UNIX && ts <= wallNow + FUTURE_MARGIN
 }
@@ -58,29 +64,23 @@ public func isPlausibleHistoricalUnix(_ ts: Int, wallNow: Int,
 /// skipped: it is known-and-unstored by design, not lost biometric data. Only genuine type-47
 /// record frames whose payload would otherwise be silently dropped are returned.
 ///
-/// Used by the Backfiller/BLEManager to archive undecodable history BEFORE acking the trim. Mirrors
-/// the Android rejectedHistoricalRecords so one mapping toolchain re-ingests both archives.
+/// Used by the Backfiller/BLEManager to archive undecodable history BEFORE acking the trim.
+///
+/// DELEGATED (Phase 2b): the rejected set of record is the shared Kotlin
+/// `rejectedHistoricalRecords(rawFrames:family:)`, whose predicate was aligned to this function's
+/// (`unix == nil || (heart_rate == nil && gravity_x == nil)` after decode, CRC/unmapped rejects, the
+/// type-47 gate and the v26-by-design skip) so one archive decision serves both platforms —
+/// `RejectedHistoryTests` here and `RejectedHistoricalRecordsTest` on the Kotlin side are the parity
+/// net. The family is handed over by implicit member (`.whoop4`/`.whoop5`) so no SKIE Swift type is
+/// named (x86_64 iOS-simulator slice safe).
 public func rejectedHistoricalRecords(_ rawFrames: [[UInt8]], family: DeviceFamily) -> [[UInt8]] {
-    // The type byte sits at the inner-record start: frame[4] on WHOOP 4.0, frame[8] on WHOOP 5/MG
-    // (the puffin envelope is 4 bytes longer). hist_version sits one byte past the type+seq+cmd
-    // header — frame[5] (4.0) / frame[9] (5/MG) — same shift.
-    let typeIndex = family == .whoop5 ? 8 : 4
-    let versionIndex = family == .whoop5 ? 9 : 5
-    return rawFrames.filter { f in
-        // Only genuine HISTORICAL_DATA records (47). Console (50) and METADATA frames have a
-        // different type byte, so they never pass this gate — they are excluded by construction.
-        guard f.count > typeIndex, Int(f[typeIndex]) == 47 else { return false }
-        if family == .whoop5, f.count > versionIndex, Int(f[versionIndex]) == 26 { return false }  // v26 PPG: skipped by design
-        let p = parseFrame(f, family: family)
-        // Envelope/CRC reject: parse failed outright or the CRC32 trailer mismatched.
-        if !p.ok || p.crcOK == false { return true }
-        // Unmapped layout: the envelope parsed but no usable biometrics decoded. A record is genuinely
-        // undecodable only if it has no timestamp, or NEITHER heart rate NOR motion. v25 (issue #30)
-        // carries gravity but no per-second HR (PPG-derived), so a gravity-bearing record is real data
-        // the sleep stager uses — keep it. Only HR-less AND gravity-less type-47 records are rejected.
-        return p.parsed["unix"]?.intValue == nil
-            || (p.parsed["heart_rate"]?.intValue == nil && p.parsed["gravity_x"]?.doubleValue == nil)
+    let frames = rawFrames.map { $0.toKotlinByteArray() }
+    let rejected: [KotlinByteArray]
+    switch family {
+    case .whoop4: rejected = HistoricalStreamsKt.rejectedHistoricalRecords(rawFrames: frames, family: .whoop4)
+    case .whoop5: rejected = HistoricalStreamsKt.rejectedHistoricalRecords(rawFrames: frames, family: .whoop5)
     }
+    return rejected.map { $0.toUInt8Array() }
 }
 
 /// Turn historical (offload) parsed frames into datastore rows. Port of
@@ -90,6 +90,18 @@ public func rejectedHistoricalRecords(_ rawFrames: [[UInt8]], family: DeviceFami
 /// during a historical backfill, where type-40 frames are absent.
 /// EVENT and COMMAND_RESPONSE handling is identical to extractStreams.
 /// CRC-failed and non-ok frames are skipped.
+///
+/// STAYS SWIFT (Phase 2b, judged): the Kotlin twin `extractHistoricalStreams(rawFrames:...)` is a
+/// DIFFERENT SHAPE end to end — it consumes raw BLE frames (decoding type-47 itself via
+/// `decodeHistorical`, because the Kotlin live parser skips type-47) and returns a
+/// `com.noop.data.StreamBatch` of Room-oriented rows whose event payloads are JSON-encoded strings.
+/// This one consumes the Swift schema Interpreter's `ParsedFrame`s (the Interpreter/PostHooks
+/// subsystem is deliberately not delegated) and returns the Swift `Streams` (typed
+/// `[String: ParsedValue]` event payloads, golden-fixture Codable). Bridging would rebuild every
+/// frame and row across the seam and flatten the typed payloads through JSON. The seams that CAN
+/// share one implementation already do: the plausibility bounds (shared constants above), the
+/// v26-PPG HR derivation (`PpgHr.derivePpgHr`, delegated) and the archive decision
+/// (`rejectedHistoricalRecords`, delegated).
 public func extractHistoricalStreams(_ parsed: [ParsedFrame],
                                      deviceClockRef: Int, wallClockRef: Int,
                                      // SESSION-RELATIVE bounds (#547): the strap's own GET_DATA_RANGE

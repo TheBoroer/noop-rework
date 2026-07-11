@@ -10,6 +10,15 @@ public enum HistoricalMeta: Equatable {
 
 /// Classify a parsed METADATA frame into the four cases the Backfiller needs.
 ///
+/// STAYS SWIFT (Phase 2b, judged): the Kotlin twin `classifyHistoricalMeta(p:)` consumes the KOTLIN
+/// `ParsedFrame` produced by the Kotlin `Framing.parseFrame` decoder, while this one consumes the
+/// Swift schema Interpreter's `ParsedFrame` (and that subsystem is deliberately not delegated), so
+/// delegating would mean fabricating a Kotlin ParsedFrame per call just to re-read three string
+/// prefixes out of it. The Kotlin return is also a sealed class whose SKIE Swift enum is absent on
+/// the x86_64 iOS-simulator slice. The classification rules and the "NAME(rawValue)" prefix
+/// convention are pinned identical by `HistoricalMetaTests` here and the Kotlin
+/// `HistoricalStreams` tests on the other side.
+///
 /// Field mapping (verified against whoop_protocol.json + Schema.swift + PostHooks.swift):
 /// - `p.parsed["meta_type"]` → `.string("HISTORY_START(1)"|"HISTORY_END(2)"|"HISTORY_COMPLETE(3)")`
 ///   Schema.enumName() appends "(rawValue)" to every enum lookup, so the strings have the form
