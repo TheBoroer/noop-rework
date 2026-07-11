@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 
 /// Live Sessions (silent guardian) — the two, and only two, wrist signals the coach ever sends. Pure,
 /// platform-agnostic: signal-in, pulse-list-out, no I/O and no BLE. The trigger (`BLEManager.buzz` on Apple,
@@ -10,8 +11,12 @@ import Foundation
 ///   • `push`    — two LIGHT taps  → "give a bit more"
 ///   • `easeOff` — three HEAVY taps → "ease off, today can't pay for this"
 ///
-/// Kotlin twin: `android/app/src/main/java/com/noop/protocol/LiveSessionHaptics.kt`; the two pulse lists are
-/// pinned identical by matching unit tests on both platforms. Design contract:
+/// DELEGATED (Phase 2b): the pulse lists come from the shared Kotlin
+/// `com.noop.protocol.LiveSessionHaptics` (one vocabulary of record). The Swift `Signal` enum and this
+/// enum's public API are unchanged; `LiveSessionHapticsTests` is the parity net. The Kotlin signal is
+/// handed over by implicit member (`.push`/`.easeOff`), inferred from the shared `pulses(signal:)`
+/// parameter, so no SKIE Swift type is named (keeps the x86_64 iOS-simulator slice compiling, where
+/// only the Objective-C-bridged Shared symbols exist). Design contract:
 /// docs/superpowers/specs/2026-07-04-live-sessions-design.md.
 public enum LiveSessionHaptics {
 
@@ -22,29 +27,15 @@ public enum LiveSessionHaptics {
         case easeOff   // too hard for today
     }
 
-    /// The ordered buzz list for a signal. Reuses `HapticClock`'s pulse timing (module-internal) so the two
-    /// features stay in lock-step: `shortMs`/`longMs` durations, `intraGapMs` spacing, final gap trimmed to 0.
+    /// The ordered buzz list for a signal. The shared Kotlin encoder reuses `HapticClock`'s timing
+    /// table (the same one the delegated Swift `HapticClock` reads), so the two features stay in
+    /// lock-step: `shortMs`/`longMs` durations, `intraGapMs` spacing, final gap trimmed to 0.
     public static func pulses(for signal: Signal) -> [HapticClock.Pulse] {
+        let kotlin: [Shared.HapticClock.Pulse]
         switch signal {
-        case .push:
-            return trimmed([
-                HapticClock.Pulse(durationMs: HapticClock.shortMs, gapMs: HapticClock.intraGapMs),
-                HapticClock.Pulse(durationMs: HapticClock.shortMs, gapMs: HapticClock.intraGapMs),
-            ])
-        case .easeOff:
-            return trimmed([
-                HapticClock.Pulse(durationMs: HapticClock.longMs, gapMs: HapticClock.intraGapMs),
-                HapticClock.Pulse(durationMs: HapticClock.longMs, gapMs: HapticClock.intraGapMs),
-                HapticClock.Pulse(durationMs: HapticClock.longMs, gapMs: HapticClock.intraGapMs),
-            ])
+        case .push: kotlin = Shared.LiveSessionHaptics.shared.pulses(signal: .push)
+        case .easeOff: kotlin = Shared.LiveSessionHaptics.shared.pulses(signal: .easeOff)
         }
-    }
-
-    /// The sequence ends on a buzz, not a gap — trim the final pulse's trailing gap to 0.
-    private static func trimmed(_ pulses: [HapticClock.Pulse]) -> [HapticClock.Pulse] {
-        guard let last = pulses.last else { return pulses }
-        var out = pulses
-        out[out.count - 1] = HapticClock.Pulse(durationMs: last.durationMs, gapMs: 0)
-        return out
+        return kotlin.map { HapticClock.Pulse(durationMs: Int($0.durationMs), gapMs: Int($0.gapMs)) }
     }
 }

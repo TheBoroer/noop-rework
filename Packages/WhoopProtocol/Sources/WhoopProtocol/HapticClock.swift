@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 
 /// Haptic Clock (#460): turn a wall-clock time into a deterministic list of wrist buzzes so a user
 /// can read the time off the strap without looking at a screen — a long pulse counts tens, a short
@@ -7,9 +8,12 @@ import Foundation
 /// This is a PURE, platform-agnostic encoder: time-in, pulse-list-out, no I/O and no BLE. The trigger
 /// (`BLEManager.buzzTimeNow()` on Apple, `WhoopBleClient.buzzTimeNow()` on Android) walks the list and
 /// fires each pulse through the EXISTING maverick notification buzz; only the *schedule* of buzzes is
-/// new, the buzz itself is the hardware-confirmed one. The Kotlin twin is
-/// `android/app/src/main/java/com/noop/protocol/HapticClock.kt`; the two pulse lists are pinned
-/// identical by matching unit tests on both platforms (e.g. 3:25 → the same list).
+/// new, the buzz itself is the hardware-confirmed one.
+///
+/// DELEGATED (Phase 2b): the encoder and its timing table live in the shared Kotlin
+/// `com.noop.protocol.HapticClock` (one schedule of record for all platforms). The Swift `Pulse`
+/// struct and this enum's public API are unchanged; `HapticClockTests` is the parity net (e.g.
+/// 3:25 pins the exact same list on both platforms).
 ///
 /// Reading the buzzes:
 ///   • LONG pulse  = one "ten"   in the current digit group
@@ -36,16 +40,16 @@ public enum HapticClock {
         public var isLong: Bool { durationMs >= HapticClock.longMs }
     }
 
-    // Pulse + gap timing (ms). Kept in lock-step with HapticClock.kt — change both together.
+    // Pulse + gap timing (ms). Values of record: the shared Kotlin `HapticClock` constants
+    // (LONG_MS/SHORT_MS/INTRA_GAP_MS/GROUP_GAP_MS/BLOCK_GAP_MS), read once here so the Swift-side
+    // consumers (`Pulse.isLong`, `LiveSessionHaptics`) and the Kotlin encoder can never drift.
     // #981: the buzz itself is a fixed hardware pattern, so durationMs+gapMs is only the start-to-start
-    // SPACING between buzzes. The old 250ms intra-gap left near-zero silence between unit taps, so they
-    // blended on the wrist and were "almost impossible to distinguish". Widened gaps (intra-gap most of
-    // all) give clear silence between taps and between digit groups while keeping the sequence practical.
-    static let longMs = 550        // a "tens" pulse
-    static let shortMs = 200       // a "units" pulse
-    static let intraGapMs = 450    // silence between two pulses inside one digit group
-    static let groupGapMs = 900    // silence between adjacent digit groups
-    static let blockGapMs = 1500   // silence between the hour block and the minute block
+    // SPACING between buzzes; the widened gaps give clear silence between taps and digit groups.
+    static let longMs = Int(Shared.HapticClock.shared.LONG_MS)         // a "tens" pulse
+    static let shortMs = Int(Shared.HapticClock.shared.SHORT_MS)       // a "units" pulse
+    static let intraGapMs = Int(Shared.HapticClock.shared.INTRA_GAP_MS) // silence between two pulses inside one digit group
+    static let groupGapMs = Int(Shared.HapticClock.shared.GROUP_GAP_MS) // silence between adjacent digit groups
+    static let blockGapMs = Int(Shared.HapticClock.shared.BLOCK_GAP_MS) // silence between the hour block and the minute block
 
     /// Encode `hour`:`minute` into the buzz schedule.
     /// - Parameters:
@@ -56,60 +60,17 @@ public enum HapticClock {
     ///            roughly what part of day it is); only the dial reading is buzzed out.
     /// - Returns: the ordered pulse list. Empty only for the degenerate all-zero 24h midnight 0:00,
     ///   which has no pulses to emit; callers should treat an empty list as "nothing to buzz".
+    ///
+    /// Delegates to the shared Kotlin `HapticClock.pulses` (clamping, digit grouping, gap widening
+    /// and the trailing-gap trim all live there).
     public static func pulses(hour: Int, minute: Int, is24h: Bool) -> [Pulse] {
-        // Clamp defensively rather than trap — this can be driven from a stored pref or a strap tap.
-        let h24 = min(max(hour, 0), 23)
-        let m = min(max(minute, 0), 59)
-        let displayHour = is24h ? h24 : twelveHour(h24)
-
-        let hourTens = displayHour / 10
-        let hourUnits = displayHour % 10
-        let minTens = m / 10
-        let minUnits = m % 10
-
-        var out: [Pulse] = []
-
-        // Hour block: tens group, then units group.
-        appendGroup(&out, count: hourTens, durationMs: longMs)
-        closeGroup(&out, with: groupGapMs)
-        appendGroup(&out, count: hourUnits, durationMs: shortMs)
-        // Separate hour block from minute block with the longer block gap.
-        closeGroup(&out, with: blockGapMs)
-
-        // Minute block: tens group, then units group.
-        appendGroup(&out, count: minTens, durationMs: longMs)
-        closeGroup(&out, with: groupGapMs)
-        appendGroup(&out, count: minUnits, durationMs: shortMs)
-
-        // The final pulse needs no trailing gap — trim it so the sequence ends on a buzz.
-        if let last = out.last {
-            out[out.count - 1] = Pulse(durationMs: last.durationMs, gapMs: 0)
-        }
-        return out
+        Shared.HapticClock.shared.pulses(hour: Int32(hour), minute: Int32(minute), is24h: is24h)
+            .map { Pulse(durationMs: Int($0.durationMs), gapMs: Int($0.gapMs)) }
     }
 
     /// 24-hour hour → 12-hour dial reading (0→12, 13→1 … 23→11). Noon stays 12.
+    /// Delegates to the shared Kotlin `HapticClock.twelveHour`.
     static func twelveHour(_ h24: Int) -> Int {
-        let h = h24 % 12
-        return h == 0 ? 12 : h
-    }
-
-    /// Append `count` identical pulses (each duration `durationMs`) separated by the intra-group gap.
-    private static func appendGroup(_ out: inout [Pulse], count: Int, durationMs: Int) {
-        guard count > 0 else { return }
-        for _ in 0..<count {
-            out.append(Pulse(durationMs: durationMs, gapMs: intraGapMs))
-        }
-    }
-
-    /// Widen the trailing pulse's gap to at least `gapMs` (a group/block separator). If nothing has
-    /// been emitted yet (a leading zero digit group, e.g. minute-tens of 0), there is no pulse to
-    /// widen — the missing pulse is itself the "0", and the surrounding gaps still bound the groups,
-    /// so this is a no-op. We take the MAX rather than overwrite so that when later groups are empty
-    /// (e.g. 12:00 has no minute pulses) an earlier, wider block separator isn't clobbered by a
-    /// narrower group separator that follows it on the same trailing pulse.
-    private static func closeGroup(_ out: inout [Pulse], with gapMs: Int) {
-        guard let last = out.last else { return }
-        out[out.count - 1] = Pulse(durationMs: last.durationMs, gapMs: max(last.gapMs, gapMs))
+        Int(Shared.HapticClock.shared.twelveHour(h24: Int32(h24)))
     }
 }
