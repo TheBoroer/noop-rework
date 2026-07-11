@@ -68,6 +68,8 @@ extension KotlinByteArray {
 // compiles the x86_64 iOS-simulator slice (the app excludes it, the package does not inherit that),
 // and for that slice only the Objective-C-bridged Shared symbols are visible, not SKIE's Swift-only
 // enum `Shared.DeviceFamily`. So callers pass the family via implicit-member inference against the
-// Objective-C `Reassembler.init(family:)` parameter (see `Reassembler` in Framing.swift) and never
-// name the Swift enum type. Task 6's SKIE Swift free functions (decodeHistorical, etc.) will need the
-// Swift enum and so will force an x86_64-simulator slice or a package-level arch exclusion.
+// Objective-C parameter type and never name the Swift enum type (see `Reassembler` in Framing.swift,
+// `skinTempCelsius` in Streams.swift, `rejectedHistoricalRecords` in HistoricalStreams.swift,
+// `LiveSessionHaptics.pulses(for:)`). Task 6 stayed on this pattern: the `XxxKt` free-function
+// containers and the non-enum Kotlin classes keep arch-agnostic Swift names in the ObjC header +
+// apinotes, so no delegation needed a SKIE-Swift-only symbol and no packaging change was required.
