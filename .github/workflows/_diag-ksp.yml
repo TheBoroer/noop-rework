@@ -1,0 +1,87 @@
+# TEMPORARY diagnostic workflow (ci-fix-native-ksp). Deleted before the branch is merge-ready.
+# Instruments the native Room/KSP2 MissingType failure on the real macos-15 runner:
+#  - prints runner CPU/RAM + JVM heap defaults
+#  - Attempt A: runs the 4 native KSP tasks verbose (--stacktrace --info) with the repo's
+#    current 2048m Gradle-daemon heap (expected to FAIL) and greps the output for OOM/GC/heap
+#  - Attempt B: bumps the Gradle-daemon heap and reruns the SAME tasks on the SAME runner
+#    (one variable changed) to test the daemon-heap hypothesis directly.
+name: _diag-ksp
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Runner specs + JVM heap defaults
+        run: |
+          echo "== sysctl =="
+          sysctl -n hw.ncpu hw.memsize hw.logicalcpu hw.physicalcpu
+          echo "== vm_stat =="
+          vm_stat || true
+          echo "== java version =="
+          java -version
+          echo "== JVM ergonomic heap defaults on this runner =="
+          java -XX:+PrintFlagsFinal -version | grep -iE "MaxHeapSize|InitialHeapSize|MaxRAMPercentage|MaxMetaspaceSize|ActiveProcessorCount|ParallelGCThreads|ConcGCThreads" || true
+
+      - name: Attempt A - native KSP with current 2048m daemon (expect FAIL)
+        id: attempt_a
+        continue-on-error: true
+        working-directory: android
+        run: |
+          echo "== android/gradle.properties jvmargs =="
+          grep -iE "jvmargs|Xmx" gradle.properties || true
+          set -o pipefail
+          ./gradlew --stop || true
+          ./gradlew \
+            :shared:kspKotlinIosArm64 \
+            :shared:kspKotlinIosSimulatorArm64 \
+            :shared:kspKotlinMacosArm64 \
+            :shared:kspKotlinMacosX64 \
+            --no-build-cache --rerun-tasks --stacktrace --info --console=plain \
+            2>&1 | tee /tmp/ksp_a.log | tail -n 200
+          echo "attempt_a exit: ${PIPESTATUS[0]}"
+
+      - name: Attempt A - scan log for memory / real cause
+        run: |
+          echo "== OOM / GC / heap / memory signals in Attempt A =="
+          grep -inE "OutOfMemory|heap space|GC overhead|Metaspace|Killed|Java heap|MissingType|Cannot (find|resolve)|Unresolved|unable to|error type|AA session|Analysis API|KotlinIllegal|exception in thread" /tmp/ksp_a.log | head -80 || echo "(no matches)"
+          echo "== last KSP/Room lines with stacktrace context =="
+          grep -inE "ksp|room|WhoopDatabase|Caused by|at com.google.devtools.ksp|at org.jetbrains.kotlin" /tmp/ksp_a.log | head -80 || echo "(none)"
+
+      - name: Attempt B - same tasks with bumped daemon heap on the SAME runner
+        id: attempt_b
+        continue-on-error: true
+        working-directory: android
+        run: |
+          cp gradle.properties gradle.properties.bak
+          # one variable changed: Gradle-daemon heap (KSP2 runs in the Gradle daemon)
+          sed -i '' 's/-Xmx2048m -Dfile.encoding=UTF-8/-Xmx5120m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8/' gradle.properties
+          echo "== patched jvmargs =="
+          grep -iE "jvmargs|Xmx" gradle.properties || true
+          set -o pipefail
+          ./gradlew --stop || true
+          ./gradlew \
+            :shared:kspKotlinIosArm64 \
+            :shared:kspKotlinIosSimulatorArm64 \
+            :shared:kspKotlinMacosArm64 \
+            :shared:kspKotlinMacosX64 \
+            --no-build-cache --rerun-tasks --console=plain \
+            2>&1 | tee /tmp/ksp_b.log | tail -n 60
+          echo "attempt_b exit: ${PIPESTATUS[0]}"
+          mv gradle.properties.bak gradle.properties
+
+      - name: Verdict
+        run: |
+          echo "Attempt A (2048m): ${{ steps.attempt_a.outcome }}"
+          echo "Attempt B (5120m): ${{ steps.attempt_b.outcome }}"
