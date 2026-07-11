@@ -156,7 +156,7 @@ public enum PpgHr {
     /// yielded a confident estimate, ascending by ts. Records may be unsorted / contain gaps.
     ///
     /// DELEGATED (Phase 2b) for the canonical configuration (`fs == sampleRateHz`,
-    /// `windowSeconds == windowSeconds` — the shared constants, and the only configuration any
+    /// `windowSeconds == windowSeconds`: the shared constants, and the only configuration any
     /// caller or test uses): the whole pipeline runs on the shared Kotlin `PpgHr.estimate`, so
     /// macOS/iOS/Android derive the SAME per-second HR from the same offload. Swift semantics are
     /// preserved at the seam: on a duplicate ts the LAST record wins (the Kotlin pipeline would
@@ -167,7 +167,7 @@ public enum PpgHr {
                                    fs: Int = sampleRateHz,
                                    windowSeconds: Int = windowSeconds) -> [PpgHrSample] {
         guard !records.isEmpty else { return [] }
-        // One waveform per second (last write wins on a duplicate ts) — BOTH lanes rely on this.
+        // One waveform per second (last write wins on a duplicate ts): BOTH lanes rely on this.
         var secs = [Int: [Int]]()
         for r in records { secs[r.ts] = r.samples }
 

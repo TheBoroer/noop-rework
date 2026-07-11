@@ -19,6 +19,7 @@ on:
       - 'Packages/**'
       - 'shared/**'
       - 'android/**'
+      - 'Tools/**'
       - 'project.yml'
       - '.github/workflows/app-build.yml'
   push:
@@ -31,6 +32,7 @@ on:
       - 'Packages/**'
       - 'shared/**'
       - 'android/**'
+      - 'Tools/**'
       - 'project.yml'
       - '.github/workflows/app-build.yml'
   workflow_dispatch:

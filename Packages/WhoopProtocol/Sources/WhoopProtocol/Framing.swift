@@ -10,8 +10,14 @@ import Shared
 // still route their checksums through the shared `crc*` wrappers below, so there is one CRC of record.
 
 /// CRC-8 (poly 0x07) over `bytes[from..<(to ?? count)]`. The optional range defaults to the whole
-/// array, so existing callers are unchanged; passing a range lets the frame validator checksum a slice
-/// in place rather than slicing out a fresh `Array(frame[...])` for every frame on the offload path.
+/// array, so existing callers are unchanged; passing a range tells Kotlin which slice to checksum,
+/// so the caller avoids slicing out a fresh `Array(frame[...])` on the Swift side. This is not a
+/// no-copy call: the full `bytes` array still bridges to Kotlin on every invocation
+/// (`toKotlinByteArray()` in SharedBridge.swift, an element-by-element copy since `KotlinByteArray`
+/// has no bulk memcpy), regardless of `from`/`to`. Frames are bounded in size (tens of bytes, up to
+/// ~1.9 KB for a raw historical record), so the per-call bridge is cheap; SharedBridge.swift
+/// documents a `toNSData()`-backed memcpy path as the escape hatch if a large-buffer profile ever
+/// shows this dominating.
 ///
 /// Delegates to the shared Kotlin `Crc.crc8`; the two implementations are byte-identical table ports.
 public func crc8(_ bytes: [UInt8], _ from: Int = 0, _ to: Int? = nil) -> UInt8 {
@@ -21,8 +27,10 @@ public func crc8(_ bytes: [UInt8], _ from: Int = 0, _ to: Int? = nil) -> UInt8 {
 }
 
 /// Standard zlib CRC-32 over `bytes[from..<(to ?? count)]`. The optional range defaults to the whole
-/// array (existing callers unchanged); the validator passes a range to checksum the inner record or
-/// payload in place, skipping the per-frame sub-array copy that added up over a multi-night offload.
+/// array (existing callers unchanged); the validator passes a range so Kotlin checksums just the
+/// inner record or payload, skipping the Swift-side sub-array copy. As with `crc8` above, the whole
+/// `bytes` array still bridges to Kotlin on every call, which is cheap at the bounded frame sizes
+/// this code handles (see `crc8`'s doc and SharedBridge.swift for the escape hatch if that changes).
 ///
 /// Delegates to the shared Kotlin `Crc.crc32`.
 public func crc32(_ bytes: [UInt8], _ from: Int = 0, _ to: Int? = nil) -> UInt32 {
@@ -33,7 +41,9 @@ public func crc32(_ bytes: [UInt8], _ from: Int = 0, _ to: Int? = nil) -> UInt32
 
 /// CRC16-Modbus (poly 0xA001, init 0xFFFF, reflected) over `bytes[from..<(to ?? count)]`. Used for the
 /// Whoop 5.0 frame header check. The optional range defaults to the whole array; the validator passes
-/// a range so the 6-byte header check needs no `Array(frame[0..<6])` copy.
+/// a range so Kotlin checksums just the 6-byte header, with no Swift-side `Array(frame[0..<6])` copy.
+/// The whole `bytes` array still bridges to Kotlin on every call (see `crc8`'s doc above); bounded and
+/// cheap at frame scale.
 ///
 /// Delegates to the shared Kotlin `Crc.crc16Modbus`.
 public func crc16Modbus(_ bytes: [UInt8], _ from: Int = 0, _ to: Int? = nil) -> UInt16 {
@@ -77,7 +87,8 @@ public func verifyFrame(_ frame: [UInt8]) -> FrameCheck {
         return FrameCheck(ok: false)
     }
     let length = u16le(frame, 1)
-    // Ranged CRCs checksum the frame in place, with no per-frame sub-array allocation.
+    // Ranged CRCs avoid a Swift-side sub-array allocation; the whole frame still bridges to
+    // Kotlin on each call (see the `crc8` doc comment above).
     let crc8OK = crc8(frame, 1, 3) == frame[3]
     var crc32OK: Bool? = nil
     // length must cover at least the envelope's inner bytes (mirrors framing.py).
@@ -126,7 +137,8 @@ private func verifyFrameWhoop5(_ frame: [UInt8]) -> FrameCheck {
     }
     let total = declaredLength + 8
 
-    // Header CRC16-Modbus over the first 6 bytes, stored LE at frame[6..8]. Ranged, no copy.
+    // Header CRC16-Modbus over the first 6 bytes, stored LE at frame[6..8]. Ranged to avoid a
+    // Swift-side slice; the whole frame still bridges to Kotlin per call (see `crc8` doc above).
     let wantHeaderCRC = crc16Modbus(frame, 0, 6)
     let gotHeaderCRC = UInt16(frame[6]) | (UInt16(frame[7]) << 8)
     let headerCRCOK = wantHeaderCRC == gotHeaderCRC
@@ -135,7 +147,8 @@ private func verifyFrameWhoop5(_ frame: [UInt8]) -> FrameCheck {
     if frame.count >= total {
         // payload spans [8, total-4); CRC32 trailer is the final 4 bytes of the frame.
         let payloadEnd = total - 4
-        // payload = frame[8..<payloadEnd], checksummed in place.
+        // payload = frame[8..<payloadEnd], checksummed via the ranged call above (whole-frame
+        // bridge per call, see `crc8` doc).
         let want = crc32(frame, 8, payloadEnd)
         let got = u32le(frame, payloadEnd)
         crc32OK = want == got

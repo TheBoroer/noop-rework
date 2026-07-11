@@ -6,7 +6,7 @@ import Shared
 // EXCEPT inside extractStreams' inputs; the structs themselves always carry wall-clock ts.
 //
 // STAYS SWIFT (Phase 2b, judged per the Task 6 brief): these row value types are the package's
-// public currency — Codable against the golden fixtures (streams_golden.json /
+// public currency, Codable against the golden fixtures (streams_golden.json /
 // biometric_streams_golden.json), consumed by Phase E / WhoopStore / StrandAnalytics on every
 // sample. The Kotlin `com.noop.protocol.Streams` twin is a NARROWER live-path shape (no resp /
 // gravity / steps / sleepState / ppgHr / droppedImplausible), so replacing these with bridged
@@ -252,7 +252,7 @@ private func toWall(_ deviceTs: Int?, _ deviceClockRef: Int, _ wallClockRef: Int
 ///
 /// STAYS SWIFT (Phase 2b, judged): the Kotlin twin `extractStreams(parsed:...)` consumes KOTLIN
 /// `ParsedFrame`s produced by the Kotlin `Framing.parseFrame` decoder, while this one consumes the
-/// Swift schema-driven Interpreter's `ParsedFrame` (`[String: ParsedValue]`, a typed value enum) —
+/// Swift schema-driven Interpreter's `ParsedFrame` (`[String: ParsedValue]`, a typed value enum):
 /// and the Interpreter/Schema/PostHooks subsystem is deliberately NOT delegated (no Kotlin twin).
 /// Bridging would mean rebuilding a Kotlin ParsedFrame per frame through `Any?`/NSNumber round
 /// trips that erase exactly the Int-vs-Double fidelity `ParsedValue` exists to preserve, and the

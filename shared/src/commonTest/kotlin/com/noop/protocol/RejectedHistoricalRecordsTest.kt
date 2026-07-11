@@ -81,7 +81,7 @@ class RejectedHistoricalRecordsTest {
     fun v25RecordWithImplausibleGravityIsRejected() {
         // A CRC-valid v25 record whose gravity fails the ~1 g magnitude gate decodes to `unix` only:
         // no heart rate (v25 never stores one) and no gravity vector, so it banks ZERO rows and is
-        // genuinely lost — it MUST be flagged for archiving. Pins the Swift-parity predicate
+        // genuinely lost, so it MUST be flagged for archiving. Pins the Swift-parity predicate
         // (`unix == null || (heart_rate == null && gravity_x == null)`); before that alignment this
         // record was silently kept because decodeHistorical returned a non-null (timestamp-only) map.
         val bad = bytes(realV24Hex)

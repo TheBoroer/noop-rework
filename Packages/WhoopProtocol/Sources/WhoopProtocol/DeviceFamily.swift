@@ -10,11 +10,11 @@ import Shared
 /// STAYS SWIFT (Phase 2b, judged): this enum is the package-wide public currency (String-raw,
 /// CaseIterable, in ~every family-aware signature here and in the app layer), so the type itself
 /// cannot become the Kotlin enum. Its per-family members are static data whose Kotlin twin is
-/// reachable ONLY by naming the Kotlin `DeviceFamily` type — and on the x86_64 iOS-simulator slice
+/// reachable ONLY by naming the Kotlin `DeviceFamily` type, and on the x86_64 iOS-simulator slice
 /// that type has no Swift name (SKIE marks the ObjC class SwiftPrivate `__DeviceFamily` and the
 /// bridged Swift enum exists only in the arm64 swiftinterface), so property delegation would break
 /// that slice. Kotlin instances therefore cross the seam exclusively in PARAMETER position via
-/// implicit members (`.whoop4`/`.whoop5` — see `Reassembler`, `skinTempCelsius`,
+/// implicit members (`.whoop4`/`.whoop5`: see `Reassembler`, `skinTempCelsius`,
 /// `rejectedHistoricalRecords`). The UUID strings / hello bytes / CRC-kind table are pinned in
 /// lockstep with `DeviceFamily.kt` by the framing parity tests on both platforms.
 public enum DeviceFamily: String, Sendable, CaseIterable {

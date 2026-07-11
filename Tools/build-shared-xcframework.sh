@@ -10,8 +10,15 @@ if [ -z "${JAVA_HOME:-}" ] || ! "$JAVA_HOME/bin/java" -version 2>&1 | grep -qE '
     if [ -n "$CAND" ] && [ -x "$CAND/bin/java" ]; then export JAVA_HOME="$CAND"; break; fi
   done
 fi
-echo "JAVA_HOME=$JAVA_HOME"
+echo "JAVA_HOME=${JAVA_HOME:-}"
+if [ -z "${JAVA_HOME:-}" ] || ! [ -x "$JAVA_HOME/bin/java" ]; then
+  echo "No JDK 17/21 found; install one or set JAVA_HOME" >&2
+  exit 1
+fi
 CONFIG="${1:-Release}"
+if [ "$CONFIG" != "Release" ]; then
+  echo "Warning: Package.swift links the release/ output path, so a $CONFIG build is NOT picked up by SPM." >&2
+fi
 cd "$ROOT/android"
 ./gradlew ":shared:assembleShared${CONFIG}XCFramework" --console=plain
 echo "Built: $ROOT/shared/build/XCFrameworks/$(echo "$CONFIG" | tr '[:upper:]' '[:lower:]')/Shared.xcframework"

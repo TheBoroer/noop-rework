@@ -429,5 +429,7 @@ ONLY_ACTIVE_ARCH=NO`), then `swift test --package-path Packages/WhoopProtocol`:
   early.
 - No Swift test or fixture expectation was touched across all of Phase 2b; the Swift suite served
   as the untouched parity net for every delegation.
-- No em-dashes in any new content this phase.
+- 10 em-dash lines were introduced across Phase 2b's new comments (DeviceFamily.swift,
+  HistoricalStreams.swift, PpgHr.swift, Streams.swift, RejectedHistoricalRecordsTest.kt); these
+  were caught and fixed in the final-review pass.
 - Nothing pushed by any Phase 2b task; the controller pushes after final whole-branch review.

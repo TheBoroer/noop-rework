@@ -29,7 +29,7 @@ public let SESSION_RANGE_MARGIN = Int(HistoricalStreamsKt.SESSION_RANGE_MARGIN) 
 /// and the one-time DB heal both use, so both platforms reject the exact same set.
 ///
 /// STAYS SWIFT (Phase 2b): the Kotlin twin of this predicate is a `plausible()` closure LOCAL to
-/// `extractHistoricalStreams` — nothing public to route through. The bounds it applies are the
+/// `extractHistoricalStreams`: nothing public to route through. The bounds it applies are the
 /// delegated shared constants above, so the two platforms' gates are pinned to the same numbers.
 public func isPlausibleHistoricalUnix(_ ts: Int, wallNow: Int) -> Bool {
     ts >= MIN_PLAUSIBLE_UNIX && ts <= wallNow + FUTURE_MARGIN
@@ -69,7 +69,7 @@ public func isPlausibleHistoricalUnix(_ ts: Int, wallNow: Int,
 /// DELEGATED (Phase 2b): the rejected set of record is the shared Kotlin
 /// `rejectedHistoricalRecords(rawFrames:family:)`, whose predicate was aligned to this function's
 /// (`unix == nil || (heart_rate == nil && gravity_x == nil)` after decode, CRC/unmapped rejects, the
-/// type-47 gate and the v26-by-design skip) so one archive decision serves both platforms —
+/// type-47 gate and the v26-by-design skip) so one archive decision serves both platforms:
 /// `RejectedHistoryTests` here and `RejectedHistoricalRecordsTest` on the Kotlin side are the parity
 /// net. The family is handed over by implicit member (`.whoop4`/`.whoop5`) so no SKIE Swift type is
 /// named (x86_64 iOS-simulator slice safe).
@@ -92,7 +92,7 @@ public func rejectedHistoricalRecords(_ rawFrames: [[UInt8]], family: DeviceFami
 /// CRC-failed and non-ok frames are skipped.
 ///
 /// STAYS SWIFT (Phase 2b, judged): the Kotlin twin `extractHistoricalStreams(rawFrames:...)` is a
-/// DIFFERENT SHAPE end to end — it consumes raw BLE frames (decoding type-47 itself via
+/// DIFFERENT SHAPE end to end: it consumes raw BLE frames (decoding type-47 itself via
 /// `decodeHistorical`, because the Kotlin live parser skips type-47) and returns a
 /// `com.noop.data.StreamBatch` of Room-oriented rows whose event payloads are JSON-encoded strings.
 /// This one consumes the Swift schema Interpreter's `ParsedFrame`s (the Interpreter/PostHooks
