@@ -167,7 +167,8 @@ final class Repository: ObservableObject {
     @Published var loaded = false
     /// One-time Room cutover progress (Phase 2c-1 Task 3), `0...1` while it runs, `nil` otherwise
     /// (nothing to migrate, already migrated, or the ETL just finished). Drives a minimal launch
-    /// overlay; see `ensureStore()`, which bridges `WhoopStore.migrationProgress`.
+    /// overlay; see `ensureStore()`, which fills this LIVE (Fix 2) via `WhoopStore.open(path:onProgress:)`'s
+    /// callback, not a post-hoc replay of `WhoopStore.migrationProgress`.
     @Published private(set) var migrationProgressFraction: Double?
     /// How much history each source currently holds, recomputed on every `refresh()`. Powers the
     /// Data Sources "Freshness Pipeline" card so the user can see imported vs computed vs Apple coverage.
@@ -512,22 +513,25 @@ final class Repository: ObservableObject {
             }
             let s: WhoopStore
             do {
-                s = try await WhoopStore(path: path)
+                // Room cutover (Task 3 Fix 2): `open`'s `onProgress` fires LIVE, once per committed
+                // ETL batch, while this call is still awaiting, not after the fact from
+                // `migrationProgress`'s replay (which only became observable once the whole store had
+                // already finished opening, so the overlay used to flash through a finished ETL
+                // instead of tracking it). It only fires on a legacy-only launch that actually runs
+                // the ETL; every other path (fresh install, already-Room, in-memory) never touches
+                // `migrationProgressFraction`, leaving it at its initial `nil`.
+                s = try await WhoopStore.open(path: path) { [weak self] fraction in
+                    Task { @MainActor in self?.migrationProgressFraction = fraction }
+                }
             } catch {
                 let ns = error as NSError
                 NSLog("WhoopStore: ensureStore FAILED opening store: \(ns.domain) code=\(ns.code): \(ns.localizedDescription)")
                 return nil
             }
-            // Room cutover (Task 3): a legacy-only launch runs a one-time ETL. `migrationProgress`
-            // is `nil` on every other path (fresh install, already-Room, in-memory), so this is a
-            // no-op there. `migrationProgress` is `nonisolated`, safe to read without an `await`.
-            if let progress = s.migrationProgress {
-                self.migrationProgressFraction = 0
-                Task { [weak self] in
-                    for await value in progress { self?.migrationProgressFraction = value }
-                    self?.migrationProgressFraction = nil
-                }
-            }
+            // Clear the overlay once the open (ETL included) has actually finished, whether it
+            // succeeded or fell back: `onProgress` may have left this at its final value (1.0 on
+            // success, less than 1.0 on a fallback).
+            self.migrationProgressFraction = nil
             try? await s.upsertDevice(id: deviceId, mac: nil, name: "WHOOP")
             return s
         }

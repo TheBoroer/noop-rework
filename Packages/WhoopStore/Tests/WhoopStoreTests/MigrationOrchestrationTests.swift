@@ -57,6 +57,14 @@ final class MigrationOrchestrationTests: XCTestCase {
         }
     }
 
+    /// `WhoopStore`'s completion-sentinel filename convention (`noop.db.migrated`, private inside
+    /// the package, not visible here even through `@testable import`): plants it directly so a test
+    /// can simulate "a prior launch's migration is confirmed done." Content is documented as
+    /// informational only, so its exact text never matters, only that the file exists.
+    private func plantMigrationSentinel(forRoomPath roomPath: String) throws {
+        try "planted-by-test\n".write(toFile: roomPath + ".migrated", atomically: true, encoding: .utf8)
+    }
+
     // MARK: - 1. Fresh install (no files)
 
     func testFreshInstallOpensRoomDirectly() async throws {
@@ -71,6 +79,11 @@ final class MigrationOrchestrationTests: XCTestCase {
         XCTAssertEqual(store.storageBackend, .room)
         XCTAssertNil(store.migrationProgress, "a fresh install runs no ETL")
         XCTAssertTrue(FileManager.default.fileExists(atPath: roomPath), "Room database created")
+        // Fix 1: a fresh install also writes the completion sentinel, so a later launch's
+        // both-present check finds it and never mistakes the fresh empty Room database for an
+        // interrupted migration.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: roomPath + ".migrated"),
+            "a fresh install must write the completion sentinel too")
         // rawBatch/cursors always live on the legacy GRDB handle, so it must exist too, migrated.
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("hrSample"))
@@ -106,6 +119,11 @@ final class MigrationOrchestrationTests: XCTestCase {
         // The legacy file is retained (never deleted), and still has its data intact.
         XCTAssertTrue(FileManager.default.fileExists(atPath: legacyPath))
         XCTAssertEqual(try rowCount(atPath: legacyPath, table: "hrSample"), 44_401)
+
+        // Fix 1: a completed ETL writes the completion sentinel, verified against the actual
+        // legacy/Room row counts, so a later launch's both-present check can trust it.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: roomPath + ".migrated"),
+            "a completed ETL must write the completion sentinel")
     }
 
     // MARK: - 3. Both present (Room wins, no re-ETL)
@@ -130,16 +148,70 @@ final class MigrationOrchestrationTests: XCTestCase {
                     arguments: ["sentinel-no-reetl", nil, "sentinel", 0, 0])
             }
         }
+        // Fix 1: the both-present branch now ALSO requires the completion sentinel (not just the
+        // Room file existing) before it will skip a re-ETL; plant it to keep this test's original
+        // "prior launch already finished the cutover" precondition true.
+        try plantMigrationSentinel(forRoomPath: roomPath)
 
         let store = try await WhoopStore(path: legacyPath)
 
         XCTAssertEqual(store.storageBackend, .room)
-        XCTAssertNil(store.migrationProgress, "both files present must not trigger a re-ETL")
+        XCTAssertNil(store.migrationProgress, "both files present (with the sentinel) must not trigger a re-ETL")
         let queue = try DatabaseQueue(path: roomPath)
         let stillThere = try await queue.read { db in
             try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM device WHERE id = 'sentinel-no-reetl')") ?? false
         }
         XCTAssertTrue(stillThere, "a re-ETL would have truncated device and wiped the sentinel row")
+    }
+
+    // MARK: - 3b. Room present, sentinel MISSING (crash mid-ETL): treated as interrupted, re-ETL runs
+
+    /// Fix 1 (review, data safety): before the sentinel, "both files present" was gated on file
+    /// existence alone, so a hard crash mid-ETL (or between the ETL finishing and the app confirming
+    /// it) left a partial `noop.db` that a later launch would adopt as "migrated" FOREVER, silently
+    /// serving incomplete data. Simulates that crash window: a Room file that is fully, validly
+    /// populated (a real crash could leave it anywhere from empty to fully populated; a complete but
+    /// UNCONFIRMED file is the harder case, since content alone can't distinguish it from a
+    /// genuinely finished migration) but with no sentinel, because only `WhoopStore`'s own open path
+    /// ever writes one, never `GrdbMigrator` directly.
+    func testCrashMidEtlRerunsEtlWhenSentinelMissing() async throws {
+        let dir = try tempDir()
+        let legacyPath = try copyFixture(into: dir)
+        let roomPath = roomPath(for: legacyPath)
+        let sentinelPath = roomPath + ".migrated"
+
+        let direct = GrdbMigrator.shared.migrate(legacyPath: legacyPath, roomPath: roomPath) { _ in }
+        guard case .done = onEnum(of: direct) else {
+            return XCTFail("precondition: the direct ETL must succeed, got \(direct)")
+        }
+        // A bogus row the crash-recovery re-ETL's truncate-then-copy must wipe.
+        do {
+            let roomQueue = try DatabaseQueue(path: roomPath)
+            try await roomQueue.write { db in
+                try db.execute(
+                    sql: "INSERT INTO device (id, mac, name, firstSeen, lastSeen) VALUES (?, ?, ?, ?, ?)",
+                    arguments: ["bogus-partial-etl", nil, "bogus", 0, 0])
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sentinelPath), "precondition: no sentinel yet")
+
+        let store = try await WhoopStore(path: legacyPath)
+
+        XCTAssertEqual(store.storageBackend, .room)
+        let progress = try XCTUnwrap(store.migrationProgress,
+            "a Room file without a sentinel must be treated as interrupted and re-migrated")
+        var values: [Double] = []
+        for await v in progress { values.append(v) }
+        XCTAssertEqual(values.last ?? -1, 1.0, accuracy: 0.0001, "the re-run ETL completes cleanly")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sentinelPath),
+            "a completed re-ETL must (re)write the sentinel")
+        XCTAssertEqual(try rowCount(atPath: roomPath, table: "hrSample"), 44_401)
+        XCTAssertEqual(try rowCount(atPath: roomPath, table: "device"), 3)
+        let bogusStillThere = try await DatabaseQueue(path: roomPath).read { db in
+            try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM device WHERE id = 'bogus-partial-etl')") ?? false
+        }
+        XCTAssertFalse(bogusStillThere, "the re-ETL's truncate-then-copy must have wiped the bogus row")
     }
 
     // MARK: - 4. ETL failure (fallback to legacy GRDB, diagnostic flag, retry next launch)
@@ -173,6 +245,9 @@ final class MigrationOrchestrationTests: XCTestCase {
 
         // No partial Room file left behind: the next launch must retry cleanly, not skip past.
         XCTAssertFalse(FileManager.default.fileExists(atPath: roomPath))
+        // Fix 1: nor a stale sentinel (there shouldn't be one yet, but this is the invariant that
+        // actually matters: no sentinel survives a failed ETL).
+        XCTAssertFalse(FileManager.default.fileExists(atPath: roomPath + ".migrated"))
 
         // The store is still fully functional on the legacy GRDB handle: reads AND writes work.
         try await store.upsertDevice(id: "still-works", mac: nil, name: "WHOOP")
