@@ -132,3 +132,20 @@ dependencies {
     add("kspMacosArm64", "androidx.room:room-compiler:2.7.1")
     add("kspMacosX64", "androidx.room:room-compiler:2.7.1")
 }
+
+// Room's KSP2 processor resolves the @Database's type graph (RoomDatabase and the room-runtime
+// native klib it extends) through the Kotlin/Native platform libraries. The kspKotlin<AppleTarget>
+// tasks do NOT declare a dependency on the Kotlin/Native distribution being provisioned, so on a
+// clean KONAN_DATA_DIR (every fresh CI runner) KSP runs before the platform klibs exist, can't
+// resolve room-runtime's transitive native types, and Room aborts with
+//   e: [ksp] [MissingType]: Element 'com.noop.data.WhoopDatabase' references a type that is not present
+// A developer's ~/.konan is already warm from earlier native builds, which is why this only ever
+// failed in CI. commonizeNativeDistribution provisions (downloads + commonizes) those platform
+// libraries and already runs as part of the appleMain build, so this only adds the missing ordering
+// edge: KSP waits for the distribution instead of racing ahead of it. Android/JVM KSP tasks are not
+// matched (they need no Kotlin/Native distribution).
+tasks.matching {
+    it.name.startsWith("ksp") && Regex("Ios|Macos").containsMatchIn(it.name)
+}.configureEach {
+    dependsOn("commonizeNativeDistribution")
+}

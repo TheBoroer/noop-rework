@@ -37,7 +37,8 @@ final class Whoop4HistoricalV25Tests: XCTestCase {
             XCTAssertNotNil(gx, "v25 must decode gravity (the sleep-staging input)")
             let gy = p.parsed["gravity_y"]?.doubleValue ?? 0
             let gz = p.parsed["gravity_z"]?.doubleValue ?? 0
-            let mag = ((gx ?? 0) * (gx ?? 0) + gy * gy + gz * gz).squareRoot()
+            let gxv: Double = gx ?? 0
+            let mag = (gxv * gxv + gy * gy + gz * gz).squareRoot()
             XCTAssertTrue((0.8...1.2).contains(mag), "|gravity| should be ~1 g, got \(mag)")
         }
         // ts strictly increments (1 Hz).
