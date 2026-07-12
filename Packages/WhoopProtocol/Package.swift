@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
         .library(name: "WhoopProtocol", targets: ["WhoopProtocol"]),
+        .library(name: "Shared", targets: ["Shared"]),
         .executable(name: "whoop-decode", targets: ["whoop-decode"]),
     ],
     targets: [
