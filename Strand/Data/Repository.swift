@@ -165,6 +165,10 @@ final class Repository: ObservableObject {
     /// Imported (export-verbatim) sleep figures by day. Empty until a WHOOP import lands.
     @Published var importedSleep: [String: ImportedSleepFigures] = [:]
     @Published var loaded = false
+    /// One-time Room cutover progress (Phase 2c-1 Task 3), `0...1` while it runs, `nil` otherwise
+    /// (nothing to migrate, already migrated, or the ETL just finished). Drives a minimal launch
+    /// overlay; see `ensureStore()`, which bridges `WhoopStore.migrationProgress`.
+    @Published private(set) var migrationProgressFraction: Double?
     /// How much history each source currently holds, recomputed on every `refresh()`. Powers the
     /// Data Sources "Freshness Pipeline" card so the user can see imported vs computed vs Apple coverage.
     @Published private(set) var freshness: RepositoryFreshness = .empty
@@ -513,6 +517,16 @@ final class Repository: ObservableObject {
                 let ns = error as NSError
                 NSLog("WhoopStore: ensureStore FAILED opening store: \(ns.domain) code=\(ns.code): \(ns.localizedDescription)")
                 return nil
+            }
+            // Room cutover (Task 3): a legacy-only launch runs a one-time ETL. `migrationProgress`
+            // is `nil` on every other path (fresh install, already-Room, in-memory), so this is a
+            // no-op there. `migrationProgress` is `nonisolated`, safe to read without an `await`.
+            if let progress = s.migrationProgress {
+                self.migrationProgressFraction = 0
+                Task { [weak self] in
+                    for await value in progress { self?.migrationProgressFraction = value }
+                    self?.migrationProgressFraction = nil
+                }
             }
             try? await s.upsertDevice(id: deviceId, mac: nil, name: "WHOOP")
             return s

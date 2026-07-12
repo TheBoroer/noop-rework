@@ -4,6 +4,7 @@ import StrandDesign
 /// Root — the sidebar shell, with the first-run onboarding/pairing wizard overlaid until complete,
 /// and a "What's New" changelog sheet shown automatically after an update.
 struct ContentView: View {
+    @EnvironmentObject var repo: Repository
     @AppStorage("noop.onboarded") private var onboarded = false
     @AppStorage("noop.lastSeenChangelogVersion") private var lastSeenChangelog = ""
     @AppStorage("noop.acceptedTermsVersion") private var acceptedTerms = ""
@@ -33,6 +34,22 @@ struct ContentView: View {
                 })
                     .transition(.opacity)
                     .zIndex(2)
+            }
+            // Room cutover (Task 3): a one-time legacy-store migration, over everything, while it runs.
+            if let fraction = repo.migrationProgressFraction {
+                ZStack {
+                    Color.black.opacity(0.6).ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView(value: fraction)
+                        Text("Upgrading your local data store")
+                            .font(.footnote)
+                    }
+                    .padding(24)
+                    .frame(width: 220)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                }
+                .transition(.opacity)
+                .zIndex(3)
             }
         }
         // Calm easing cubic-bezier(0.22,1,0.36,1) at the README sheet-present duration (~0.42s) for

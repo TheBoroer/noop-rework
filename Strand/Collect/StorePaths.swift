@@ -50,6 +50,36 @@ enum StorePaths {
         return dbURL.path
     }
 
+    /// `<AppSupport>/OpenWhoop/noop.db`: the Room-backed store the Phase 2c-1 cutover writes once
+    /// `WhoopStore` migrates the legacy `whoop.sqlite` in place (same directory, same iOS
+    /// file-protection treatment, only the filename differs). `WhoopStore` itself derives this
+    /// sibling path internally from whatever legacy path it opens (it cannot import this app
+    /// target), so this accessor is for app-side code that needs to name the Room file directly
+    /// without opening the store (diagnostics, future backup handling).
+    static func roomDatabasePath() throws -> String {
+        let fm = FileManager.default
+        let appSupport = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
+                                    appropriateFor: nil, create: true)
+        let containerAppSupport = macOSProductionContainerAppSupport(defaultingTo: appSupport)
+        let base = containerAppSupport.appendingPathComponent("OpenWhoop", isDirectory: true)
+        try fm.createDirectory(at: base, withIntermediateDirectories: true)
+        let dbURL = base.appendingPathComponent("noop.db")
+
+        #if os(iOS)
+        // Same rationale and level as `defaultDatabasePath()` above (#222): readable after the
+        // first unlock-since-boot so background BLE collection can open it, still encrypted at rest.
+        let protection: [FileAttributeKey: Any] =
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+        try? fm.setAttributes(protection, ofItemAtPath: base.path)
+        for suffix in ["", "-wal", "-shm"] {
+            let p = dbURL.path + suffix
+            if fm.fileExists(atPath: p) { try? fm.setAttributes(protection, ofItemAtPath: p) }
+        }
+        #endif
+
+        return dbURL.path
+    }
+
     /// On signed/production macOS builds the app runs sandboxed, so the real
     /// on-disk location is inside `~/Library/Containers/<bundle-id>/Data`. We pin
     /// the store there explicitly so the path is stable regardless of whether the
