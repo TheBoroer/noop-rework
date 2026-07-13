@@ -620,6 +620,77 @@ interface WhoopDao : DeviceRegistryDao {
     }
 
     /**
+     * Upsert ONE marker row with id preservation, byte-identical to the Swift
+     * LabMarkerStore.upsertLabMarkers per-row SQL: `id` is named in the INSERT column list but
+     * NOT in the ON CONFLICT SET clause, so a re-import that lands on an existing natural key
+     * (deviceId, markerKey, takenAt, source) keeps the ORIGINAL row's id rather than adopting the
+     * caller's id, exactly like the sleep-edit and route-preserving upserts above.
+     *
+     * Deliberately separate from [insertLabMarkersRaw] (`OnConflictStrategy.REPLACE`), which is
+     * Android's own primitive and, being a REPLACE rather than an UPDATE, DOES adopt the new row's
+     * id on conflict. That divergence is fine for Android (nothing keys off a marker's id surviving a
+     * re-import there), but the iOS Room branch needs the GRDB-identical id-stable behaviour, so
+     * this method exists ONLY for that caller. The Swift caller loops over rows calling this once
+     * per marker, mirroring the GRDB per-row loop, and counts rows processed rather than reading
+     * this return value: Room requires a raw @Query INSERT to return Long (the affected rowid) or
+     * Unit, never Int, but every call here is guaranteed to touch exactly one row (insert or
+     * update, no DO NOTHING branch), matching what GRDB's accumulated `changesCount` would have
+     * summed to.
+     */
+    @Query(
+        "INSERT INTO labMarker " +
+            "(id, deviceId, markerKey, category, day, takenAt, value, valueText, unit, source, note, referenceText) " +
+            "VALUES (:id, :deviceId, :markerKey, :category, :day, :takenAt, :value, :valueText, :unit, :source, :note, :referenceText) " +
+            "ON CONFLICT(deviceId, markerKey, takenAt, source) DO UPDATE SET " +
+            "category = excluded.category, " +
+            "day = excluded.day, " +
+            "value = excluded.value, " +
+            "valueText = excluded.valueText, " +
+            "unit = excluded.unit, " +
+            "note = excluded.note, " +
+            "referenceText = excluded.referenceText"
+    )
+    suspend fun upsertLabMarkerPreservingId(
+        id: String,
+        deviceId: String,
+        markerKey: String,
+        category: String,
+        day: String,
+        takenAt: Long,
+        value: Double?,
+        valueText: String?,
+        unit: String,
+        source: String,
+        note: String?,
+        referenceText: String?,
+    ): Long
+
+    /**
+     * Upsert marker rows with id preservation ([upsertLabMarkerPreservingId]), then re-project each
+     * affected (markerKey, day) cell into `metricSeries` under [LAB_BOOK_SOURCE_ID], exactly like
+     * [upsertLabMarkers] but for the iOS Room branch. Returns the number of rows processed (Swift
+     * MetricsCache-style `written` count, matching the input row count since every row always
+     * touches exactly one, never a "0 rows changed" case). Atomic: the marker write and the
+     * projection can't diverge. Byte-identical to Swift WhoopStore.upsertLabMarkers.
+     */
+    @Transaction
+    suspend fun upsertLabMarkersPreservingId(rows: List<LabMarkerRow>): Int {
+        if (rows.isEmpty()) return 0
+        val cells = mutableSetOf<Triple<String, String, String>>()
+        for (row in rows) {
+            upsertLabMarkerPreservingId(
+                row.id, row.deviceId, row.markerKey, row.category, row.day, row.takenAt,
+                row.value, row.valueText, row.unit, row.source, row.note, row.referenceText,
+            )
+            cells.add(Triple(row.deviceId, row.markerKey, row.day))
+        }
+        for ((deviceId, markerKey, day) in cells) {
+            reprojectCell(deviceId, markerKey, day)
+        }
+        return rows.size
+    }
+
+    /**
      * Delete one reading by id; if it was the last numeric reading for its (markerKey, day) cell the
      * projected day is removed, otherwise the projection is recomputed from the remainder. Returns
      * true if a row was deleted. Byte-identical to Swift WhoopStore.deleteLabMarker.

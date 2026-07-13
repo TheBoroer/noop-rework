@@ -16,7 +16,8 @@ import okio.Path.Companion.toPath
  *   - [WhoopDao.sessionMotionsForStarts] / [WhoopDao.sessionSleepStatesInRange]: batched per-epoch
  *     analytics readers;
  *   - [WhoopDao.metricDayRange]: the `(earliest, latest)` day-range reader, null-unless-both-present;
- *   - [WhoopDao.upsertWorkoutPreservingRoute]: the routePolyline-preserving workout upsert.
+ *   - [WhoopDao.upsertWorkoutPreservingRoute]: the routePolyline-preserving workout upsert;
+ *   - [WhoopDao.upsertLabMarkersPreservingId]: the id-preserving Lab Book marker upsert.
  *
  * These need a real Room instance, so (exactly like [WhoopDaoStreamQueryTest]) the body is gated on
  * [canRunFullRestore]: the plain-JVM androidUnitTest target has no Context for Room's Android builder
@@ -219,6 +220,61 @@ class WhoopDaoMetricsSleepQueryTest {
             row = dao.workouts(dev, 100L, 100L, 1).single()
             assertEquals(250L, row.endTs, "non-route columns keep updating on conflict")
             assertEquals("abc123", row.routePolyline, "routePolyline must survive the route-preserving upsert")
+        } finally {
+            db.close()
+        }
+    }
+
+    /** [WhoopDao.upsertLabMarkersPreservingId] keeps the ORIGINAL row's id across a re-import that
+     *  lands on the same natural key (deviceId, markerKey, takenAt, source), diverging on purpose
+     *  from [WhoopDao.insertLabMarkersRaw]'s REPLACE semantics (which would adopt the new id).
+     *  Every other column still updates on conflict, and the metricSeries projection stays in sync. */
+    @Test
+    fun upsertLabMarkersPreservingIdKeepsOriginalIdAndReprojects() = runTest {
+        if (!canRunFullRestore) return@runTest
+        val db = freshDb("dao-labmarker-id.db")
+        try {
+            val dao = db.whoopDao()
+            val dev = "dev1"
+            val written1 = dao.upsertLabMarkersPreservingId(
+                listOf(
+                    LabMarkerRow(
+                        id = "id-1", deviceId = dev, markerKey = "ldl", category = "lipids",
+                        day = "2026-01-01", takenAt = 1_000L, value = 100.0, unit = "mg/dL", source = "manual",
+                    )
+                )
+            )
+            assertEquals(1, written1)
+            var row = dao.labMarkersByKey(dev, "ldl").single()
+            assertEquals("id-1", row.id)
+            assertEquals(100.0, row.value)
+            assertEquals(
+                100.0,
+                dao.metricSeries(WhoopDao.LAB_BOOK_SOURCE_ID, "ldl", "2026-01-01", "2026-01-01").single().value,
+                "the metricSeries projection under the Lab Book source reflects the initial value",
+            )
+
+            // Re-import the SAME natural key with a DIFFERENT id and updated value/category/note.
+            val written2 = dao.upsertLabMarkersPreservingId(
+                listOf(
+                    LabMarkerRow(
+                        id = "id-2", deviceId = dev, markerKey = "ldl", category = "lipids-updated",
+                        day = "2026-01-01", takenAt = 1_000L, value = 105.0, unit = "mg/dL", source = "manual",
+                        note = "retest",
+                    )
+                )
+            )
+            assertEquals(1, written2)
+            row = dao.labMarkersByKey(dev, "ldl").single()
+            assertEquals("id-1", row.id, "the original id must survive a re-upsert on the same natural key")
+            assertEquals(105.0, row.value, "non-id columns keep updating on conflict")
+            assertEquals("lipids-updated", row.category)
+            assertEquals("retest", row.note)
+            assertEquals(
+                105.0,
+                dao.metricSeries(WhoopDao.LAB_BOOK_SOURCE_ID, "ldl", "2026-01-01", "2026-01-01").single().value,
+                "the metricSeries projection reflects the updated value",
+            )
         } finally {
             db.close()
         }
