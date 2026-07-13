@@ -6,7 +6,9 @@ import androidx.room.ConstructedBy
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.RoomDatabaseConstructor
+import androidx.room.execSQL
 import androidx.room.migration.Migration
+import androidx.room.useWriterConnection
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 import kotlin.time.Clock
@@ -66,6 +68,21 @@ import kotlin.time.ExperimentalTime
 @ConstructedBy(WhoopDatabaseConstructor::class)
 abstract class WhoopDatabase : RoomDatabase() {
     abstract fun whoopDao(): WhoopDao
+
+    /**
+     * Fold the WAL back into the main database file (`PRAGMA wal_checkpoint(TRUNCATE)`) so a
+     * file-level backup of this database captures every committed page in the single file, with no
+     * `-wal`/`-shm` sidecar left to carry recent commits (Phase 2c-1 Task 7: the Apple export now
+     * zips the Room `noop.db`, so it must be checkpointed through the live Room connection first,
+     * exactly as the Android [DataBackup.exportTo] runs the same pragma before zipping). Run on the
+     * writer connection, OUTSIDE any transaction (`wal_checkpoint` must). Idempotent and safe to call
+     * on a database with no pending WAL frames.
+     */
+    suspend fun checkpointWal() {
+        useWriterConnection { transactor ->
+            transactor.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+        }
+    }
 
     companion object {
         const val DB_NAME = "noop_whoop.db"

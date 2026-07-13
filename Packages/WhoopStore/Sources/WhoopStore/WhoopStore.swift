@@ -168,17 +168,19 @@ public actor WhoopStore {
     private static func detectMigrateOpen(
         path: String, onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> OpenResult {
-        // Self-heal a foreign DB left in place by a bad cross-platform restore (#222): an Android
-        // (Room) backup that slipped past the import guard replaces our file with one that has our
-        // data tables but NO `grdb_migrations` bookkeeping. The migrator then thinks nothing is
-        // applied, re-runs v1, and crashes with `table "device" already exists` on every open (the
-        // store never bootstraps). Quarantine such a file BEFORE opening so we start fresh instead of
-        // looping forever. (A normal GRDB backup carries grdb_migrations and is left untouched.)
-        WhoopStore.quarantineIncompatibleDatabase(at: path)
-
+        // Self-heal a foreign DB left in place by a bad cross-platform restore (#222). Phase 2c-1
+        // Task 7 makes this path-aware to the flipped storage world: the legacy `whoop.sqlite` is
+        // native GRDB, the sibling `noop.db` is native Room. A file that holds data but lacks the
+        // marker its path expects (a GRDB file dropped where Room belongs, or any unknown schema)
+        // would strand the store on open, so quarantine it FIRST and start fresh. A valid GRDB store
+        // at the legacy path and a valid Room store at the Room path are both left untouched.
         let fm = FileManager.default
         let roomPath = WhoopStore.roomPath(forLegacyPath: path)
-        // Snapshot existence BEFORE anything below creates either file, so "fresh install" is never
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .grdb)
+        WhoopStore.quarantineIncompatibleDatabase(at: roomPath, expecting: .room)
+
+        // Snapshot existence AFTER the quarantine (a foreign Room-path file just moved aside must read
+        // as absent here) but BEFORE anything below creates either file, so "fresh install" is never
         // mistaken for "legacy-only" just because opening the GRDB pool below creates `path`.
         let legacyExistedBefore = fm.fileExists(atPath: path)
         let roomExistedBefore = fm.fileExists(atPath: roomPath)
@@ -382,26 +384,61 @@ public actor WhoopStore {
         try? fm.removeItem(atPath: migrationSentinelPath(forRoomPath: path))
     }
 
-    /// Move aside a database file that has our data tables but no GRDB migration bookkeeping — the
-    /// signature of a foreign (Android/Room) DB dropped over ours by a bad restore (#222). Opening it
-    /// would make the migrator re-run v1 and throw `table "device" already exists` forever. Moving it
-    /// to a `.incompatible-<ts>` sidecar lets the next open create a clean store. A valid GRDB DB
-    /// (has `grdb_migrations`) and a fresh/empty file are both left untouched. Best-effort + silent.
-    static func quarantineIncompatibleDatabase(at path: String) {
+    /// Which store a given path is EXPECTED to hold, so `quarantineIncompatibleDatabase` knows the
+    /// native bookkeeping marker to check for (Phase 2c-1 Task 7): the legacy `whoop.sqlite` path is
+    /// GRDB (`grdb_migrations`), the `noop.db` path is Room (`room_master_table`). A data-holding file
+    /// missing the marker its path expects is foreign and gets quarantined.
+    enum ExpectedSchema {
+        case grdb
+        case room
+
+        var nativeMarker: String {
+            switch self {
+            case .grdb: return "grdb_migrations"
+            case .room: return "room_master_table"
+            }
+        }
+    }
+
+    /// True when `names` holds real app data (any user-content table), vs an empty/fresh/housekeeping
+    /// -only file. Mirrors the shared `BackupRestore.holdsData` byte-for-byte so the quarantine gate,
+    /// the import origin gate, and Android all agree on "holds data".
+    static func holdsData(_ names: Set<String>) -> Bool {
+        let housekeeping: Set<String> = ["android_metadata", "sqlite_sequence", "room_master_table", "grdb_migrations"]
+        return names.contains { !housekeeping.contains($0) && !$0.hasPrefix("sqlite_") }
+    }
+
+    /// Move aside a database file at `path` that holds data but lacks the migration bookkeeping its
+    /// path expects — the signature of a foreign DB dropped over ours by a bad restore (#222).
+    ///
+    /// Phase 2c-1 Task 7 makes this path-aware to pin the flipped matrix: the legacy `whoop.sqlite`
+    /// path is native GRDB (`expecting: .grdb`), the `noop.db` path is native Room (`expecting: .room`).
+    /// So a valid GRDB store at the legacy path and a valid Room store at the Room path are both left
+    /// untouched, while a GRDB file dropped at the Room path (`room_master_table` absent) — or any
+    /// unknown schema that still holds data at either path — is quarantined. Opening a foreign file
+    /// unquarantined would strand the store (the GRDB migrator re-runs v1 → `table "device" already
+    /// exists`, or Room meets a schema it never created). Moving it to a `.incompatible-<ts>` sidecar
+    /// lets the next open create a clean store. A fresh/empty file is always left untouched.
+    /// Best-effort + silent.
+    static func quarantineIncompatibleDatabase(at path: String, expecting expected: ExpectedSchema) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: path) else { return }
         let names: Set<String>
         do {
-            // Read-only probe of sqlite_master; a raw queue does NOT run migrations.
-            let probe = try DatabaseQueue(path: path)
+            // Read-ONLY probe of sqlite_master (a raw queue does NOT run migrations): a read-only open
+            // never creates -wal/-shm siblings or flips the journal mode, so probing a valid Room file
+            // here can't disturb it. If the probe can't open (locked, or a WAL file with no readable
+            // -shm), bail and let the real open + migrator deal with it.
+            var config = Configuration()
+            config.readonly = true
+            let probe = try DatabaseQueue(path: path, configuration: config)
             names = try probe.read { db in
                 try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
             }
         } catch {
             return // unreadable/locked → let the real open + migrator deal with it
         }
-        let isForeign = !names.contains("grdb_migrations")
-            && (names.contains("device") || names.contains("hrSample"))
+        let isForeign = !names.contains(expected.nativeMarker) && WhoopStore.holdsData(names)
         guard isForeign else { return }
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
         let quarantine = "\(path).incompatible-\(stamp)"
@@ -409,6 +446,62 @@ public actor WhoopStore {
         do { try fm.moveItem(atPath: path, toPath: quarantine) } catch { return }
         // Drop the now-orphaned WAL/SHM sidecars so the fresh DB starts clean.
         for suffix in ["-wal", "-shm"] { try? fm.removeItem(atPath: path + suffix) }
+    }
+
+    // MARK: - Backup import support (Phase 2c-1 Task 7)
+    // The app's `DataBackup` (in the Strand target) cannot import the Shared framework — only this
+    // package links it — so the two backup-import steps that need Kotlin live here as thin statics:
+    // (a) running the ETL to convert a legacy GRDB `.noopbak` into a Room `noop.db`, and (b) writing
+    // the completion sentinel that lets `detectMigrateOpen` open an imported/migrated Room file as-is
+    // on the next launch instead of deleting it as a partial ETL.
+
+    /// Thrown by `migrateLegacyGrdbArchive` when the ETL over a legacy GRDB backup fails; carries the
+    /// failing table + message so `DataBackup` can surface an honest import-failure string.
+    public struct LegacyBackupMigrationError: Error, CustomStringConvertible {
+        public let table: String
+        public let message: String
+        public var description: String { "\(table): \(message)" }
+    }
+
+    /// Convert a STAGED legacy GRDB backup database (a pre-2c-1 Apple `.noopbak`, already extracted +
+    /// integrity-checked by the caller) into a fresh Room `noop.db`, returning the path of that Room
+    /// file for the caller to swap onto the live `noop.db`. Runs the same `GrdbMigrator` ETL the
+    /// one-time in-place cutover uses (so a legacy backup restores by the identical, tested path);
+    /// the produced Room file carries `room_master_table` and is therefore a native, forward-restorable
+    /// backup. Writes into a fresh unique temp directory (its `-wal`/`-shm` are contained there); the
+    /// caller owns removing the returned file once the swap lands. Throws on ETL failure, leaving
+    /// nothing behind.
+    public static func migrateLegacyGrdbArchive(atPath grdbPath: String) throws -> String {
+        let fm = FileManager.default
+        let workDir = fm.temporaryDirectory
+            .appendingPathComponent("noop-legacy-import-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let roomPath = workDir.appendingPathComponent("noop.db").path
+
+        #if targetEnvironment(simulator) && arch(x86_64)
+        _ = (grdbPath, roomPath)
+        throw RoomBackendUnavailableError()
+        #else
+        let result = GrdbMigrator.shared.migrate(legacyPath: grdbPath, roomPath: roomPath) { _ in }
+        switch onEnum(of: result) {
+        case .done:
+            return roomPath
+        case .failed(let failure):
+            try? fm.removeItem(at: workDir)
+            throw LegacyBackupMigrationError(table: failure.table, message: failure.message)
+        }
+        #endif
+    }
+
+    /// Write the completion sentinel beside an imported (Room-origin swap) or freshly-migrated
+    /// (GRDB-origin ETL) `noop.db`, so the next launch's `detectMigrateOpen` opens it AS-IS instead of
+    /// mistaking a sentinel-less Room file for a crashed partial ETL and deleting it. Its PRESENCE is
+    /// the whole contract (content is informational-only, matching the ETL/fresh-install sentinels);
+    /// this records that an import placed the file and when. Best-effort + silent.
+    public static func markRoomDatabaseImported(roomPath: String) {
+        let content = "imported=\(Int(Date().timeIntervalSince1970))\n"
+        try? content.write(toFile: migrationSentinelPath(forRoomPath: roomPath),
+                           atomically: true, encoding: .utf8)
     }
 
     /// An in-memory store (migrations applied). For tests. Always `.legacyGrdb`: there is no file
@@ -446,12 +539,23 @@ public actor WhoopStore {
 
     // MARK: - Maintenance
 
-    /// Fully checkpoint the WAL into the main database file and truncate the -wal file.
-    /// Used before a file-level backup so the single `whoop.sqlite` carries all committed data
-    /// (the -wal/-shm siblings can then be ignored). Runs outside a transaction — `wal_checkpoint`
+    /// Fully checkpoint the WAL into the main database file and truncate the -wal file, so the single
+    /// file carries all committed data (the -wal/-shm siblings can then be ignored). Used before a
+    /// file-level backup. Backend-aware (Phase 2c-1 Task 7): a Room-backed store checkpoints the live
+    /// Room `noop.db` (which is what the export now zips) through its own writer connection; a legacy
+    /// GRDB store checkpoints the GRDB pool as before. Runs outside a transaction — `wal_checkpoint`
     /// must. Best-effort: throws on a hard SQLite error so callers can fall back to a plain copy.
     public func checkpointWAL() async throws {
-        try checkpointWALImpl()
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            try await room.checkpointWal()
+            #endif
+        case .legacyGrdb:
+            try checkpointWALImpl()
+        }
     }
 
     /// Non-async so GRDB's synchronous `writeWithoutTransaction` overload is chosen (mirrors the

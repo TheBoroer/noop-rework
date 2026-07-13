@@ -5,9 +5,13 @@ import SQLite3
 /// Real file-I/O tests for the Backup & Sync restore path - not string logic (must-fix #5).
 ///
 /// These exercise the SAME hardened core the picker import uses, via the injectable
-/// `DataBackup.restore(from:toDatabaseAt:)` seam (a throwaway DB path, never the user's live store):
-///  - a `.noopbak` ZIP backup round-trips: `writeBackupForTesting` then `restore` returns the same rows;
-///  - a foreign-but-valid SQLite (Room / no `grdb_migrations`) is REJECTED and the live DB is intact;
+/// `DataBackup.restore(from:toDatabaseAt:)` seam (a throwaway DB path, never the user's live store).
+/// Phase 2c-1 Task 7 flipped the store to Room `noop.db`, so:
+///  - a Room-origin `.noopbak` ZIP round-trips NATIVELY: `writeBackupForTesting` then `restore` returns
+///    the same rows (the legacy GRDB → ETL import path is proven in the shared package tests +
+///    `AppleRoomBackupCrossPlatformTest`, since its ETL needs the full Room framework);
+///  - a foreign-but-valid SQLite (some other app's DB, neither migrator's bookkeeping) is REJECTED and
+///    the live DB is intact;
 ///  - a corrupt (non-SQLite) file is REJECTED and the live DB is intact;
 ///  - a folder prune actually deletes the oldest files past keep-N (pure selection, applied to real files).
 final class BackupSyncRoundTripTests: XCTestCase {
@@ -39,7 +43,8 @@ final class BackupSyncRoundTripTests: XCTestCase {
     // MARK: - Round trip: backupNow → restore returns the same rows
 
     func testBackupThenRestoreReturnsTheSameRows() throws {
-        // A valid GRDB-origin source DB (carries `grdb_migrations`) with one data table + known rows.
+        // A valid Room-origin source DB (carries `room_master_table`, this app's native format) with one
+        // data table + known rows: import swaps it straight in, no ETL.
         let sourceDB = tmp.appendingPathComponent("source.sqlite")
         try makeNoopDatabase(at: sourceDB, deviceRows: ["my-whoop", "watch"])
 
@@ -114,8 +119,9 @@ final class BackupSyncRoundTripTests: XCTestCase {
     }
 
     func testSettingsAreNotAppliedWhenTheRestoreIsRejected() throws {
-        // A foreign (Room) DB zipped together WITH a settings payload: the origin gate refuses the
-        // restore, so the settings must not leak through either ("apply AFTER the DB swap succeeds").
+        // A foreign (unknown-schema, some other app's) DB zipped together WITH a settings payload: the
+        // origin gate refuses the restore, so the settings must not leak through either ("apply AFTER
+        // the DB swap succeeds").
         let foreign = tmp.appendingPathComponent("foreign.sqlite")
         try makeForeignDatabase(at: foreign)
         let backup = tmp.appendingPathComponent("foreign.noopbak")
@@ -138,8 +144,8 @@ final class BackupSyncRoundTripTests: XCTestCase {
     // MARK: - Foreign SQLite is rejected, live DB untouched
 
     func testForeignSqliteIsRejectedAndLiveDbIntact() throws {
-        // A Room/Android-flavoured DB: valid SQLite, but no `grdb_migrations`. It DOES hold a `device`
-        // table, so the origin gate must refuse it (would otherwise strand the GRDB migrator).
+        // Some other app's DB: valid SQLite that holds data but carries neither migrator's bookkeeping,
+        // so the origin gate must refuse it (restoring it would strand the store).
         let foreign = tmp.appendingPathComponent("foreign.sqlite")
         try makeForeignDatabase(at: foreign)
 
@@ -268,16 +274,17 @@ final class BackupSyncRoundTripTests: XCTestCase {
 
     // MARK: - SQLite fixtures (system SQLite3)
 
-    /// Build a minimal valid GRDB-origin NOOP DB: a `grdb_migrations` bookkeeping table (so the origin
-    /// gate accepts it as this app's backup) plus a `device` table holding the given identifiers.
+    /// Build a minimal valid Room-origin NOOP DB (this app's native format after the Task 7 flip): a
+    /// `room_master_table` bookkeeping table (so the origin gate accepts it natively and swaps it
+    /// straight in, no ETL) plus a `device` table holding the given identifiers.
     private func makeNoopDatabase(at url: URL, deviceRows: [String]) throws {
         var db: OpaquePointer?
         guard sqlite3_open(url.path, &db) == SQLITE_OK else {
             throw TestError("open failed: \(url.path)")
         }
         defer { sqlite3_close(db) }
-        try exec(db, "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
-        try exec(db, "INSERT INTO grdb_migrations (identifier) VALUES ('v1')")
+        try exec(db, "CREATE TABLE room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)")
+        try exec(db, "INSERT INTO room_master_table (id, identity_hash) VALUES (42, '0df28b445fbde09ef5d4b64485b99b1f')")
         try exec(db, "CREATE TABLE device (id TEXT NOT NULL PRIMARY KEY)")
         for id in deviceRows {
             try exec(db, "INSERT INTO device (id) VALUES ('\(id)')")
@@ -301,17 +308,17 @@ final class BackupSyncRoundTripTests: XCTestCase {
         }
     }
 
-    /// Build a valid SQLite file that is NOT a NOOP/GRDB backup: it carries the Room marker and a
-    /// `device` table but no `grdb_migrations`, so the origin gate must reject it.
+    /// Build a valid SQLite file that is NOT a NOOP backup from EITHER platform: it holds data but
+    /// carries neither `room_master_table` (Room/native) nor `grdb_migrations` (legacy GRDB), so the
+    /// origin gate must reject it as some other app's database (restoring it would strand the store).
     private func makeForeignDatabase(at url: URL) throws {
         var db: OpaquePointer?
         guard sqlite3_open(url.path, &db) == SQLITE_OK else {
             throw TestError("open failed: \(url.path)")
         }
         defer { sqlite3_close(db) }
-        try exec(db, "CREATE TABLE room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)")
-        try exec(db, "CREATE TABLE device (id TEXT NOT NULL PRIMARY KEY)")
-        try exec(db, "INSERT INTO device (id) VALUES ('android-strap')")
+        try exec(db, "CREATE TABLE foo (id INTEGER PRIMARY KEY, note TEXT)")
+        try exec(db, "INSERT INTO foo (id, note) VALUES (1, 'some other app')")
     }
 
     private func deviceRows(in url: URL) throws -> [String] {

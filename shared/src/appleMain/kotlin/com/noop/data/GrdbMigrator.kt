@@ -217,6 +217,13 @@ object GrdbMigrator {
                                 )
                             }
                         }
+                        // Fold the WAL back into the main db file (outside any transaction) so the
+                        // finished Room database is a single whole file the moment this returns. The
+                        // one-time in-place cutover reopens it fresh anyway, but the Phase 2c-1 Task 7
+                        // backup import copies ONLY this main file when it swaps a migrated legacy backup
+                        // onto the live store, so any committed rows still sitting in a -wal would be
+                        // silently lost. DATA SAFETY IS ABSOLUTE: checkpoint before the close below.
+                        transactor.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
                         Result.Done(counts)
                     }
                 }
