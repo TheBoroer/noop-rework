@@ -5,7 +5,7 @@ import GRDB
 final class MetricsCacheTests: XCTestCase {
 
     func testV4CreatesDerivedTables() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("sleepSession"))
         XCTAssertTrue(tables.contains("dailyMetric"))
@@ -22,7 +22,7 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - sleep sessions
 
     func testSleepSessionUpsertReadAndIdempotency() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let s = CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.92,
                                    restingHr: 52, avgHrv: 65.5,
                                    stagesJSON: "[{\"start\":1000,\"end\":2000,\"stage\":\"deep\"}]")
@@ -44,7 +44,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testSleepSessionRangeFilter() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions([
             CachedSleepSession(startTs: 100, endTs: 200, efficiency: nil, restingHr: nil, avgHrv: nil, stagesJSON: nil),
             CachedSleepSession(startTs: 500, endTs: 600, efficiency: nil, restingHr: nil, avgHrv: nil, stagesJSON: nil),
@@ -56,13 +56,13 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - v13 user-edited sleep bounds (#367 parity: edits survive re-sync)
 
     func testV13UserEditedColumnPresent() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.columnNamesForTest(table: "sleepSession")
         XCTAssertTrue(cols.contains("userEdited"), "sleepSession missing v13 userEdited column")
     }
 
     func testUserEditedDefaultsFalseAndRoundTrips() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // A recompute/import session never sets the flag → defaults false.
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.9,
@@ -74,7 +74,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testSetSleepWakeTimeUpdatesEndTsAndMarksEdited() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.9,
                                 restingHr: 52, avgHrv: 60, stagesJSON: nil)],
@@ -90,13 +90,13 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testSetSleepWakeTimeNoopWhenSessionMissing() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let changed = try await store.applySleepEdit(deviceId: "devA", detectedStartTs: 9999, newStartTs: 9999, newEndTs: 4200)
         XCTAssertEqual(changed, 0, "no matching session → no rows changed")
     }
 
     func testSetSleepWakeTimeReplacesStagesWhenProvidedAndKeepsThemWhenNil() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.9,
                                 restingHr: 52, avgHrv: 60, stagesJSON: "[\"old\"]")],
@@ -118,7 +118,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testApplySleepEditStoresAdjustedOnsetAndSurvivesRecompute() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.9,
                                 restingHr: 52, avgHrv: 60, stagesJSON: "[\"orig\"]")],
@@ -153,7 +153,7 @@ final class MetricsCacheTests: XCTestCase {
     /// uses to swap a night's fabricated `SleepWindowReclip` tail (produced when it was edited before its
     /// raw streams synced) for the real re-derived stages once the raw lands.
     func testUpdateSleepStagesReplacesStagesOnlyAndPreservesBounds() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.9,
                                 restingHr: 52, avgHrv: 60, stagesJSON: "[\"detected\"]")],
@@ -180,7 +180,7 @@ final class MetricsCacheTests: XCTestCase {
     /// every recompute — touching them is out of scope and would risk clobbering a good import). Scoped to
     /// `userEdited = 1`, so an un-edited row is a no-op.
     func testUpdateSleepStagesIsNoopOnUneditedRow() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.9,
                                 restingHr: 52, avgHrv: 60, stagesJSON: "[\"orig\"]")],
@@ -198,7 +198,7 @@ final class MetricsCacheTests: XCTestCase {
     /// `userEdited == false`) must NOT revert the corrected `endTs` or clear the flag — but it MAY still
     /// refresh the derived vitals (efficiency / restingHr / avgHrv).
     func testRecomputeUpsertPreservesUserEditedBounds() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // Strap-detected session, then the user corrects the wake time 800s earlier.
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.90,
@@ -225,7 +225,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testRecomputeUpsertStillOverwritesUnEditedSession() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 5000, efficiency: 0.90,
                                 restingHr: 52, avgHrv: 60, stagesJSON: "[\"orig\"]")],
@@ -247,7 +247,7 @@ final class MetricsCacheTests: XCTestCase {
     /// A manually-added nap lands as its OWN row, flagged user-edited so the recompute guard protects it,
     /// with a nil `startTsAdjusted` (its onset IS the chosen onset).
     func testInsertManualNapCreatesOwnEditedSession() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let n = try await store.insertManualSleepSession(
             deviceId: "devA", startTs: 50_000, endTs: 51_800, efficiency: 0.8,
             stagesJSON: "[{\"start\":50000,\"end\":51800,\"stage\":\"light\"}]")
@@ -264,7 +264,7 @@ final class MetricsCacheTests: XCTestCase {
     /// Adding a nap leaves the night's main sleep untouched — they are two distinct rows (the nap is
     /// NEVER folded into main sleep, which is the #508 bug).
     func testInsertManualNapDoesNotAlterMainSleep() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // The night's main sleep, 23:00→07:00-ish.
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 1000, endTs: 30_000, efficiency: 0.91,
@@ -289,7 +289,7 @@ final class MetricsCacheTests: XCTestCase {
     /// `insertManualSleepSession` is purely additive: a conflicting onset is a no-op, so it can never
     /// clobber an existing detected/edited session that happens to share that exact onset second.
     func testInsertManualNapIsNoopOnConflictingOnset() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 9000, endTs: 12_000, efficiency: 0.9,
                                 restingHr: 50, avgHrv: 60, stagesJSON: "[\"detected\"]")],
@@ -306,7 +306,7 @@ final class MetricsCacheTests: XCTestCase {
     /// An edited nap re-stages + STICKS across a recompute with NO duplicate — the exact #318/#395
     /// durability the main-sleep edit has, here on a nap-shaped (daytime) session. Proves item (1) of #508.
     func testEditedNapStagesAndSurvivesRecomputeNoDuplicate() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // A detected daytime nap 13:30→14:00-ish.
         try await store.upsertSleepSessions(
             [CachedSleepSession(startTs: 48_600, endTs: 50_400, efficiency: 0.6,
@@ -334,7 +334,7 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - daily metrics
 
     func testDailyMetricUpsertReadAndIdempotency() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let d = DailyMetric(day: "2026-05-23", totalSleepMin: 420.0, efficiency: 0.9,
                             deepMin: 90, remMin: 110, lightMin: 220, disturbances: 3,
                             restingHr: 53, avgHrv: 60.0, recovery: 0.66, strain: 12.3, exerciseCount: 1)
@@ -355,7 +355,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testDailyMetricDayRangeFilter() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDailyMetrics([
             DailyMetric(day: "2026-05-01", totalSleepMin: nil, efficiency: nil, deepMin: nil, remMin: nil, lightMin: nil, disturbances: nil, restingHr: nil, avgHrv: nil, recovery: nil, strain: nil, exerciseCount: nil),
             DailyMetric(day: "2026-05-20", totalSleepMin: nil, efficiency: nil, deepMin: nil, remMin: nil, lightMin: nil, disturbances: nil, restingHr: nil, avgHrv: nil, recovery: nil, strain: nil, exerciseCount: nil),
@@ -367,7 +367,7 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - windowed computed-daily delete (#277 local-day re-bucketing migration)
 
     func testDeleteDailyMetricsInRangeKeepsImportedAndOutOfRange() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let bare: (String) -> DailyMetric = { day in
             DailyMetric(day: day, totalSleepMin: nil, efficiency: nil, deepMin: nil, remMin: nil,
                         lightMin: nil, disturbances: nil, restingHr: nil, avgHrv: nil,
@@ -397,7 +397,7 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - v7 in-sleep signal columns (spo2Pct / skinTempDevC / respRateBpm)
 
     func testV7ColumnsRoundTrip() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let d = DailyMetric(day: "2026-05-26", totalSleepMin: 420, efficiency: 0.91,
                             deepMin: 90, remMin: 110, lightMin: 220, disturbances: 2,
                             restingHr: 52, avgHrv: 63.0, recovery: 0.70, strain: 11.5,
@@ -413,7 +413,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testV7ColumnsNilWhenAbsent() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // Omit the three new params — they default to nil.
         let d = DailyMetric(day: "2026-05-25", totalSleepMin: nil, efficiency: nil,
                             deepMin: nil, remMin: nil, lightMin: nil, disturbances: nil,
@@ -428,7 +428,7 @@ final class MetricsCacheTests: XCTestCase {
     }
 
     func testV7UpsertUpdatesNewColumns() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // Insert with nil new columns.
         let d1 = DailyMetric(day: "2026-05-24", totalSleepMin: 400, efficiency: 0.88,
                              deepMin: 80, remMin: 100, lightMin: 220, disturbances: 3,
@@ -453,14 +453,14 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - v11 daily-activity columns (steps / activeKcalEst)
 
     func testV11ColumnsPresent() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.columnNamesForTest(table: "dailyMetric")
         XCTAssertTrue(cols.contains("steps"), "dailyMetric missing v11 steps column")
         XCTAssertTrue(cols.contains("activeKcalEst"), "dailyMetric missing v11 activeKcalEst column")
     }
 
     func testV11ColumnsRoundTrip() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let d = DailyMetric(day: "2026-05-27", totalSleepMin: 410, efficiency: 0.9,
                             deepMin: 85, remMin: 105, lightMin: 220, disturbances: 2,
                             restingHr: 51, avgHrv: 64.0, recovery: 0.72, strain: 10.9,
@@ -488,7 +488,7 @@ final class MetricsCacheTests: XCTestCase {
     // MARK: - read highwater cursor (distinct prefix from upload highwater)
 
     func testReadHighwaterRoundTripsUnderDistinctPrefix() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let before = try await store.readHighwater("hr")
         XCTAssertNil(before)
         try await store.setReadHighwater("hr", 1_716_400_000)
