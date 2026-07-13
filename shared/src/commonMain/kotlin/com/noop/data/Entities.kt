@@ -325,6 +325,24 @@ data class SleepSession(
     }
 }
 
+/** One session's persisted per-epoch motion series, keyed by its detected [startTs]. Query result
+ *  of [WhoopDao.sessionMotionsForStarts], not a table. A start with no banked motion is simply
+ *  absent from the result list (never a fabricated row). Mirrors the Swift
+ *  `MetricsCache.sessionMotions` batched reader. */
+data class SessionMotionRow(
+    val startTs: Long,
+    val motionJSON: String,
+)
+
+/** One session's persisted per-epoch band sleep_state series, keyed by its detected [startTs].
+ *  Query result of [WhoopDao.sessionSleepStatesInRange], not a table. A start with no banked
+ *  sleep_state is simply absent from the result list (never a fabricated row). Mirrors the Swift
+ *  `MetricsCache.sessionSleepStates` batched range reader. */
+data class SessionSleepStateRow(
+    val startTs: Long,
+    val sleepStateJSON: String,
+)
+
 /**
  * Generic long-format metric store. Swift `metricSeries` (v9).
  * Natural key (deviceId, day, key); `value` is always a REAL. The secondary index
@@ -340,6 +358,15 @@ data class MetricSeriesRow(
     val day: String,
     @ColumnInfo(name = "key") val key: String,
     val value: Double,
+)
+
+/** The earliest/latest `day` on file for one (deviceId, key) series, or both null when the series
+ *  has no rows at all (SQLite MIN/MAX over an empty set is NULL, and Swift's `metricDays` treats
+ *  that as "no range" rather than a partial one). Query result of [WhoopDao.metricDayRange], not
+ *  a table. Mirrors the Swift `MetricSeriesStore.metricDays` `(earliest, latest)?` reader. */
+data class MetricDayRange(
+    val earliest: String?,
+    val latest: String?,
 )
 
 /**
