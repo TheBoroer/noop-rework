@@ -11,7 +11,7 @@ final class LiveSessionStoreTests: XCTestCase {
     }
 
     func test_start_then_end_upserts_same_row() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         _ = try await store.upsertLiveSession(started(1000), deviceId: "my-whoop")
 
         // End the session: same natural key, filled totals → an UPDATE, not a second row.
@@ -28,7 +28,7 @@ final class LiveSessionStoreTests: XCTestCase {
     }
 
     func test_recent_is_newest_first_and_device_scoped() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         _ = try await store.upsertLiveSession(started(1000), deviceId: "my-whoop")
         _ = try await store.upsertLiveSession(started(5000), deviceId: "my-whoop")
         _ = try await store.upsertLiveSession(started(9000), deviceId: "other")
@@ -38,7 +38,7 @@ final class LiveSessionStoreTests: XCTestCase {
     }
 
     func test_charge_may_be_unknown() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let noCharge = LiveSessionRow(startTs: 2000, endTs: nil, chargeAtStart: nil, floorBpm: 120,
                                       ceilingBpm: 150, inBandSec: 0, belowSec: 0, aboveSec: 0,
                                       pushCount: 0, easeCount: 0, hrSource: "strap")
