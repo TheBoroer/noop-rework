@@ -19,12 +19,13 @@ let package = Package(
             dependencies: [
                 "WhoopProtocol",
                 "OuraProtocol",
+                .product(name: "Shared", package: "WhoopProtocol"),
                 .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
         .testTarget(
             name: "WhoopStoreTests",
-            dependencies: ["WhoopStore", "WhoopProtocol", "OuraProtocol"]
+            dependencies: ["WhoopStore", "WhoopProtocol", "OuraProtocol", .product(name: "Shared", package: "WhoopProtocol")]
         ),
     ]
 )

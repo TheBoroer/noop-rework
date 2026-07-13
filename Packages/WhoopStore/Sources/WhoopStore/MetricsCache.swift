@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Shared
 
 // MARK: - Offline cache of SERVER-computed metrics (Task 3.1 → M0.4)
 // This file is purely a local cache of values computed by the server — the phone does NO metric
@@ -106,31 +107,60 @@ extension WhoopStore {
     /// Upsert cached sleep sessions. Natural key (deviceId, startTs). Returns rows changed.
     @discardableResult
     public func upsertSleepSessions(_ sessions: [CachedSleepSession], deviceId: String) async throws -> Int {
-        try syncWrite { db in
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // Byte-for-byte with the GRDB CASE-WHEN upsert below: Kotlin's
+            // upsertSleepSessionPreservingEdit runs the IDENTICAL ON CONFLICT DO UPDATE SQL
+            // (endTs/stagesJSON/startTsAdjusted preserved when the existing row is userEdited,
+            // userEdited itself never cleared here; the dedicated edit path is applySleepEdit).
+            // Every call touches exactly one row (insert or update, no DO NOTHING branch), so
+            // count iterations rather than trust the returned rowid, matching the
+            // upsertWorkoutPreservingRoute convention.
+            let dao = roomDb.whoopDao()
             var n = 0
             for s in sessions {
-                try db.execute(sql: """
-                    INSERT INTO sleepSession
-                        (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
-                         userEdited, startTsAdjusted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(deviceId, startTs) DO UPDATE SET
-                        -- A user-corrected night keeps its hand-set bed/wake times and stage breakdown;
-                        -- a recompute/import refresh (this path) updates only the derived vitals. The
-                        -- `userEdited` flag is preserved, never cleared here, so a later strap re-sync
-                        -- can't revert a correction (the dedicated edit path is `applySleepEdit`).
-                        endTs = CASE WHEN sleepSession.userEdited THEN sleepSession.endTs ELSE excluded.endTs END,
-                        efficiency = excluded.efficiency,
-                        restingHr = excluded.restingHr,
-                        avgHrv = excluded.avgHrv,
-                        stagesJSON = CASE WHEN sleepSession.userEdited THEN sleepSession.stagesJSON ELSE excluded.stagesJSON END,
-                        startTsAdjusted = CASE WHEN sleepSession.userEdited THEN sleepSession.startTsAdjusted ELSE excluded.startTsAdjusted END,
-                        userEdited = sleepSession.userEdited
-                    """, arguments: [deviceId, s.startTs, s.endTs, s.efficiency,
-                                     s.restingHr, s.avgHrv, s.stagesJSON, s.userEdited, s.startTsAdjusted])
-                n += db.changesCount
+                _ = try await dao.upsertSleepSessionPreservingEdit(
+                    deviceId: deviceId, startTs: Int64(s.startTs), endTs: Int64(s.endTs),
+                    efficiency: s.efficiency.map { KotlinDouble(double: $0) },
+                    restingHr: s.restingHr.map { KotlinInt(int: Int32($0)) },
+                    avgHrv: s.avgHrv.map { KotlinDouble(double: $0) },
+                    stagesJSON: s.stagesJSON,
+                    userEdited: s.userEdited,
+                    startTsAdjusted: s.startTsAdjusted.map { KotlinLong(longLong: Int64($0)) })
+                n += 1
             }
             return n
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                var n = 0
+                for s in sessions {
+                    try db.execute(sql: """
+                        INSERT INTO sleepSession
+                            (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
+                             userEdited, startTsAdjusted)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(deviceId, startTs) DO UPDATE SET
+                            -- A user-corrected night keeps its hand-set bed/wake times and stage breakdown;
+                            -- a recompute/import refresh (this path) updates only the derived vitals. The
+                            -- `userEdited` flag is preserved, never cleared here, so a later strap re-sync
+                            -- can't revert a correction (the dedicated edit path is `applySleepEdit`).
+                            endTs = CASE WHEN sleepSession.userEdited THEN sleepSession.endTs ELSE excluded.endTs END,
+                            efficiency = excluded.efficiency,
+                            restingHr = excluded.restingHr,
+                            avgHrv = excluded.avgHrv,
+                            stagesJSON = CASE WHEN sleepSession.userEdited THEN sleepSession.stagesJSON ELSE excluded.stagesJSON END,
+                            startTsAdjusted = CASE WHEN sleepSession.userEdited THEN sleepSession.startTsAdjusted ELSE excluded.startTsAdjusted END,
+                            userEdited = sleepSession.userEdited
+                        """, arguments: [deviceId, s.startTs, s.endTs, s.efficiency,
+                                         s.restingHr, s.avgHrv, s.stagesJSON, s.userEdited, s.startTsAdjusted])
+                    n += db.changesCount
+                }
+                return n
+            }
         }
     }
 
@@ -145,13 +175,24 @@ extension WhoopStore {
     @discardableResult
     public func applySleepEdit(deviceId: String, detectedStartTs: Int, newStartTs: Int, newEndTs: Int,
                                stagesJSON: String? = nil) async throws -> Int {
-        try syncWrite { db in
-            try db.execute(sql: """
-                UPDATE sleepSession
-                SET startTsAdjusted = ?, endTs = ?, stagesJSON = COALESCE(?, stagesJSON), userEdited = 1
-                WHERE deviceId = ? AND startTs = ?
-                """, arguments: [newStartTs, newEndTs, stagesJSON, deviceId, detectedStartTs])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().applySleepEdit(
+                deviceId: deviceId, detectedStartTs: Int64(detectedStartTs),
+                newStartTs: Int64(newStartTs), newEndTs: Int64(newEndTs), stagesJSON: stagesJSON))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    UPDATE sleepSession
+                    SET startTsAdjusted = ?, endTs = ?, stagesJSON = COALESCE(?, stagesJSON), userEdited = 1
+                    WHERE deviceId = ? AND startTs = ?
+                    """, arguments: [newStartTs, newEndTs, stagesJSON, deviceId, detectedStartTs])
+                return db.changesCount
+            }
         }
     }
 
@@ -164,10 +205,20 @@ extension WhoopStore {
     /// store call only removes the row.
     @discardableResult
     public func deleteSleepSession(deviceId: String, startTs: Int) async throws -> Int {
-        try syncWrite { db in
-            try db.execute(sql: "DELETE FROM sleepSession WHERE deviceId = ? AND startTs = ?",
-                           arguments: [deviceId, startTs])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().deleteSleepSession(
+                deviceId: deviceId, startTs: Int64(startTs)))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: "DELETE FROM sleepSession WHERE deviceId = ? AND startTs = ?",
+                               arguments: [deviceId, startTs])
+                return db.changesCount
+            }
         }
     }
 
@@ -186,15 +237,31 @@ extension WhoopStore {
     @discardableResult
     public func insertManualSleepSession(deviceId: String, startTs: Int, endTs: Int,
                                          efficiency: Double?, stagesJSON: String?) async throws -> Int {
-        try syncWrite { db in
-            try db.execute(sql: """
-                INSERT INTO sleepSession
-                    (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
-                     userEdited, startTsAdjusted)
-                VALUES (?, ?, ?, ?, NULL, NULL, ?, 1, NULL)
-                ON CONFLICT(deviceId, startTs) DO NOTHING
-                """, arguments: [deviceId, startTs, endTs, efficiency, stagesJSON])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // insertSleepSession is @Insert(onConflict = IGNORE): rowid -1 means an existing row at
+            // this natural key blocked the insert, matching GRDB's ON CONFLICT DO NOTHING above.
+            let rowid = try await roomDb.whoopDao().insertSleepSession(row: Shared.SleepSession(
+                deviceId: deviceId, startTs: Int64(startTs), endTs: Int64(endTs),
+                efficiency: efficiency.map { KotlinDouble(double: $0) },
+                restingHr: nil, avgHrv: nil, stagesJSON: stagesJSON,
+                userEdited: true, startTsAdjusted: nil, motionJSON: nil, sleepStateJSON: nil))
+            return rowid.int64Value == -1 ? 0 : 1
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    INSERT INTO sleepSession
+                        (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
+                         userEdited, startTsAdjusted)
+                    VALUES (?, ?, ?, ?, NULL, NULL, ?, 1, NULL)
+                    ON CONFLICT(deviceId, startTs) DO NOTHING
+                    """, arguments: [deviceId, startTs, endTs, efficiency, stagesJSON])
+                return db.changesCount
+            }
         }
     }
 
@@ -208,13 +275,23 @@ extension WhoopStore {
     /// Returns rows changed (0 when no such edited session exists).
     @discardableResult
     public func updateSleepStages(deviceId: String, detectedStartTs: Int, stagesJSON: String) async throws -> Int {
-        try syncWrite { db in
-            try db.execute(sql: """
-                UPDATE sleepSession
-                SET stagesJSON = ?
-                WHERE deviceId = ? AND startTs = ? AND userEdited = 1
-                """, arguments: [stagesJSON, deviceId, detectedStartTs])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().updateSleepStages(
+                deviceId: deviceId, detectedStartTs: Int64(detectedStartTs), stagesJSON: stagesJSON))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    UPDATE sleepSession
+                    SET stagesJSON = ?
+                    WHERE deviceId = ? AND startTs = ? AND userEdited = 1
+                    """, arguments: [stagesJSON, deviceId, detectedStartTs])
+                return db.changesCount
+            }
         }
     }
 
@@ -233,23 +310,44 @@ extension WhoopStore {
     @discardableResult
     public func persistSessionMotion(deviceId: String, sessionStart: Int, motionEpochs: [Double]) async throws -> Int {
         let json = motionEpochs.isEmpty ? nil : Self.encodeDoubleArray(motionEpochs)
-        return try syncWrite { db in
-            try db.execute(sql: """
-                UPDATE sleepSession SET motionJSON = ?
-                WHERE deviceId = ? AND startTs = ?
-                """, arguments: [json, deviceId, sessionStart])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().updateSessionMotion(
+                deviceId: deviceId, sessionStart: Int64(sessionStart), json: json))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    UPDATE sleepSession SET motionJSON = ?
+                    WHERE deviceId = ? AND startTs = ?
+                    """, arguments: [json, deviceId, sessionStart])
+                return db.changesCount
+            }
         }
     }
 
     /// The persisted per-epoch motion magnitudes for one session, or nil when the column is NULL / the
     /// session doesn't exist / the JSON is unparseable (absent stays absent). Keyed by detected startTs.
     public func sessionMotion(deviceId: String, sessionStart: Int) async throws -> [Double]? {
-        try syncRead { db in
-            let json = try String.fetchOne(db, sql: """
-                SELECT motionJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
-                """, arguments: [deviceId, sessionStart])
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let json = try await roomDb.whoopDao().sessionMotionJson(
+                deviceId: deviceId, sessionStart: Int64(sessionStart))
             return json.flatMap(Self.decodeDoubleArray)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                let json = try String.fetchOne(db, sql: """
+                    SELECT motionJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
+                    """, arguments: [deviceId, sessionStart])
+                return json.flatMap(Self.decodeDoubleArray)
+            }
         }
     }
 
@@ -259,23 +357,44 @@ extension WhoopStore {
     @discardableResult
     public func persistSessionSleepState(deviceId: String, sessionStart: Int, states: [Int]) async throws -> Int {
         let json = states.isEmpty ? nil : Self.encodeIntArray(states)
-        return try syncWrite { db in
-            try db.execute(sql: """
-                UPDATE sleepSession SET sleepStateJSON = ?
-                WHERE deviceId = ? AND startTs = ?
-                """, arguments: [json, deviceId, sessionStart])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().updateSessionSleepState(
+                deviceId: deviceId, sessionStart: Int64(sessionStart), json: json))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    UPDATE sleepSession SET sleepStateJSON = ?
+                    WHERE deviceId = ? AND startTs = ?
+                    """, arguments: [json, deviceId, sessionStart])
+                return db.changesCount
+            }
         }
     }
 
     /// The persisted decoded v18 band sleep_state per epoch for one session, or nil when unset / unparseable
     /// (absent stays absent). Keyed by detected startTs.
     public func sessionSleepState(deviceId: String, sessionStart: Int) async throws -> [Int]? {
-        try syncRead { db in
-            let json = try String.fetchOne(db, sql: """
-                SELECT sleepStateJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
-                """, arguments: [deviceId, sessionStart])
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let json = try await roomDb.whoopDao().sessionSleepStateJson(
+                deviceId: deviceId, sessionStart: Int64(sessionStart))
             return json.flatMap(Self.decodeIntArray)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                let json = try String.fetchOne(db, sql: """
+                    SELECT sleepStateJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
+                    """, arguments: [deviceId, sessionStart])
+                return json.flatMap(Self.decodeIntArray)
+            }
         }
     }
 
@@ -287,28 +406,53 @@ extension WhoopStore {
     /// is de-duplicated and chunked to stay well under SQLite's bound-parameter ceiling.
     public func sessionMotions(deviceId: String, sessionStarts: [Int]) async throws -> [Int: [Double]] {
         guard !sessionStarts.isEmpty else { return [:] }
-        return try syncRead { db in
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // Chunking stays the caller's responsibility per the Kotlin doc comment; the SQLite bound-
+            // parameter cap the GRDB IN-clause loop guards against applies underneath Room too.
+            let dao = roomDb.whoopDao()
             var out: [Int: [Double]] = [:]
             let uniq = Array(Set(sessionStarts))
             var lo = 0
             while lo < uniq.count {
                 let chunk = Array(uniq[lo ..< min(lo + Self.inClauseChunk, uniq.count)])
                 lo += Self.inClauseChunk
-                let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
-                var args: [DatabaseValueConvertible] = [deviceId]
-                args.append(contentsOf: chunk)
-                let rows = try Row.fetchAll(db, sql: """
-                    SELECT startTs, motionJSON FROM sleepSession
-                    WHERE deviceId = ? AND startTs IN (\(placeholders)) AND motionJSON IS NOT NULL
-                    """, arguments: StatementArguments(args))
+                let rows = try await dao.sessionMotionsForStarts(
+                    deviceId: deviceId, sessionStarts: chunk.map { KotlinLong(longLong: Int64($0)) })
                 for row in rows {
-                    let startTs: Int = row["startTs"]
-                    guard let json: String = row["motionJSON"],
-                          let arr = Self.decodeDoubleArray(json), !arr.isEmpty else { continue }
-                    out[startTs] = arr
+                    guard let arr = Self.decodeDoubleArray(row.motionJSON), !arr.isEmpty else { continue }
+                    out[Int(row.startTs)] = arr
                 }
             }
             return out
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                var out: [Int: [Double]] = [:]
+                let uniq = Array(Set(sessionStarts))
+                var lo = 0
+                while lo < uniq.count {
+                    let chunk = Array(uniq[lo ..< min(lo + Self.inClauseChunk, uniq.count)])
+                    lo += Self.inClauseChunk
+                    let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
+                    var args: [DatabaseValueConvertible] = [deviceId]
+                    args.append(contentsOf: chunk)
+                    let rows = try Row.fetchAll(db, sql: """
+                        SELECT startTs, motionJSON FROM sleepSession
+                        WHERE deviceId = ? AND startTs IN (\(placeholders)) AND motionJSON IS NOT NULL
+                        """, arguments: StatementArguments(args))
+                    for row in rows {
+                        let startTs: Int = row["startTs"]
+                        guard let json: String = row["motionJSON"],
+                              let arr = Self.decodeDoubleArray(json), !arr.isEmpty else { continue }
+                        out[startTs] = arr
+                    }
+                }
+                return out
+            }
         }
     }
 
@@ -318,19 +462,35 @@ extension WhoopStore {
     /// round-trip (N single-row reads → one); the caller looks each kept (deduped) session up by startTs.
     /// NULL/absent columns are omitted (absent stays absent), identical to the single-key accessor.
     public func sessionSleepStates(deviceId: String, from: Int, to: Int) async throws -> [Int: [Int]] {
-        try syncRead { db in
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().sessionSleepStatesInRange(
+                deviceId: deviceId, from: Int64(from), to: Int64(to))
             var out: [Int: [Int]] = [:]
-            let rows = try Row.fetchAll(db, sql: """
-                SELECT startTs, sleepStateJSON FROM sleepSession
-                WHERE deviceId = ? AND startTs >= ? AND startTs <= ? AND sleepStateJSON IS NOT NULL
-                """, arguments: [deviceId, from, to])
             for row in rows {
-                let startTs: Int = row["startTs"]
-                guard let json: String = row["sleepStateJSON"],
-                      let arr = Self.decodeIntArray(json), !arr.isEmpty else { continue }
-                out[startTs] = arr
+                guard let arr = Self.decodeIntArray(row.sleepStateJSON), !arr.isEmpty else { continue }
+                out[Int(row.startTs)] = arr
             }
             return out
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                var out: [Int: [Int]] = [:]
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT startTs, sleepStateJSON FROM sleepSession
+                    WHERE deviceId = ? AND startTs >= ? AND startTs <= ? AND sleepStateJSON IS NOT NULL
+                    """, arguments: [deviceId, from, to])
+                for row in rows {
+                    let startTs: Int = row["startTs"]
+                    guard let json: String = row["sleepStateJSON"],
+                          let arr = Self.decodeIntArray(json), !arr.isEmpty else { continue }
+                    out[startTs] = arr
+                }
+                return out
+            }
         }
     }
 
@@ -357,44 +517,78 @@ extension WhoopStore {
     /// Upsert cached daily metrics. Natural key (deviceId, day). Returns rows changed.
     @discardableResult
     public func upsertDailyMetrics(_ days: [DailyMetric], deviceId: String) async throws -> Int {
-        try syncWrite { db in
-            var n = 0
-            for d in days {
-                try db.execute(sql: """
-                    INSERT INTO dailyMetric
-                        (deviceId, day, totalSleepMin, efficiency, deepMin, remMin, lightMin,
-                         disturbances, restingHr, avgHrv, recovery, strain, exerciseCount,
-                         spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
-                         spo2Red, spo2Ir)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(deviceId, day) DO UPDATE SET
-                        totalSleepMin = excluded.totalSleepMin,
-                        efficiency = excluded.efficiency,
-                        deepMin = excluded.deepMin,
-                        remMin = excluded.remMin,
-                        lightMin = excluded.lightMin,
-                        disturbances = excluded.disturbances,
-                        restingHr = excluded.restingHr,
-                        avgHrv = excluded.avgHrv,
-                        recovery = excluded.recovery,
-                        strain = excluded.strain,
-                        exerciseCount = excluded.exerciseCount,
-                        spo2Pct = excluded.spo2Pct,
-                        skinTempDevC = excluded.skinTempDevC,
-                        respRateBpm = excluded.respRateBpm,
-                        steps = excluded.steps,
-                        activeKcalEst = excluded.activeKcalEst,
-                        spo2Red = excluded.spo2Red,
-                        spo2Ir = excluded.spo2Ir
-                    """, arguments: [deviceId, d.day, d.totalSleepMin, d.efficiency, d.deepMin,
-                                     d.remMin, d.lightMin, d.disturbances, d.restingHr, d.avgHrv,
-                                     d.recovery, d.strain, d.exerciseCount,
-                                     d.spo2Pct, d.skinTempDevC, d.respRateBpm,
-                                     d.steps, d.activeKcalEst,
-                                     d.spo2Red, d.spo2Ir])
-                n += db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // Plain REPLACE-shaped upsert (no CASE-WHEN field preservation, unlike sleep/workout/labMarker),
+            // so every row always affects exactly one row: return the input count, matching the GRDB
+            // per-row changesCount tally below.
+            try await roomDb.whoopDao().upsertDailyMetrics(rows: days.map { d in
+                Shared.DailyMetric(
+                    deviceId: deviceId, day: d.day,
+                    totalSleepMin: d.totalSleepMin.map { KotlinDouble(double: $0) },
+                    efficiency: d.efficiency.map { KotlinDouble(double: $0) },
+                    deepMin: d.deepMin.map { KotlinDouble(double: $0) },
+                    remMin: d.remMin.map { KotlinDouble(double: $0) },
+                    lightMin: d.lightMin.map { KotlinDouble(double: $0) },
+                    disturbances: d.disturbances.map { KotlinInt(int: Int32($0)) },
+                    restingHr: d.restingHr.map { KotlinInt(int: Int32($0)) },
+                    avgHrv: d.avgHrv.map { KotlinDouble(double: $0) },
+                    recovery: d.recovery.map { KotlinDouble(double: $0) },
+                    strain: d.strain.map { KotlinDouble(double: $0) },
+                    exerciseCount: d.exerciseCount.map { KotlinInt(int: Int32($0)) },
+                    spo2Pct: d.spo2Pct.map { KotlinDouble(double: $0) },
+                    skinTempDevC: d.skinTempDevC.map { KotlinDouble(double: $0) },
+                    respRateBpm: d.respRateBpm.map { KotlinDouble(double: $0) },
+                    steps: d.steps.map { KotlinInt(int: Int32($0)) },
+                    activeKcalEst: d.activeKcalEst.map { KotlinDouble(double: $0) },
+                    spo2Red: d.spo2Red.map { KotlinInt(int: Int32($0)) },
+                    spo2Ir: d.spo2Ir.map { KotlinInt(int: Int32($0)) })
+            })
+            return days.count
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                var n = 0
+                for d in days {
+                    try db.execute(sql: """
+                        INSERT INTO dailyMetric
+                            (deviceId, day, totalSleepMin, efficiency, deepMin, remMin, lightMin,
+                             disturbances, restingHr, avgHrv, recovery, strain, exerciseCount,
+                             spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
+                             spo2Red, spo2Ir)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(deviceId, day) DO UPDATE SET
+                            totalSleepMin = excluded.totalSleepMin,
+                            efficiency = excluded.efficiency,
+                            deepMin = excluded.deepMin,
+                            remMin = excluded.remMin,
+                            lightMin = excluded.lightMin,
+                            disturbances = excluded.disturbances,
+                            restingHr = excluded.restingHr,
+                            avgHrv = excluded.avgHrv,
+                            recovery = excluded.recovery,
+                            strain = excluded.strain,
+                            exerciseCount = excluded.exerciseCount,
+                            spo2Pct = excluded.spo2Pct,
+                            skinTempDevC = excluded.skinTempDevC,
+                            respRateBpm = excluded.respRateBpm,
+                            steps = excluded.steps,
+                            activeKcalEst = excluded.activeKcalEst,
+                            spo2Red = excluded.spo2Red,
+                            spo2Ir = excluded.spo2Ir
+                        """, arguments: [deviceId, d.day, d.totalSleepMin, d.efficiency, d.deepMin,
+                                         d.remMin, d.lightMin, d.disturbances, d.restingHr, d.avgHrv,
+                                         d.recovery, d.strain, d.exerciseCount,
+                                         d.spo2Pct, d.skinTempDevC, d.respRateBpm,
+                                         d.steps, d.activeKcalEst,
+                                         d.spo2Red, d.spo2Ir])
+                    n += db.changesCount
+                }
+                return n
             }
-            return n
         }
     }
 
@@ -406,12 +600,22 @@ extension WhoopStore {
     /// WhoopDao.deleteComputedDailyInRange.
     @discardableResult
     public func deleteDailyMetrics(deviceId: String, from: String, to: String) async throws -> Int {
-        try syncWrite { db in
-            try db.execute(sql: """
-                DELETE FROM dailyMetric
-                WHERE deviceId = ? AND day >= ? AND day <= ?
-                """, arguments: [deviceId, from, to])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().deleteDailyMetricsInRange(
+                deviceId: deviceId, from: from, to: to))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    DELETE FROM dailyMetric
+                    WHERE deviceId = ? AND day >= ? AND day <= ?
+                    """, arguments: [deviceId, from, to])
+                return db.changesCount
+            }
         }
     }
 
@@ -419,45 +623,96 @@ extension WhoopStore {
 
     /// Cached sleep sessions overlapping [from, to] (by startTs), oldest first.
     public func sleepSessions(deviceId: String, from: Int, to: Int, limit: Int) async throws -> [CachedSleepSession] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON, userEdited,
-                       startTsAdjusted FROM sleepSession
-                WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
-                ORDER BY startTs ASC LIMIT ?
-                """, arguments: [deviceId, from, to, limit])
-                .map {
-                    CachedSleepSession(startTs: $0["startTs"], endTs: $0["endTs"],
-                                       efficiency: $0["efficiency"], restingHr: $0["restingHr"],
-                                       avgHrv: $0["avgHrv"], stagesJSON: $0["stagesJSON"],
-                                       userEdited: $0["userEdited"], startTsAdjusted: $0["startTsAdjusted"])
-                }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().sleepSessions(
+                deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
+            return rows.map { row in
+                CachedSleepSession(
+                    startTs: Int(row.startTs), endTs: Int(row.endTs),
+                    efficiency: row.efficiency.map { Double(truncating: $0) },
+                    restingHr: row.restingHr.map { Int(truncating: $0) },
+                    avgHrv: row.avgHrv.map { Double(truncating: $0) },
+                    stagesJSON: row.stagesJSON,
+                    userEdited: row.userEdited,
+                    startTsAdjusted: row.startTsAdjusted.map { Int(truncating: $0) })
+            }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON, userEdited,
+                           startTsAdjusted FROM sleepSession
+                    WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
+                    ORDER BY startTs ASC LIMIT ?
+                    """, arguments: [deviceId, from, to, limit])
+                    .map {
+                        CachedSleepSession(startTs: $0["startTs"], endTs: $0["endTs"],
+                                           efficiency: $0["efficiency"], restingHr: $0["restingHr"],
+                                           avgHrv: $0["avgHrv"], stagesJSON: $0["stagesJSON"],
+                                           userEdited: $0["userEdited"], startTsAdjusted: $0["startTsAdjusted"])
+                    }
+            }
         }
     }
 
     /// Cached daily metrics for days in [from, to] (lexicographic YYYY-MM-DD compare), oldest first.
     public func dailyMetrics(deviceId: String, from: String, to: String) async throws -> [DailyMetric] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT day, totalSleepMin, efficiency, deepMin, remMin, lightMin, disturbances,
-                       restingHr, avgHrv, recovery, strain, exerciseCount,
-                       spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
-                       spo2Red, spo2Ir FROM dailyMetric
-                WHERE deviceId = ? AND day >= ? AND day <= ?
-                ORDER BY day ASC
-                """, arguments: [deviceId, from, to])
-                .map {
-                    DailyMetric(day: $0["day"], totalSleepMin: $0["totalSleepMin"],
-                                efficiency: $0["efficiency"], deepMin: $0["deepMin"],
-                                remMin: $0["remMin"], lightMin: $0["lightMin"],
-                                disturbances: $0["disturbances"], restingHr: $0["restingHr"],
-                                avgHrv: $0["avgHrv"], recovery: $0["recovery"],
-                                strain: $0["strain"], exerciseCount: $0["exerciseCount"],
-                                spo2Pct: $0["spo2Pct"], skinTempDevC: $0["skinTempDevC"],
-                                respRateBpm: $0["respRateBpm"],
-                                steps: $0["steps"], activeKcalEst: $0["activeKcalEst"],
-                                spo2Red: $0["spo2Red"], spo2Ir: $0["spo2Ir"])
-                }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().dailyMetricsRange(deviceId: deviceId, from: from, to: to)
+            return rows.map { row in
+                DailyMetric(
+                    day: row.day,
+                    totalSleepMin: row.totalSleepMin.map { Double(truncating: $0) },
+                    efficiency: row.efficiency.map { Double(truncating: $0) },
+                    deepMin: row.deepMin.map { Double(truncating: $0) },
+                    remMin: row.remMin.map { Double(truncating: $0) },
+                    lightMin: row.lightMin.map { Double(truncating: $0) },
+                    disturbances: row.disturbances.map { Int(truncating: $0) },
+                    restingHr: row.restingHr.map { Int(truncating: $0) },
+                    avgHrv: row.avgHrv.map { Double(truncating: $0) },
+                    recovery: row.recovery.map { Double(truncating: $0) },
+                    strain: row.strain.map { Double(truncating: $0) },
+                    exerciseCount: row.exerciseCount.map { Int(truncating: $0) },
+                    spo2Pct: row.spo2Pct.map { Double(truncating: $0) },
+                    skinTempDevC: row.skinTempDevC.map { Double(truncating: $0) },
+                    respRateBpm: row.respRateBpm.map { Double(truncating: $0) },
+                    steps: row.steps.map { Int(truncating: $0) },
+                    activeKcalEst: row.activeKcalEst.map { Double(truncating: $0) },
+                    spo2Red: row.spo2Red.map { Int(truncating: $0) },
+                    spo2Ir: row.spo2Ir.map { Int(truncating: $0) })
+            }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT day, totalSleepMin, efficiency, deepMin, remMin, lightMin, disturbances,
+                           restingHr, avgHrv, recovery, strain, exerciseCount,
+                           spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
+                           spo2Red, spo2Ir FROM dailyMetric
+                    WHERE deviceId = ? AND day >= ? AND day <= ?
+                    ORDER BY day ASC
+                    """, arguments: [deviceId, from, to])
+                    .map {
+                        DailyMetric(day: $0["day"], totalSleepMin: $0["totalSleepMin"],
+                                    efficiency: $0["efficiency"], deepMin: $0["deepMin"],
+                                    remMin: $0["remMin"], lightMin: $0["lightMin"],
+                                    disturbances: $0["disturbances"], restingHr: $0["restingHr"],
+                                    avgHrv: $0["avgHrv"], recovery: $0["recovery"],
+                                    strain: $0["strain"], exerciseCount: $0["exerciseCount"],
+                                    spo2Pct: $0["spo2Pct"], skinTempDevC: $0["skinTempDevC"],
+                                    respRateBpm: $0["respRateBpm"],
+                                    steps: $0["steps"], activeKcalEst: $0["activeKcalEst"],
+                                    spo2Red: $0["spo2Red"], spo2Ir: $0["spo2Ir"])
+                    }
+            }
         }
     }
 }

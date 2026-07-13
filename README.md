@@ -125,7 +125,7 @@ from **their own device**, on a machine **they** control.
 |------|-----------|
 | `shared/` | Kotlin Multiplatform logic: protocol, analytics, data (Room), oura, ingest, update. The data layer (Room, repository, analytics, backup restore) is iOS-ready in `commonMain`; ingest and update remain Android-only pending Phase 2b. `androidMain` holds the not-yet-hoisted remainder. Ships to Apple platforms as `Shared.xcframework` (see below). |
 | `android/` | Android app (Jetpack Compose UI, BLE service, alarms, widgets) depending on `shared`. |
-| `Strand*`, `NOOPWatch*`, `Packages/` | Original Swift apps. As of Phase 2b, `Packages/WhoopProtocol` consumes `shared`'s Kotlin protocol decoders via `Shared.xcframework` (an SPM binary target); its Swift files are now thin wrappers for the delegated pieces (see the "`WhoopProtocol`, the protocol-support core" section below). `WhoopStore`, `StrandAnalytics`, `StrandImport`, `StrandDesign`, and `NOOPWatch*` remain untouched Swift, pending Phase 2c+. |
+| `Strand*`, `NOOPWatch*`, `Packages/` | Original Swift apps. As of Phase 2b, `Packages/WhoopProtocol` consumes `shared`'s Kotlin protocol decoders via `Shared.xcframework` (an SPM binary target); its Swift files are now thin wrappers for the delegated pieces (see the "`WhoopProtocol`, the protocol-support core" section below). As of Phase 2c-1, `Packages/WhoopStore` stores everything (except the transient raw outbox and cursors) in the **shared Kotlin Room database** on Apple too: same public API, so storage bugfixes now land once in Kotlin for both platforms, and Apple backups are Room-format and restorable on Android (see the "`WhoopStore`" section below). `StrandAnalytics`, `StrandImport`, `StrandDesign`, and `NOOPWatch*` remain untouched Swift, pending Phase 2c+. |
 | `docs/superpowers/specs/` | Design specs. Start with the 2026-07-09 unification design. The upstream cherry-pick protocol lives in [`docs/UPSTREAM.md`](docs/UPSTREAM.md). |
 
 Rule of thumb: OS API code lives in the platform app or `androidMain`/`iosMain`; decisions, calculations, and byte parsing live in `commonMain`.
@@ -365,12 +365,10 @@ per-sample stream row shapes, and the `DeviceFamily` enum itself stay Swift; see
 appendix in [`docs/superpowers/plans/phase1-baseline.md`](docs/superpowers/plans/phase1-baseline.md)
 for the full delegated/stays-Swift breakdown.
 
-### `WhoopStore` — local SQLite via GRDB
+### `WhoopStore`: local SQLite, now backed by shared Kotlin Room
 
-Everything is stored on-device in SQLite (using
-[GRDB.swift](https://github.com/groue/GRDB.swift)). The schema is a versioned
-migrator (`Database.swift`, currently through `v9`). Examples of decoded-stream
-tables created in `v1`–`v3`:
+Everything is stored on-device in SQLite. The decoded-stream and metric-cache
+tables look the same on every platform:
 
 ```sql
 CREATE TABLE hrSample      (deviceId TEXT, ts INTEGER, bpm INTEGER, PRIMARY KEY(deviceId, ts));
@@ -380,8 +378,21 @@ CREATE TABLE skinTempSample(deviceId TEXT, ts INTEGER, raw INTEGER, PRIMARY KEY(
 CREATE TABLE respSample    (deviceId TEXT, ts INTEGER, raw INTEGER, PRIMARY KEY(deviceId, ts));
 ```
 
-Later migrations add server-derived metric caches (`sleepSession`, `dailyMetric`),
-cursors, a raw frame outbox, and more.
+Other tables hold server-derived metric caches (`sleepSession`, `dailyMetric`),
+day ownership, cursors, and a raw frame outbox.
+
+As of **Phase 2c-1**, the `WhoopStore` actor keeps its public Swift API but stores everything
+(except the transient raw outbox and cursors) in the **shared Kotlin Room database** that already
+backs Android, linked in via `Shared.xcframework`. So the storage layer is now one implementation
+across macOS, iOS, and Android: a storage bugfix lands once in Kotlin for all three. Existing macOS/iOS
+users migrate their old [GRDB.swift](https://github.com/groue/GRDB.swift) `whoop.sqlite` into Room
+`noop.db` once, on first launch, via a batched, idempotent, read-only ETL (the legacy file is never
+mutated and is retained as rollback). GRDB stays only for the device-local raw outbox and BLE cursors
+(never in backups, matching Android); it is removed entirely in Phase 2c-2. Apple backups are now
+Room-format, so an export from the Mac/iOS app **restores on Android** (and Android's "backup from the
+Mac or iOS app" rejection is now reachable only for pre-2c-1 legacy exports). Full detail: the Phase
+2c-1 appendix in [`docs/superpowers/plans/phase1-baseline.md`](docs/superpowers/plans/phase1-baseline.md)
+and [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md).
 
 ### `StrandAnalytics` — transparent, on-device math
 

@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import WhoopProtocol
+import Shared
 
 extension WhoopStore {
     /// Deterministic JSON for an event payload (sorted keys so the same payload always
@@ -15,15 +16,33 @@ extension WhoopStore {
     /// Insert or update a device row (natural key = id).
     public func upsertDevice(id: String, mac: String?, name: String?) async throws {
         let now = Int(Date().timeIntervalSince1970)
-        try syncWrite { db in
-            try db.execute(sql: """
-                INSERT INTO device (id, mac, name, firstSeen, lastSeen)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    mac = excluded.mac,
-                    name = excluded.name,
-                    lastSeen = excluded.lastSeen
-                """, arguments: [id, mac, name, now, now])
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // Byte-for-byte with the GRDB `ON CONFLICT(id) DO UPDATE SET mac, name, lastSeen`: mirror
+            // WhoopRepository.upsertDevice, read the existing row and PRESERVE its firstSeen on update
+            // (the @Insert(REPLACE) upsert would otherwise reset it), while mac/name/lastSeen take the
+            // new values. A first insert stamps firstSeen = lastSeen = now.
+            let dao = roomDb.whoopDao()
+            let existing = try await dao.device(id: id)
+            let firstSeen = existing?.firstSeen ?? KotlinLong(longLong: Int64(now))
+            try await dao.upsertDevice(device: DeviceRow(
+                id: id, mac: mac, name: name,
+                firstSeen: firstSeen, lastSeen: KotlinLong(longLong: Int64(now))))
+            #endif
+        case .legacyGrdb:
+            try syncWrite { db in
+                try db.execute(sql: """
+                    INSERT INTO device (id, mac, name, firstSeen, lastSeen)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        mac = excluded.mac,
+                        name = excluded.name,
+                        lastSeen = excluded.lastSeen
+                    """, arguments: [id, mac, name, now, now])
+            }
         }
     }
 
@@ -33,10 +52,29 @@ extension WhoopStore {
     /// NOTE: the `synced` column (added by migration v5 for a since-removed server-upload feature)
     /// is intentionally NOT written here, it is unused and defaults to 0. The column is left in the
     /// schema to avoid a DROP COLUMN migration over existing data; nothing reads it.
+    // NOTE on qualification: this file imports BOTH WhoopProtocol and Shared, and the Kotlin
+    // entities deliberately reuse several Swift row-type names (Streams, BatterySample,
+    // SkinTempSample, StepSample, RespSample, GravitySample, PpgHrSample, WhoopEvent). Every
+    // ambiguous name in this file is module-qualified so the decoded-row currency stays
+    // WhoopProtocol's and the Room entity rows stay Shared's, never mixed up by unqualified lookup.
     @discardableResult
-    public func insert(_ streams: Streams, deviceId: String) async throws
+    public func insert(_ streams: WhoopProtocol.Streams, deviceId: String) async throws
         -> (hr: Int, rr: Int, events: Int, battery: Int,
             spo2: Int, skinTemp: Int, resp: Int, gravity: Int) {
+        switch backend {
+        case .room(let roomDb):
+            return try await insertViaRoom(streams, deviceId: deviceId, room: roomDb)
+        case .legacyGrdb:
+            return try insertViaGrdb(streams, deviceId: deviceId)
+        }
+    }
+
+    /// GRDB write funnel (legacy backend): unchanged from the original `insert` body, one prepared
+    /// statement per table reused across rows, `ON CONFLICT(...) DO NOTHING` dedupe, per-stream
+    /// `db.changesCount` tally. Kept byte-identical so the legacy fallback path is provably unchanged.
+    private func insertViaGrdb(_ streams: WhoopProtocol.Streams, deviceId: String)
+        throws -> (hr: Int, rr: Int, events: Int, battery: Int,
+                   spo2: Int, skinTemp: Int, resp: Int, gravity: Int) {
         return try syncWrite { db in
             var hr = 0, rr = 0, ev = 0, bat = 0
             var spo2 = 0, skin = 0, resp = 0, grav = 0
@@ -168,6 +206,112 @@ extension WhoopStore {
             }
             return (hr, rr, ev, bat, spo2, skin, resp, grav)
         }
+    }
+
+    /// Number of rows Room actually inserted from a `@Insert(onConflict = IGNORE)` result: Room returns
+    /// one rowid per input row, `-1` for a row skipped by the natural-key conflict. Counting the non-`-1`
+    /// entries reproduces GRDB's per-stream `db.changesCount` tally exactly (an existing row → 0).
+    private static func insertedCount(_ rowids: [KotlinLong]) -> Int {
+        rowids.reduce(0) { $0 + ($1.int64Value == -1 ? 0 : 1) }
+    }
+
+    /// Room write funnel (room backend): the byte-for-byte twin of `insertViaGrdb`. Each stream maps to
+    /// its Room entity and goes through the matching `@Insert(onConflict = IGNORE)` DAO method, the same
+    /// natural-key dedupe as GRDB's `ON CONFLICT(...) DO NOTHING`. The four counted streams (hr/rr/events/
+    /// battery) plus spo2/skinTemp/resp/gravity return their actually-inserted count; steps/sleepState/
+    /// ppgHr are persist-only, exactly as in the GRDB path. Empty sub-lists issue no DAO call. `event`
+    /// payloads use the SAME deterministic `encodePayload` so the stored JSON is byte-identical.
+    private func insertViaRoom(_ streams: WhoopProtocol.Streams, deviceId: String, room: WhoopDatabase)
+        async throws -> (hr: Int, rr: Int, events: Int, battery: Int,
+                         spo2: Int, skinTemp: Int, resp: Int, gravity: Int) {
+        #if targetEnvironment(simulator) && arch(x86_64)
+        _ = (streams, deviceId, room); throw WhoopStore.RoomBackendUnavailableError()
+        #else
+        let dao = room.whoopDao()
+        var hr = 0, rr = 0, ev = 0, bat = 0
+        var spo2 = 0, skin = 0, resp = 0, grav = 0
+
+        if !streams.hr.isEmpty {
+            let rows = streams.hr.map {
+                HrSample(deviceId: deviceId, ts: Int64($0.ts), bpm: Int32($0.bpm), synced: 0)
+            }
+            hr = WhoopStore.insertedCount(try await dao.insertHr(rows: rows))
+        }
+        if !streams.rr.isEmpty {
+            let rows = streams.rr.map {
+                RrInterval(deviceId: deviceId, ts: Int64($0.ts), rrMs: Int32($0.rrMs), synced: 0)
+            }
+            rr = WhoopStore.insertedCount(try await dao.insertRr(rows: rows))
+        }
+        if !streams.events.isEmpty {
+            var rows: [EventRow] = []
+            rows.reserveCapacity(streams.events.count)
+            for e in streams.events {
+                let json = try WhoopStore.encodePayload(e.payload)
+                rows.append(EventRow(deviceId: deviceId, ts: Int64(e.ts), kind: e.kind,
+                                     payloadJSON: json, synced: 0))
+            }
+            ev = WhoopStore.insertedCount(try await dao.insertEvents(rows: rows))
+        }
+        if !streams.battery.isEmpty {
+            let rows = streams.battery.map { b in
+                Shared.BatterySample(deviceId: deviceId, ts: Int64(b.ts),
+                              soc: b.soc.map { KotlinDouble(double: $0) },
+                              mv: b.mv.map { KotlinInt(int: Int32($0)) },
+                              charging: b.charging.map { KotlinBoolean(bool: $0) },
+                              synced: 0)
+            }
+            bat = WhoopStore.insertedCount(try await dao.insertBattery(rows: rows))
+        }
+        if !streams.spo2.isEmpty {
+            let rows = streams.spo2.map {
+                Spo2Sample(deviceId: deviceId, ts: Int64($0.ts),
+                           red: Int32($0.red), ir: Int32($0.ir), synced: 0)
+            }
+            spo2 = WhoopStore.insertedCount(try await dao.insertSpo2(rows: rows))
+        }
+        if !streams.skinTemp.isEmpty {
+            let rows = streams.skinTemp.map {
+                Shared.SkinTempSample(deviceId: deviceId, ts: Int64($0.ts), raw: Int32($0.raw), synced: 0)
+            }
+            skin = WhoopStore.insertedCount(try await dao.insertSkinTemp(rows: rows))
+        }
+        if !streams.resp.isEmpty {
+            let rows = streams.resp.map {
+                Shared.RespSample(deviceId: deviceId, ts: Int64($0.ts), raw: Int32($0.raw), synced: 0)
+            }
+            resp = WhoopStore.insertedCount(try await dao.insertResp(rows: rows))
+        }
+        if !streams.gravity.isEmpty {
+            let rows = streams.gravity.map {
+                Shared.GravitySample(deviceId: deviceId, ts: Int64($0.ts),
+                              x: $0.x, y: $0.y, z: $0.z, synced: 0)
+            }
+            grav = WhoopStore.insertedCount(try await dao.insertGravity(rows: rows))
+        }
+        // Persist-only streams (not surfaced in the 8-field tuple), exactly as the GRDB path leaves them.
+        if !streams.steps.isEmpty {
+            let rows = streams.steps.map { s in
+                Shared.StepSample(deviceId: deviceId, ts: Int64(s.ts), counter: Int32(s.counter),
+                           activityClass: s.activityClass.map { KotlinInt(int: Int32($0)) }, synced: 0)
+            }
+            _ = try await dao.insertSteps(rows: rows)
+        }
+        if !streams.sleepState.isEmpty {
+            let rows = streams.sleepState.map {
+                SleepStateSampleEntity(deviceId: deviceId, ts: Int64($0.ts), state: Int32($0.state))
+            }
+            _ = try await dao.insertSleepState(rows: rows)
+        }
+        if !streams.ppgHr.isEmpty {
+            let rows = streams.ppgHr.map {
+                Shared.PpgHrSample(deviceId: deviceId, ts: Int64($0.ts),
+                            bpm: Int32($0.bpm), conf: $0.conf, synced: 0)
+            }
+            _ = try await dao.insertPpgHr(rows: rows)
+        }
+        return (hr, rr, ev, bat, spo2, skin, resp, grav)
+        #endif
     }
 
     // MARK: - Raw sensor CSV export (diagnostic)
@@ -343,25 +487,52 @@ extension WhoopStore {
     public func storageStats_rowCountsForTest() async throws
         -> (hr: Int, rr: Int, events: Int, battery: Int,
             spo2: Int, skinTemp: Int, resp: Int, gravity: Int) {
-        // Bind each count to its own `let` before assembling the tuple. Returning the whole tuple of
-        // inline `try Int.fetchOne(...) ?? 0` expressions made Swift's type-checker time out on some
-        // toolchains/machines (reported by a contributor building locally); splitting it is
-        // behaviour-identical and trivial to type-check.
-        try syncRead { db in
-            let hr = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM hrSample") ?? 0
-            let rr = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rrInterval") ?? 0
-            let events = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM event") ?? 0
-            let battery = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM battery") ?? 0
-            let spo2 = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM spo2Sample") ?? 0
-            let skinTemp = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM skinTempSample") ?? 0
-            let resp = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM respSample") ?? 0
-            let gravity = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM gravitySample") ?? 0
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let dao = roomDb.whoopDao()
+            let hr = Int(truncating: try await dao.countHr())
+            let rr = Int(truncating: try await dao.countRr())
+            let events = Int(truncating: try await dao.countEvents())
+            let battery = Int(truncating: try await dao.countBattery())
+            let spo2 = Int(truncating: try await dao.countSpo2())
+            let skinTemp = Int(truncating: try await dao.countSkinTemp())
+            let resp = Int(truncating: try await dao.countResp())
+            let gravity = Int(truncating: try await dao.countGravity())
             return (hr, rr, events, battery, spo2, skinTemp, resp, gravity)
+            #endif
+        case .legacyGrdb:
+            // Bind each count to its own `let` before assembling the tuple. Returning the whole tuple of
+            // inline `try Int.fetchOne(...) ?? 0` expressions made Swift's type-checker time out on some
+            // toolchains/machines (reported by a contributor building locally); splitting it is
+            // behaviour-identical and trivial to type-check.
+            return try syncRead { db in
+                let hr = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM hrSample") ?? 0
+                let rr = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rrInterval") ?? 0
+                let events = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM event") ?? 0
+                let battery = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM battery") ?? 0
+                let spo2 = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM spo2Sample") ?? 0
+                let skinTemp = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM skinTempSample") ?? 0
+                let resp = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM respSample") ?? 0
+                let gravity = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM gravitySample") ?? 0
+                return (hr, rr, events, battery, spo2, skinTemp, resp, gravity)
+            }
         }
     }
 
     public func stepCountForTest() async throws -> Int {
-        try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stepSample") ?? 0 }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().countSteps())
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM stepSample") ?? 0 }
+        }
     }
 
     /// The strap's OWN banked band sleep_state samples (#175) in `[from, to]` for one device, ascending by
@@ -370,31 +541,70 @@ extension WhoopStore {
     /// offloaded window). Feeds the Deep Timeline band-state track and the per-session grid the H7 guard reads.
     public func sleepStateSamples(deviceId: String, from: Int, to: Int, limit: Int = 200_000) async throws
         -> [SleepStateSample] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT ts, state FROM sleepStateSample
-                WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                ORDER BY ts LIMIT ?
-                """, arguments: [deviceId, from, to, limit])
-                .map { SleepStateSample(ts: $0["ts"], state: $0["state"]) }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().sleepStateSamples(
+                deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
+            return rows.map { SleepStateSample(ts: Int($0.ts), state: Int($0.state)) }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT ts, state FROM sleepStateSample
+                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
+                    ORDER BY ts LIMIT ?
+                    """, arguments: [deviceId, from, to, limit])
+                    .map { SleepStateSample(ts: $0["ts"], state: $0["state"]) }
+            }
         }
     }
 
     public func sleepStateCountForTest() async throws -> Int {
-        try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sleepStateSample") ?? 0 }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().countSleepState())
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sleepStateSample") ?? 0 }
+        }
     }
 
     public func ppgHrCountForTest() async throws -> Int {
-        try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM ppgHrSample") ?? 0 }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return Int(truncating: try await roomDb.whoopDao().countPpgHr())
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM ppgHrSample") ?? 0 }
+        }
     }
 
     public func deviceRowForTest(id: String) async throws -> (mac: String?, name: String?)? {
-        try syncRead { db in
-            guard let row = try Row.fetchOne(db,
-                sql: "SELECT mac, name FROM device WHERE id = ?", arguments: [id]) else {
-                return nil
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            guard let row = try await roomDb.whoopDao().device(id: id) else { return nil }
+            return (row.mac, row.name)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                guard let row = try Row.fetchOne(db,
+                    sql: "SELECT mac, name FROM device WHERE id = ?", arguments: [id]) else {
+                    return nil
+                }
+                return (row["mac"], row["name"])
             }
-            return (row["mac"], row["name"])
         }
     }
 }

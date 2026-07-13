@@ -10,7 +10,7 @@ final class SleepMotionStateTests: XCTestCase {
     private let start = 1_780_000_000
 
     private func storeWithSession() async throws -> WhoopStore {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertSleepSessions([
             CachedSleepSession(startTs: start, endTs: start + 8 * 3_600, efficiency: 0.9,
                                restingHr: 52, avgHrv: 70, stagesJSON: "[]")
@@ -19,7 +19,7 @@ final class SleepMotionStateTests: XCTestCase {
     }
 
     func testV18AddsMotionAndStateColumns() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.columnNamesForTest(table: "sleepSession")
         XCTAssertTrue(cols.contains("motionJSON"))
         XCTAssertTrue(cols.contains("sleepStateJSON"))
@@ -106,7 +106,7 @@ final class SleepMotionStateTests: XCTestCase {
     /// The batched `sessionMotions` returns EXACTLY what N single `sessionMotion` calls would, keyed by
     /// start: only starts with a non-empty series appear; absent, empty, and non-existent starts are omitted.
     func testBatchedSessionMotionsMatchesSingles() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let starts = [start, start + 1_000, start + 2_000, start + 3_000]
         for s in starts { try await upsertBareSession(store, s) }
         try await store.persistSessionMotion(deviceId: dev, sessionStart: starts[0], motionEpochs: [1.0, 2.0])
@@ -134,7 +134,7 @@ final class SleepMotionStateTests: XCTestCase {
     /// would for the in-window sessions, keyed by start; sessions outside `[from, to]` and NULL-state
     /// sessions are omitted.
     func testBatchedSessionSleepStatesMatchesSingles() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let inWindow = [start, start + 1_000, start + 2_000]
         let outside = start + 10 * 24 * 3_600
         for s in inWindow + [outside] { try await upsertBareSession(store, s) }

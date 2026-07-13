@@ -1,0 +1,50 @@
+import XCTest
+import GRDB
+@testable import WhoopStore
+
+/// Phase 2c-1 Task 7: `WhoopStore.migrateLegacyGrdbArchive` is the backup-import ETL wrapper that
+/// converts a STAGED legacy GRDB backup (any pre-2c-1 Mac/iOS `.noopbak`) into a fresh Room `noop.db`
+/// for `DataBackup` to swap in, so legacy backups remain importable forever. It delegates to the same
+/// `GrdbMigrator` the one-time in-place cutover uses; this pins the Swift wrapper end to end against a
+/// full (empty) GRDB schema — the exact shape the ETL reads. Data-fidelity of the row copy is pinned
+/// by the Kotlin `GrdbMigratorTest` and the shared `AppleRoomBackupCrossPlatformTest` (grdb-mini
+/// fixture), so here we prove only that the wrapper runs and yields a native, forward-restorable file.
+final class LegacyBackupMigrationTests: XCTestCase {
+
+    func testMigrateLegacyGrdbArchiveProducesANativeRoomDatabase() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noop-legacy-etl-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // A staged legacy GRDB backup: the full final GRDB schema (every migrator-mapped table), empty.
+        // Built exactly as WhoopStore opens the legacy pool, so GrdbMigrator's per-table SELECTs resolve.
+        let grdbPath = dir.appendingPathComponent("staged-legacy.sqlite").path
+        do {
+            let queue = try DatabaseQueue(path: grdbPath)
+            try WhoopStore.makeMigrator().migrate(queue)
+        }
+        XCTAssertTrue(try tableNames(at: grdbPath).contains("grdb_migrations"),
+                      "precondition: the staged file is a real GRDB store")
+
+        // Convert it. The returned file is a fresh Room db (carries room_master_table = native).
+        let roomPath = try WhoopStore.migrateLegacyGrdbArchive(atPath: grdbPath)
+        defer { try? FileManager.default.removeItem(at: URL(fileURLWithPath: roomPath).deletingLastPathComponent()) }
+
+        let roomTables = try tableNames(at: roomPath)
+        XCTAssertTrue(roomTables.contains("room_master_table"),
+                      "the migrated backup is Room-format, so it restores natively (here and on Android)")
+        XCTAssertFalse(roomTables.contains("grdb_migrations"),
+                       "the migrated backup carries Room's bookkeeping, not GRDB's")
+        // The mapped user tables came across (empty, but present in the Room schema).
+        XCTAssertTrue(roomTables.contains("hrSample"))
+        XCTAssertTrue(roomTables.contains("pairedDevice"))
+    }
+
+    private func tableNames(at path: String) throws -> Set<String> {
+        let queue = try DatabaseQueue(path: path)
+        return try queue.read { db in
+            try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
+        }
+    }
+}

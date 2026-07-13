@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Shared
 
 // MARK: - v22 store: Live Sessions
 //
@@ -42,46 +43,82 @@ extension WhoopStore {
     /// again at end with the final totals. Returns rows changed.
     @discardableResult
     public func upsertLiveSession(_ r: LiveSessionRow, deviceId: String) async throws -> Int {
-        try syncWrite { db in
-            try db.execute(sql: """
-                INSERT INTO liveSession
-                    (deviceId, startTs, endTs, chargeAtStart, floorBpm, ceilingBpm,
-                     inBandSec, belowSec, aboveSec, pushCount, easeCount, hrSource)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(deviceId, startTs) DO UPDATE SET
-                    endTs = excluded.endTs,
-                    chargeAtStart = excluded.chargeAtStart,
-                    floorBpm = excluded.floorBpm,
-                    ceilingBpm = excluded.ceilingBpm,
-                    inBandSec = excluded.inBandSec,
-                    belowSec = excluded.belowSec,
-                    aboveSec = excluded.aboveSec,
-                    pushCount = excluded.pushCount,
-                    easeCount = excluded.easeCount,
-                    hrSource = excluded.hrSource
-                """, arguments: [deviceId, r.startTs, r.endTs, r.chargeAtStart, r.floorBpm, r.ceilingBpm,
-                                 r.inBandSec, r.belowSec, r.aboveSec, r.pushCount, r.easeCount, r.hrSource])
-            return db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // @Upsert on the natural key (deviceId, startTs): a single row is always touched,
+            // matching the GRDB branch's single-row changesCount below.
+            try await roomDb.whoopDao().upsertLiveSession(row: Shared.LiveSessionRow(
+                deviceId: deviceId, startTs: Int64(r.startTs),
+                endTs: r.endTs.map { KotlinLong(longLong: Int64($0)) },
+                chargeAtStart: r.chargeAtStart.map { KotlinDouble(double: $0) },
+                floorBpm: r.floorBpm, ceilingBpm: r.ceilingBpm,
+                inBandSec: r.inBandSec, belowSec: r.belowSec, aboveSec: r.aboveSec,
+                pushCount: Int32(r.pushCount), easeCount: Int32(r.easeCount), hrSource: r.hrSource
+            ))
+            return 1
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                try db.execute(sql: """
+                    INSERT INTO liveSession
+                        (deviceId, startTs, endTs, chargeAtStart, floorBpm, ceilingBpm,
+                         inBandSec, belowSec, aboveSec, pushCount, easeCount, hrSource)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(deviceId, startTs) DO UPDATE SET
+                        endTs = excluded.endTs,
+                        chargeAtStart = excluded.chargeAtStart,
+                        floorBpm = excluded.floorBpm,
+                        ceilingBpm = excluded.ceilingBpm,
+                        inBandSec = excluded.inBandSec,
+                        belowSec = excluded.belowSec,
+                        aboveSec = excluded.aboveSec,
+                        pushCount = excluded.pushCount,
+                        easeCount = excluded.easeCount,
+                        hrSource = excluded.hrSource
+                    """, arguments: [deviceId, r.startTs, r.endTs, r.chargeAtStart, r.floorBpm, r.ceilingBpm,
+                                     r.inBandSec, r.belowSec, r.aboveSec, r.pushCount, r.easeCount, r.hrSource])
+                return db.changesCount
+            }
         }
     }
 
     /// The most-recent sessions first, for the look-back summary + streak. Newest by startTs.
     public func recentLiveSessions(deviceId: String, limit: Int) async throws -> [LiveSessionRow] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT startTs, endTs, chargeAtStart, floorBpm, ceilingBpm, inBandSec, belowSec, aboveSec,
-                       pushCount, easeCount, hrSource FROM liveSession
-                WHERE deviceId = ?
-                ORDER BY startTs DESC LIMIT ?
-                """, arguments: [deviceId, limit])
-                .map {
-                    LiveSessionRow(startTs: $0["startTs"], endTs: $0["endTs"],
-                                   chargeAtStart: $0["chargeAtStart"], floorBpm: $0["floorBpm"],
-                                   ceilingBpm: $0["ceilingBpm"], inBandSec: $0["inBandSec"],
-                                   belowSec: $0["belowSec"], aboveSec: $0["aboveSec"],
-                                   pushCount: $0["pushCount"], easeCount: $0["easeCount"],
-                                   hrSource: $0["hrSource"])
-                }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().recentLiveSessions(deviceId: deviceId, limit: Int32(limit))
+            return rows.map { row in
+                LiveSessionRow(startTs: Int(row.startTs), endTs: row.endTs.map { Int(truncating: $0) },
+                               chargeAtStart: row.chargeAtStart.map { Double(truncating: $0) },
+                               floorBpm: row.floorBpm, ceilingBpm: row.ceilingBpm,
+                               inBandSec: row.inBandSec, belowSec: row.belowSec, aboveSec: row.aboveSec,
+                               pushCount: Int(row.pushCount), easeCount: Int(row.easeCount),
+                               hrSource: row.hrSource)
+            }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT startTs, endTs, chargeAtStart, floorBpm, ceilingBpm, inBandSec, belowSec, aboveSec,
+                           pushCount, easeCount, hrSource FROM liveSession
+                    WHERE deviceId = ?
+                    ORDER BY startTs DESC LIMIT ?
+                    """, arguments: [deviceId, limit])
+                    .map {
+                        LiveSessionRow(startTs: $0["startTs"], endTs: $0["endTs"],
+                                       chargeAtStart: $0["chargeAtStart"], floorBpm: $0["floorBpm"],
+                                       ceilingBpm: $0["ceilingBpm"], inBandSec: $0["inBandSec"],
+                                       belowSec: $0["belowSec"], aboveSec: $0["aboveSec"],
+                                       pushCount: $0["pushCount"], easeCount: $0["easeCount"],
+                                       hrSource: $0["hrSource"])
+                    }
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Shared
 
 // MARK: - v17 store: Lab Book markers
 //
@@ -111,36 +112,57 @@ extension WhoopStore {
     @discardableResult
     public func upsertLabMarkers(_ rows: [LabMarkerRow]) async throws -> Int {
         guard !rows.isEmpty else { return 0 }
-        return try syncWrite { db in
-            var written = 0
-            // Track which (deviceId, markerKey, day) cells need re-projecting.
-            var touched: Set<DayCell> = []
-            for r in rows {
-                // Upsert keyed on the natural index, NOT on the `id` PK: a re-import of the
-                // "same reading" (same deviceId+markerKey+takenAt+source) must update, not
-                // duplicate, even if the caller minted a fresh id.
-                try db.execute(sql: """
-                    INSERT INTO labMarker
-                        (id, deviceId, markerKey, category, day, takenAt,
-                         value, valueText, unit, source, note, referenceText)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(deviceId, markerKey, takenAt, source) DO UPDATE SET
-                        category = excluded.category,
-                        day = excluded.day,
-                        value = excluded.value,
-                        valueText = excluded.valueText,
-                        unit = excluded.unit,
-                        note = excluded.note,
-                        referenceText = excluded.referenceText
-                    """, arguments: [
-                        r.id, r.deviceId, r.markerKey, r.category, r.day, r.takenAt,
-                        r.value, r.valueText, r.unit, r.source, r.note, r.referenceText,
-                    ])
-                written += db.changesCount
-                touched.insert(DayCell(deviceId: r.deviceId, markerKey: r.markerKey, day: r.day))
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // upsertLabMarkersPreservingId upserts each row on the natural key (deviceId,
+            // markerKey, takenAt, source), preserving the pre-existing row's id on conflict
+            // (matching the GRDB ON CONFLICT clause in the legacy branch below), AND runs the
+            // reprojectCell pass per touched cell internally, so no manual reprojection loop
+            // is needed here.
+            return Int(truncating: try await roomDb.whoopDao().upsertLabMarkersPreservingId(rows: rows.map { r in
+                Shared.LabMarkerRow(
+                    id: r.id, deviceId: r.deviceId, markerKey: r.markerKey, category: r.category,
+                    day: r.day, takenAt: Int64(r.takenAt),
+                    value: r.value.map { KotlinDouble(double: $0) }, valueText: r.valueText,
+                    unit: r.unit, source: r.source, note: r.note, referenceText: r.referenceText
+                )
+            }))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                var written = 0
+                // Track which (deviceId, markerKey, day) cells need re-projecting.
+                var touched: Set<DayCell> = []
+                for r in rows {
+                    // Upsert keyed on the natural index, NOT on the `id` PK: a re-import of the
+                    // "same reading" (same deviceId+markerKey+takenAt+source) must update, not
+                    // duplicate, even if the caller minted a fresh id.
+                    try db.execute(sql: """
+                        INSERT INTO labMarker
+                            (id, deviceId, markerKey, category, day, takenAt,
+                             value, valueText, unit, source, note, referenceText)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(deviceId, markerKey, takenAt, source) DO UPDATE SET
+                            category = excluded.category,
+                            day = excluded.day,
+                            value = excluded.value,
+                            valueText = excluded.valueText,
+                            unit = excluded.unit,
+                            note = excluded.note,
+                            referenceText = excluded.referenceText
+                        """, arguments: [
+                            r.id, r.deviceId, r.markerKey, r.category, r.day, r.takenAt,
+                            r.value, r.valueText, r.unit, r.source, r.note, r.referenceText,
+                        ])
+                    written += db.changesCount
+                    touched.insert(DayCell(deviceId: r.deviceId, markerKey: r.markerKey, day: r.day))
+                }
+                try reprojectCells(db, cells: touched)
+                return written
             }
-            try reprojectCells(db, cells: touched)
-            return written
         }
     }
 
@@ -149,35 +171,78 @@ extension WhoopStore {
     /// All readings in a category, oldest first (by takenAt). Served by
     /// `idx_labMarker_device_category` + the takenAt index.
     public func labMarkers(deviceId: String, category: String) async throws -> [LabMarkerRow] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT * FROM labMarker
-                WHERE deviceId = ? AND category = ?
-                ORDER BY takenAt ASC
-                """, arguments: [deviceId, category]).map(LabMarkerRow.decode)
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().labMarkersByCategory(deviceId: deviceId, category: category)
+            return rows.map { row in
+                LabMarkerRow(
+                    id: row.id, deviceId: row.deviceId, markerKey: row.markerKey, category: row.category,
+                    day: row.day, takenAt: Int(row.takenAt),
+                    value: row.value.map { Double(truncating: $0) }, valueText: row.valueText,
+                    unit: row.unit, source: row.source, note: row.note, referenceText: row.referenceText
+                )
+            }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT * FROM labMarker
+                    WHERE deviceId = ? AND category = ?
+                    ORDER BY takenAt ASC
+                    """, arguments: [deviceId, category]).map(LabMarkerRow.decode)
+            }
         }
     }
 
     /// Full reading history for one marker, oldest first (by takenAt). Served
     /// index-only by `idx_labMarker_device_marker_takenAt`.
     public func labMarkers(deviceId: String, markerKey: String) async throws -> [LabMarkerRow] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT * FROM labMarker
-                WHERE deviceId = ? AND markerKey = ?
-                ORDER BY takenAt ASC
-                """, arguments: [deviceId, markerKey]).map(LabMarkerRow.decode)
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().labMarkersByKey(deviceId: deviceId, markerKey: markerKey)
+            return rows.map { row in
+                LabMarkerRow(
+                    id: row.id, deviceId: row.deviceId, markerKey: row.markerKey, category: row.category,
+                    day: row.day, takenAt: Int(row.takenAt),
+                    value: row.value.map { Double(truncating: $0) }, valueText: row.valueText,
+                    unit: row.unit, source: row.source, note: row.note, referenceText: row.referenceText
+                )
+            }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT * FROM labMarker
+                    WHERE deviceId = ? AND markerKey = ?
+                    ORDER BY takenAt ASC
+                    """, arguments: [deviceId, markerKey]).map(LabMarkerRow.decode)
+            }
         }
     }
 
     /// Distinct marker keys present for a device, sorted ascending.
     public func markerKeysPresent(deviceId: String) async throws -> [String] {
-        try syncRead { db in
-            try String.fetchAll(db, sql: """
-                SELECT DISTINCT markerKey FROM labMarker
-                WHERE deviceId = ?
-                ORDER BY markerKey ASC
-                """, arguments: [deviceId])
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return try await roomDb.whoopDao().markerKeysPresent(deviceId: deviceId)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try String.fetchAll(db, sql: """
+                    SELECT DISTINCT markerKey FROM labMarker
+                    WHERE deviceId = ?
+                    ORDER BY markerKey ASC
+                    """, arguments: [deviceId])
+            }
         }
     }
 
@@ -189,15 +254,26 @@ extension WhoopStore {
     /// a row was deleted.
     @discardableResult
     public func deleteLabMarker(id: String) async throws -> Bool {
-        try syncWrite { db in
-            // Capture the cell so we can re-project after the delete.
-            guard let row = try Row.fetchOne(db, sql:
-                "SELECT * FROM labMarker WHERE id = ?", arguments: [id]).map(LabMarkerRow.decode) else {
-                return false
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // deleteLabMarker already captures the row's cell, deletes it, and reprojects
+            // that cell internally, matching the GRDB legacy branch's sequence exactly.
+            return Bool(truncating: try await roomDb.whoopDao().deleteLabMarker(id: id))
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                // Capture the cell so we can re-project after the delete.
+                guard let row = try Row.fetchOne(db, sql:
+                    "SELECT * FROM labMarker WHERE id = ?", arguments: [id]).map(LabMarkerRow.decode) else {
+                    return false
+                }
+                try db.execute(sql: "DELETE FROM labMarker WHERE id = ?", arguments: [id])
+                try reprojectCells(db, cells: [DayCell(deviceId: row.deviceId, markerKey: row.markerKey, day: row.day)])
+                return true
             }
-            try db.execute(sql: "DELETE FROM labMarker WHERE id = ?", arguments: [id])
-            try reprojectCells(db, cells: [DayCell(deviceId: row.deviceId, markerKey: row.markerKey, day: row.day)])
-            return true
         }
     }
 

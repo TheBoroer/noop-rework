@@ -1,7 +1,14 @@
+@file:OptIn(ExperimentalTime::class)
+
 package com.noop.data
 
 import androidx.room.Room
+import androidx.room.RoomDatabase
+import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import androidx.sqlite.execSQL
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 
@@ -12,11 +19,33 @@ import kotlinx.coroutines.IO
  * the host libsqlite version) and run queries on [Dispatchers.IO], mirroring the GRDB store the Swift
  * app uses. A fresh database is created straight at the current schema version (no in-place upgrade
  * path), so no migrations are registered.
+ *
+ * Task 6 (device registry): GRDB's own MIGRATION_7_8-equivalent (v15) seeds one `pairedDevice` row
+ * ("my-whoop", active) on every migrate call, including a fresh install; Room's fresh-install path
+ * here built straight at the current schema with no such seed, so a fresh install had zero paired
+ * devices once the registry started reading from Room. Fixed the same way as Android's #1037 fix
+ * (`WhoopDatabase.android.kt`'s `onCreate` callback, same idempotent INSERT OR IGNORE, same literal
+ * values): a `RoomDatabase.Callback.onCreate` fires exactly once, only for a database created fresh at
+ * the current version (never for one opened from an existing file), using the KMP native-target
+ * `SQLiteConnection`-based overload (Android's callback takes a `SupportSQLiteDatabase` instead; this
+ * one is common to every Room target and is what the bundled-driver Apple builder needs).
  */
 fun whoopDatabase(path: String): WhoopDatabase =
     Room.databaseBuilder<WhoopDatabase>(name = path)
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
+        .addCallback(object : RoomDatabase.Callback() {
+            override fun onCreate(connection: SQLiteConnection) {
+                val now = Clock.System.now().toEpochMilliseconds() / 1000
+                connection.execSQL(
+                    "INSERT OR IGNORE INTO `pairedDevice` " +
+                        "(`id`, `brand`, `model`, `nickname`, `sourceKind`, `capabilities`, " +
+                        "`status`, `addedAt`, `lastSeenAt`) VALUES " +
+                        "('my-whoop', 'WHOOP', 'WHOOP', NULL, 'liveBLE', " +
+                        "'hr,hrv,spo2,skinTemp,sleep,strainLoad', 'active', $now, $now)",
+                )
+            }
+        })
         .build()
 
 /**

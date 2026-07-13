@@ -146,7 +146,12 @@ final class SourceCoordinator: ObservableObject {
 
         connectedPeripheralUUID
             .removeDuplicates()
-            .sink { [weak self] uuid in self?.connectedPeripheralChanged(to: uuid) }
+            // Task 6 note: the handler is async (it awaits the registry), so each emission is handled
+            // in its own @MainActor Task. Two rapid DISTINCT uuids could in theory both read the
+            // registry's pre-write state before either setPeripheralId lands (the sync version could
+            // not interleave). Unreachable at BLE connect cadence + removeDuplicates, but if adopt
+            // races ever surface (#52), serialize emissions through a single AsyncStream consumer.
+            .sink { [weak self] uuid in Task { await self?.connectedPeripheralChanged(to: uuid) } }
             .store(in: &cancellables)
     }
 
@@ -407,7 +412,7 @@ final class SourceCoordinator: ObservableObject {
     ///       `connectedPeripheralUUID` post-bond). The stored pin is dead (it refused the bond N× in a row);
     ///       RE-ADOPT the working strap so we stop looping on the strap that won't bond. See #52.
     ///   • it already matches → nothing to write.
-    private func connectedPeripheralChanged(to uuid: String?) {
+    private func connectedPeripheralChanged(to uuid: String?) async {
         // Track the live strap's uuid for the WHOOP->WHOOP adopt-in-place skip (#74). nil is a
         // disconnect/never-connected republish: clear it so a later make-active can't wrongly match a stale
         // link, then fall through to the existing ignore.
@@ -421,7 +426,7 @@ final class SourceCoordinator: ObservableObject {
         switch device.peripheralId {
         case .none:
             // First connect for this WHOOP row → adopt the strap's stable identity.
-            registry.setPeripheralId(activeId, peripheralId: uuid)
+            await registry.setPeripheralId(activeId, peripheralId: uuid)
         case .some(uuid):
             break                               // already adopted this exact strap → nothing to do
         case .some(let existing):
@@ -433,7 +438,7 @@ final class SourceCoordinator: ObservableObject {
             // "don't clobber" path below is preserved for every normal/transient different-strap connect.
             if live.encryptedBond {
                 live.append(log: "Multi-WHOOP (#52): active device \(activeId) was pinned to strap \(existing) which refused to bond — re-adopting the working strap \(uuid).")
-                registry.setPeripheralId(activeId, peripheralId: uuid)
+                await registry.setPeripheralId(activeId, peripheralId: uuid)
             } else {
                 live.append(log: "Multi-WHOOP: active device \(activeId) is registered to strap \(existing) but \(uuid) connected — not overwriting.")
             }

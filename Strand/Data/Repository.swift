@@ -165,6 +165,11 @@ final class Repository: ObservableObject {
     /// Imported (export-verbatim) sleep figures by day. Empty until a WHOOP import lands.
     @Published var importedSleep: [String: ImportedSleepFigures] = [:]
     @Published var loaded = false
+    /// One-time Room cutover progress (Phase 2c-1 Task 3), `0...1` while it runs, `nil` otherwise
+    /// (nothing to migrate, already migrated, or the ETL just finished). Drives a minimal launch
+    /// overlay; see `ensureStore()`, which fills this LIVE (Fix 2) via `WhoopStore.open(path:onProgress:)`'s
+    /// callback, not a post-hoc replay of `WhoopStore.migrationProgress`.
+    @Published private(set) var migrationProgressFraction: Double?
     /// How much history each source currently holds, recomputed on every `refresh()`. Powers the
     /// Data Sources "Freshness Pipeline" card so the user can see imported vs computed vs Apple coverage.
     @Published private(set) var freshness: RepositoryFreshness = .empty
@@ -508,12 +513,25 @@ final class Repository: ObservableObject {
             }
             let s: WhoopStore
             do {
-                s = try await WhoopStore(path: path)
+                // Room cutover (Task 3 Fix 2): `open`'s `onProgress` fires LIVE, once per committed
+                // ETL batch, while this call is still awaiting, not after the fact from
+                // `migrationProgress`'s replay (which only became observable once the whole store had
+                // already finished opening, so the overlay used to flash through a finished ETL
+                // instead of tracking it). It only fires on a legacy-only launch that actually runs
+                // the ETL; every other path (fresh install, already-Room, in-memory) never touches
+                // `migrationProgressFraction`, leaving it at its initial `nil`.
+                s = try await WhoopStore.open(path: path) { [weak self] fraction in
+                    Task { @MainActor in self?.migrationProgressFraction = fraction }
+                }
             } catch {
                 let ns = error as NSError
                 NSLog("WhoopStore: ensureStore FAILED opening store: \(ns.domain) code=\(ns.code): \(ns.localizedDescription)")
                 return nil
             }
+            // Clear the overlay once the open (ETL included) has actually finished, whether it
+            // succeeded or fell back: `onProgress` may have left this at its final value (1.0 on
+            // success, less than 1.0 on a fallback).
+            self.migrationProgressFraction = nil
             try? await s.upsertDevice(id: deviceId, mac: nil, name: "WHOOP")
             return s
         }
@@ -1427,7 +1445,7 @@ final class Repository: ObservableObject {
         // #938: resolve each source id's strap family ONCE (skin-temp raw→°C is family-specific: 5/MG
         // centidegrees vs a 4.0 v24 raw ADC). Cheap registry snapshot; a positively-identified 4.0 maps to
         // `.whoop4`, everything else (5/MG, imports, unknown) to `.whoop5` — the prior /100 behaviour.
-        let familyById = Self.skinTempFamilies(store: store, ids: unionIds)
+        let familyById = await Self.skinTempFamilies(store: store, ids: unionIds)
         var perId: [[TrendPoint]] = []
         for id in unionIds {
             perId.append(await timelineRawMetric(metric: metric, store: store, source: id,
@@ -1445,8 +1463,8 @@ final class Repository: ObservableObject {
     /// and every other id — a 5/MG, a non-WHOOP import, or an id absent from the registry — maps to
     /// `.whoop5` (the prior /100 behaviour), so only a KNOWN 4.0 changes scale. Best-effort: an unreadable
     /// registry yields an empty map, so every caller falls back to `.whoop5`.
-    private static func skinTempFamilies(store: WhoopStore, ids: [String]) -> [String: DeviceFamily] {
-        let devices = (try? DeviceRegistryStore(dbQueue: store.registryWriter).all()) ?? []
+    private static func skinTempFamilies(store: WhoopStore, ids: [String]) async -> [String: DeviceFamily] {
+        let devices = (try? await DeviceRegistryStore(store: store).all()) ?? []
         var out: [String: DeviceFamily] = [:]
         for id in ids {
             let isW4 = devices.first(where: { $0.id == id }).map { WhoopModel(rawValue: $0.model) == .whoop4 } ?? false

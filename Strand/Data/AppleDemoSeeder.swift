@@ -34,7 +34,7 @@ enum AppleDemoSeeder {
     /// Seed only if requested AND the store is empty. Safe to call on every launch.
     static func seedIfRequested(into store: WhoopStore) async {
         guard requested else { return }
-        seedDemoDeviceIfNeeded(into: store)
+        await seedDemoDeviceIfNeeded(into: store)
         let existing = (try? await store.dailyMetrics(deviceId: whoop, from: "0000-00-00", to: "9999-99-99")) ?? []
         guard existing.isEmpty else { return }
         do { try await seed(into: store) }
@@ -46,16 +46,16 @@ enum AppleDemoSeeder {
     /// `.paired` "Polar H10" — the screenshot then shows the WHOOP (Active) plus a paired strap. Status
     /// `.paired` (not `.active`) keeps the WHOOP active, so the SourceCoordinator stays dormant and the
     /// existing WHOOP path is untouched. No-op once a second device already exists.
-    private static func seedDemoDeviceIfNeeded(into store: WhoopStore) {
-        let registry = DeviceRegistryStore(dbQueue: store.registryWriter)
-        guard let devices = try? registry.all() else { return }
+    private static func seedDemoDeviceIfNeeded(into store: WhoopStore) async {
+        let registry = DeviceRegistryStore(store: store)
+        guard let devices = try? await registry.all() else { return }
         guard devices.allSatisfy({ $0.id == whoop }) else { return }  // only the seeded WHOOP present
         let now = Int(Date().timeIntervalSince1970)
         let polar = PairedDevice(
             id: "polar-h10-demo", brand: "Polar", model: "H10", nickname: nil,
             sourceKind: .liveBLE, capabilities: [.hr, .hrv], status: .paired,
             addedAt: now - 86_400, lastSeenAt: now - 3_600)
-        try? registry.add(polar)
+        try? await registry.add(polar)
     }
 
     private static func seed(into store: WhoopStore) async throws {

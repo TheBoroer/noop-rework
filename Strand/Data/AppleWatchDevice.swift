@@ -108,7 +108,7 @@ enum AppleWatchDevice {
         let existing = registry.devices.first(where: { $0.id == deviceId })
         guard let device = device(daily: daily, apple: apple, authorized: authorized,
                                   existing: existing, now: now) else { return }
-        registry.add(device)
+        await registry.add(device)
     }
 
     // MARK: - Day helpers

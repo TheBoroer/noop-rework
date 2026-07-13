@@ -6,19 +6,19 @@ import WhoopProtocol
 /// v12 migration + COALESCE read: PPG-derived HR from the WHOOP 5.0 v26 optical buffer (#156).
 final class PpgHrSampleTests: XCTestCase {
     func testV12CreatesPpgHrTable() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("ppgHrSample"))
     }
 
     func testPpgHrPrimaryKeyIsDeviceIdTs() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.primaryKeyColumns("ppgHrSample")
         XCTAssertEqual(cols, ["deviceId", "ts"])
     }
 
     func testPpgHrInsertRoundTripAndDedup() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let streams = Streams(ppgHr: [
             PpgHrSample(ts: 1_780_916_150, bpm: 63, conf: 0.81),
             PpgHrSample(ts: 1_780_916_151, bpm: 63, conf: 0.79),
@@ -34,7 +34,7 @@ final class PpgHrSampleTests: XCTestCase {
 
     /// hrBuckets COALESCEs: a measured second wins, a PPG-only second fills the gap.
     func testHrBucketsCoalescesPpgWhereNoMeasuredHr() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let dev = "my-whoop"
         let base = 1_780_000_000
         // Measured hr at t=base (90 bpm); PPG at base (will be IGNORED — measured wins) and at base+1
@@ -55,7 +55,7 @@ final class PpgHrSampleTests: XCTestCase {
     /// hrSamples COALESCEs the same way: a measured second wins, a PPG-only second fills the gap,
     /// and the REAL PPG bpm is ROUND-ed into the `HRSample.bpm` Int domain (70.6 -> 71).
     func testHrSamplesCoalescesPpgWhereNoMeasuredHr() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let dev = "my-whoop"
         let base = 1_780_000_000
         try await store.insert(Streams(hr: [HRSample(ts: base, bpm: 90)]), deviceId: dev)
@@ -75,7 +75,7 @@ final class PpgHrSampleTests: XCTestCase {
     /// hrSamples — this is what lets such a night clear the night-stager's HR-count gate and be
     /// scored (#172). Every PPG second is returned because the anti-join finds no measured row to win.
     func testHrSamplesReturnsPpgRowsForPpgOnlyNight() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let dev = "my-whoop"
         let base = 1_780_000_000
         let ppg = (0..<300).map { PpgHrSample(ts: base + $0, bpm: 55, conf: 0.9) }
@@ -89,7 +89,7 @@ final class PpgHrSampleTests: XCTestCase {
 
     /// With no PPG rows at all, hrBuckets is unchanged from the measured-only behaviour.
     func testHrBucketsUnchangedWithoutPpg() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let dev = "my-whoop"
         let base = 1_780_000_000
         try await store.insert(Streams(hr: [

@@ -38,6 +38,48 @@ interface WhoopDao : DeviceRegistryDao {
     // (no Robolectric — see DeviceRegistryTest). Room flattens the inherited @Query/@Insert methods
     // into this @Dao at compile time, so they generate exactly as if declared here.
 
+    // MARK: - Device registry atomic composites (Task 6)
+    //
+    // [DeviceRegistry] (the Kotlin-only façade Android uses) wraps its own two-step writes in a
+    // `Transactor` (`db.useWriterConnection { it.immediateTransaction { ... } }`) that isn't a `fun
+    // interface` (its one method is generic), so it isn't SAM-convertible and bridging it to Swift is
+    // unproven. The Swift `WhoopStore` Room branch instead calls these two directly on `whoopDao()`,
+    // the exact same surface every other delegated store already uses: `@Transaction` on a
+    // default-implemented suspend method wraps its body (calls to other DAO methods on `this`) in one
+    // transaction at Room codegen time, so these are as atomic as [DeviceRegistry]'s own equivalents.
+
+    /** I1: promote [id] to active, demoting whatever was active before, in ONE transaction (mirrors
+     *  the Swift store's single write transaction / [DeviceRegistry.setActive]). */
+    @Transaction
+    suspend fun setActiveAtomic(id: String, now: Long) {
+        demoteActive()
+        promote(id, now)
+    }
+
+    /** Delete every recorded row for [deviceId] across all deviceId-keyed tables in ONE transaction
+     *  (all-or-nothing) -- mirrors Swift's `DeviceRegistryStore.deleteAllData` /
+     *  [DeviceRegistry.deleteDeviceData]. */
+    @Transaction
+    suspend fun deleteDeviceDataAtomic(deviceId: String) {
+        deleteHrFor(deviceId)
+        deleteRrFor(deviceId)
+        deleteSpo2For(deviceId)
+        deleteSkinTempFor(deviceId)
+        deleteRespFor(deviceId)
+        deleteGravityFor(deviceId)
+        deleteStepsFor(deviceId)
+        deletePpgHrFor(deviceId)
+        deleteEventsFor(deviceId)
+        deleteBatteryFor(deviceId)
+        deleteDailyMetricsFor(deviceId)
+        deleteSleepSessionsFor(deviceId)
+        deleteJournalFor(deviceId)
+        deleteWorkoutsFor(deviceId)
+        deleteAppleDailyFor(deviceId)
+        deleteMetricSeriesFor(deviceId)
+        deleteDayOwnershipFor(deviceId)
+    }
+
     // MARK: - Stream inserts (idempotent by natural key)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -91,10 +133,80 @@ interface WhoopDao : DeviceRegistryDao {
     @Upsert
     suspend fun upsertSleepSessions(rows: List<SleepSession>)
 
+    /**
+     * Upsert ONE cached sleep session with CASE-WHEN edit preservation, a byte-identical port of the
+     * Swift MetricsCache.upsertSleepSessions per-row SQL: a user-corrected night (userEdited = 1)
+     * keeps its hand-set endTs/stagesJSON/startTsAdjusted instead of being overwritten by a
+     * recompute/import refresh; userEdited itself is never cleared here (the dedicated edit path is
+     * [applySleepEdit]). Natural key (deviceId, startTs). motionJSON/sleepStateJSON are named in
+     * neither the INSERT column list nor the SET clause, so SQLite implicitly preserves them across a
+     * conflict, exactly as GRDB does.
+     *
+     * Deliberately separate from the plain [upsertSleepSessions]: Android's own recompute path relies
+     * on that one staying a plain latest-wins upsert (its edit preservation lives one layer up, in the
+     * IntelligenceEngine overlap guard that skips re-upserting an edited session entirely). This
+     * method exists ONLY for the iOS Room branch, which ports GRDB's SQL-level CASE-WHEN protection
+     * verbatim. The Swift caller loops over sessions calling this once per row, mirroring the GRDB
+     * per-row loop, and counts rows processed rather than reading this return value: Room requires a
+     * raw @Query INSERT to return Long (the affected rowid) or Unit, never Int, so this can't mirror
+     * GRDB's `changesCount` directly, but every call here is guaranteed to touch exactly one row
+     * (insert or update, there is no DO NOTHING branch), which is exactly what the accumulated
+     * `changesCount` would have summed to anyway.
+     */
+    @Query(
+        "INSERT INTO sleepSession " +
+            "(deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON, userEdited, startTsAdjusted) " +
+            "VALUES (:deviceId, :startTs, :endTs, :efficiency, :restingHr, :avgHrv, :stagesJSON, :userEdited, :startTsAdjusted) " +
+            "ON CONFLICT(deviceId, startTs) DO UPDATE SET " +
+            "endTs = CASE WHEN sleepSession.userEdited THEN sleepSession.endTs ELSE excluded.endTs END, " +
+            "efficiency = excluded.efficiency, " +
+            "restingHr = excluded.restingHr, " +
+            "avgHrv = excluded.avgHrv, " +
+            "stagesJSON = CASE WHEN sleepSession.userEdited THEN sleepSession.stagesJSON ELSE excluded.stagesJSON END, " +
+            "startTsAdjusted = CASE WHEN sleepSession.userEdited THEN sleepSession.startTsAdjusted ELSE excluded.startTsAdjusted END, " +
+            "userEdited = sleepSession.userEdited"
+    )
+    suspend fun upsertSleepSessionPreservingEdit(
+        deviceId: String,
+        startTs: Long,
+        endTs: Long,
+        efficiency: Double?,
+        restingHr: Int?,
+        avgHrv: Double?,
+        stagesJSON: String?,
+        userEdited: Boolean,
+        startTsAdjusted: Long?,
+    ): Long
+
+    /**
+     * Hand-correct a sleep session's bed (onset) and/or wake (end) time. Sets userEdited = 1 so the
+     * next recompute/import upsert ([upsertSleepSessionPreservingEdit]) preserves the corrected
+     * bounds instead of overwriting them with the strap-detected values. Keyed by the stable detected
+     * natural key (deviceId, detectedStartTs), which never moves; the corrected onset is stored in
+     * startTsAdjusted. `stagesJSON`, when non-null, replaces the stored breakdown; null keeps the
+     * existing stages (COALESCE). Byte-identical port of Swift MetricsCache.applySleepEdit. Returns
+     * rows changed (0 if no such session).
+     */
+    @Query(
+        "UPDATE sleepSession " +
+            "SET startTsAdjusted = :newStartTs, endTs = :newEndTs, " +
+            "stagesJSON = COALESCE(:stagesJSON, stagesJSON), userEdited = 1 " +
+            "WHERE deviceId = :deviceId AND startTs = :detectedStartTs"
+    )
+    suspend fun applySleepEdit(
+        deviceId: String,
+        detectedStartTs: Long,
+        newStartTs: Long,
+        newEndTs: Long,
+        stagesJSON: String?,
+    ): Int
+
     /** Remove one sleep session by its full primary key (deviceId, startTs) — used by the
-     *  bed/wake-time edit, which deletes then re-inserts because startTs is part of the PK. */
+     *  bed/wake-time edit, which deletes then re-inserts because startTs is part of the PK. Returns
+     *  rows deleted (0 if no such session). Widened Unit -> Int for the iOS Room branch (Swift
+     *  MetricsCache.deleteSleepSession returns rows deleted); all existing Kotlin callers discard it. */
     @Query("DELETE FROM sleepSession WHERE deviceId = :deviceId AND startTs = :startTs")
-    suspend fun deleteSleepSession(deviceId: String, startTs: Long)
+    suspend fun deleteSleepSession(deviceId: String, startTs: Long): Int
 
     /** Manually ADD a sleep session the detector missed — typically a daytime NAP (#508). Port of iOS
      *  MetricsCache.insertManualSleepSession. `onConflict = IGNORE` makes it purely ADDITIVE: it can
@@ -157,6 +269,32 @@ interface WhoopDao : DeviceRegistryDao {
     @Query("SELECT sleepStateJSON FROM sleepSession WHERE deviceId = :deviceId AND startTs = :sessionStart")
     suspend fun sessionSleepStateJson(deviceId: String, sessionStart: Long): String?
 
+    /**
+     * Batched twin of [sessionMotionJson] for a SET of session starts: the persisted per-epoch motion
+     * series for each of [sessionStarts] that HAS one, in a single query, keyed by startTs. A start
+     * whose column is NULL/absent is simply omitted from the result (absent stays absent, never a
+     * fabricated zero array). Byte-identical shape to Swift MetricsCache.sessionMotions; the 900-row
+     * IN-clause chunking lives in the Swift caller (matching the GRDB original), so this query itself
+     * is unchunked.
+     */
+    @Query(
+        "SELECT startTs, motionJSON FROM sleepSession " +
+            "WHERE deviceId = :deviceId AND startTs IN (:sessionStarts) AND motionJSON IS NOT NULL"
+    )
+    suspend fun sessionMotionsForStarts(deviceId: String, sessionStarts: List<Long>): List<SessionMotionRow>
+
+    /**
+     * Batched twin of [sessionSleepStateJson] over a RANGE: every session in [from, to] (by startTs)
+     * that has banked per-epoch band sleep_state, in a single query, keyed by startTs. NULL/absent
+     * columns are omitted (absent stays absent), identical to the single-key accessor. Byte-identical
+     * shape to Swift MetricsCache.sessionSleepStates.
+     */
+    @Query(
+        "SELECT startTs, sleepStateJSON FROM sleepSession " +
+            "WHERE deviceId = :deviceId AND startTs >= :from AND startTs <= :to AND sleepStateJSON IS NOT NULL"
+    )
+    suspend fun sessionSleepStatesInRange(deviceId: String, from: Long, to: Long): List<SessionSleepStateRow>
+
     @Upsert
     suspend fun upsertMetricSeries(rows: List<MetricSeriesRow>)
 
@@ -165,6 +303,55 @@ interface WhoopDao : DeviceRegistryDao {
 
     @Upsert
     suspend fun upsertWorkouts(rows: List<WorkoutRow>)
+
+    /**
+     * Upsert ONE workout row, byte-identical to the Swift JournalWorkoutAppleCache.upsertWorkouts
+     * per-row SQL: `routePolyline` is named in NEITHER the INSERT column list NOR the ON CONFLICT SET
+     * clause, so a re-import that carries no route (Swift's `WorkoutRow` has no `routePolyline` field
+     * at all) can never clobber a GPS route Android already recorded for that workout. Mirrors the
+     * `GrdbMigrator.kt` idiom of omitting the column entirely rather than passing null through.
+     *
+     * Deliberately separate from the plain [upsertWorkouts]: this method exists ONLY for the iOS Room
+     * branch, which has no `routePolyline` to preserve-or-clobber in the first place. Natural key
+     * (deviceId, startTs, sport). The Swift caller loops over rows calling this once per workout,
+     * mirroring the GRDB per-row loop, and counts rows processed rather than reading this return
+     * value: Room requires a raw @Query INSERT to return Long (the affected rowid) or Unit, never
+     * Int, but every call here is guaranteed to touch exactly one row (insert or update, no DO
+     * NOTHING branch), matching what GRDB's accumulated `changesCount` would have summed to.
+     */
+    @Query(
+        "INSERT INTO workout " +
+            "(deviceId, startTs, endTs, sport, source, durationS, energyKcal, " +
+            "avgHr, maxHr, strain, distanceM, zonesJSON, notes) " +
+            "VALUES (:deviceId, :startTs, :endTs, :sport, :source, :durationS, :energyKcal, " +
+            ":avgHr, :maxHr, :strain, :distanceM, :zonesJSON, :notes) " +
+            "ON CONFLICT(deviceId, startTs, sport) DO UPDATE SET " +
+            "endTs = excluded.endTs, " +
+            "source = excluded.source, " +
+            "durationS = excluded.durationS, " +
+            "energyKcal = excluded.energyKcal, " +
+            "avgHr = excluded.avgHr, " +
+            "maxHr = excluded.maxHr, " +
+            "strain = excluded.strain, " +
+            "distanceM = excluded.distanceM, " +
+            "zonesJSON = excluded.zonesJSON, " +
+            "notes = excluded.notes"
+    )
+    suspend fun upsertWorkoutPreservingRoute(
+        deviceId: String,
+        startTs: Long,
+        endTs: Long,
+        sport: String,
+        source: String,
+        durationS: Double?,
+        energyKcal: Double?,
+        avgHr: Int?,
+        maxHr: Int?,
+        strain: Double?,
+        distanceM: Double?,
+        zonesJSON: String?,
+        notes: String?,
+    ): Long
 
     @Upsert
     suspend fun upsertAppleDaily(rows: List<AppleDaily>)
@@ -216,6 +403,39 @@ interface WhoopDao : DeviceRegistryDao {
             ") GROUP BY ts / :bucketSeconds ORDER BY bucket ASC"
     )
     suspend fun hrBuckets(deviceId: String, from: Long, to: Long, bucketSeconds: Long): List<HrBucket>
+
+    /**
+     * Like [hrBuckets] but ALSO surfaces the per-bucket weakest confidence (`MIN(conf)`): measured
+     * `hrSample` rows contribute 1.0, PPG-derived fallback rows their stored autocorrelation conf, so a
+     * bucket touched by ANY weak-optical estimate reads weak (conservative) and a purely-measured bucket
+     * stays 1.0. The bpm aggregate + COALESCE anti-join (PPG fills only seconds the strap never reported)
+     * are BYTE-IDENTICAL to [hrBuckets]; only the extra projection differs. Mirrors Swift Reads.swift
+     * hrBuckets, which the iOS chart reads to shade a weak-optical stretch (ryanAtriumAi #988).
+     */
+    @Query(
+        "SELECT (ts / :bucketSeconds) * :bucketSeconds AS bucket, AVG(bpm) AS avgBpm, MIN(conf) AS minConf FROM (" +
+            "SELECT ts, bpm, 1.0 AS conf FROM hrSample " +
+            "WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
+            "UNION ALL " +
+            "SELECT p.ts AS ts, p.bpm AS bpm, p.conf AS conf FROM ppgHrSample p " +
+            "WHERE p.deviceId = :deviceId AND p.ts >= :from AND p.ts <= :to " +
+            "AND NOT EXISTS (SELECT 1 FROM hrSample h WHERE h.deviceId = p.deviceId AND h.ts = p.ts)" +
+            ") GROUP BY ts / :bucketSeconds ORDER BY bucket ASC"
+    )
+    suspend fun hrBucketsWithConf(deviceId: String, from: Long, to: Long, bucketSeconds: Long): List<HrBucketConf>
+
+    /**
+     * Cheap raw-HR change fingerprint over a window: `(count, maxTs)` for one device in `[from, to]`,
+     * measured `hrSample` ONLY (no PPG union, this is the RAW stream watermark). One indexed aggregate,
+     * no row materialisation (#836). COALESCE so an empty window is `(0, 0)`, never null. Mirrors Swift
+     * Reads.swift hrFingerprint (device- and window-scoped), distinct from the whole-history
+     * [WhoopRepository.hrFingerprint] idle-tick gate built on [countHr]/[maxHrTs].
+     */
+    @Query(
+        "SELECT COUNT(*) AS count, COALESCE(MAX(ts), 0) AS maxTs FROM hrSample " +
+            "WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to"
+    )
+    suspend fun hrFingerprint(deviceId: String, from: Long, to: Long): HrFingerprint
 
     /** Raw v26 PPG-derived HR samples in [from, to] (ascending). (#156) */
     @Query(
@@ -305,10 +525,12 @@ interface WhoopDao : DeviceRegistryDao {
      * lexicographic = chronological). The #277 local-day re-bucketing migration uses this to drop the
      * computed ("-noop") UTC-keyed rows across the recompute window before re-upserting the LOCAL-keyed
      * rows, so a UTC/local duplicate day can't linger. Source-scoped, so imported "my-whoop" rows are
-     * never touched. Mirrors WhoopStore MetricsCache.deleteDailyMetrics.
+     * never touched. Mirrors WhoopStore MetricsCache.deleteDailyMetrics. Widened Unit -> Int for the
+     * iOS Room branch (Swift MetricsCache.deleteDailyMetrics returns rows deleted); the existing
+     * Kotlin caller discards it.
      */
     @Query("DELETE FROM dailyMetric WHERE deviceId = :deviceId AND day >= :from AND day <= :to")
-    suspend fun deleteDailyMetricsInRange(deviceId: String, from: String, to: String)
+    suspend fun deleteDailyMetricsInRange(deviceId: String, from: String, to: String): Int
 
     /** All cached daily metrics for a device, oldest first. Convenience for analytics windows. */
     @Query("SELECT * FROM dailyMetric WHERE deviceId = :deviceId ORDER BY day ASC")
@@ -361,6 +583,18 @@ interface WhoopDao : DeviceRegistryDao {
     /** Distinct metric keys present for a device, sorted ascending (Swift metricKeys, v9). */
     @Query("SELECT DISTINCT key FROM metricSeries WHERE deviceId = :deviceId ORDER BY key ASC")
     suspend fun metricKeys(deviceId: String): List<String>
+
+    /**
+     * The earliest and latest `day` on file for one (deviceId, key) series. Both fields come back
+     * null together when the series has no rows (SQLite MIN/MAX over an empty set is NULL); Swift's
+     * `MetricSeriesStore.metricDays` treats that as "no range" (nil), never a half-filled tuple.
+     * Byte-identical SQL to the Swift original.
+     */
+    @Query(
+        "SELECT MIN(day) AS earliest, MAX(day) AS latest FROM metricSeries " +
+            "WHERE deviceId = :deviceId AND key = :key"
+    )
+    suspend fun metricDayRange(deviceId: String, key: String): MetricDayRange
 
     /** Delete one projected day for a key (used when a Lab Book reading's last numeric value
      *  for a (markerKey, day) cell is removed). Swift LabMarkerStore.reprojectCells delete branch. */
@@ -428,6 +662,77 @@ interface WhoopDao : DeviceRegistryDao {
     }
 
     /**
+     * Upsert ONE marker row with id preservation, byte-identical to the Swift
+     * LabMarkerStore.upsertLabMarkers per-row SQL: `id` is named in the INSERT column list but
+     * NOT in the ON CONFLICT SET clause, so a re-import that lands on an existing natural key
+     * (deviceId, markerKey, takenAt, source) keeps the ORIGINAL row's id rather than adopting the
+     * caller's id, exactly like the sleep-edit and route-preserving upserts above.
+     *
+     * Deliberately separate from [insertLabMarkersRaw] (`OnConflictStrategy.REPLACE`), which is
+     * Android's own primitive and, being a REPLACE rather than an UPDATE, DOES adopt the new row's
+     * id on conflict. That divergence is fine for Android (nothing keys off a marker's id surviving a
+     * re-import there), but the iOS Room branch needs the GRDB-identical id-stable behaviour, so
+     * this method exists ONLY for that caller. The Swift caller loops over rows calling this once
+     * per marker, mirroring the GRDB per-row loop, and counts rows processed rather than reading
+     * this return value: Room requires a raw @Query INSERT to return Long (the affected rowid) or
+     * Unit, never Int, but every call here is guaranteed to touch exactly one row (insert or
+     * update, no DO NOTHING branch), matching what GRDB's accumulated `changesCount` would have
+     * summed to.
+     */
+    @Query(
+        "INSERT INTO labMarker " +
+            "(id, deviceId, markerKey, category, day, takenAt, value, valueText, unit, source, note, referenceText) " +
+            "VALUES (:id, :deviceId, :markerKey, :category, :day, :takenAt, :value, :valueText, :unit, :source, :note, :referenceText) " +
+            "ON CONFLICT(deviceId, markerKey, takenAt, source) DO UPDATE SET " +
+            "category = excluded.category, " +
+            "day = excluded.day, " +
+            "value = excluded.value, " +
+            "valueText = excluded.valueText, " +
+            "unit = excluded.unit, " +
+            "note = excluded.note, " +
+            "referenceText = excluded.referenceText"
+    )
+    suspend fun upsertLabMarkerPreservingId(
+        id: String,
+        deviceId: String,
+        markerKey: String,
+        category: String,
+        day: String,
+        takenAt: Long,
+        value: Double?,
+        valueText: String?,
+        unit: String,
+        source: String,
+        note: String?,
+        referenceText: String?,
+    ): Long
+
+    /**
+     * Upsert marker rows with id preservation ([upsertLabMarkerPreservingId]), then re-project each
+     * affected (markerKey, day) cell into `metricSeries` under [LAB_BOOK_SOURCE_ID], exactly like
+     * [upsertLabMarkers] but for the iOS Room branch. Returns the number of rows processed (Swift
+     * MetricsCache-style `written` count, matching the input row count since every row always
+     * touches exactly one, never a "0 rows changed" case). Atomic: the marker write and the
+     * projection can't diverge. Byte-identical to Swift WhoopStore.upsertLabMarkers.
+     */
+    @Transaction
+    suspend fun upsertLabMarkersPreservingId(rows: List<LabMarkerRow>): Int {
+        if (rows.isEmpty()) return 0
+        val cells = mutableSetOf<Triple<String, String, String>>()
+        for (row in rows) {
+            upsertLabMarkerPreservingId(
+                row.id, row.deviceId, row.markerKey, row.category, row.day, row.takenAt,
+                row.value, row.valueText, row.unit, row.source, row.note, row.referenceText,
+            )
+            cells.add(Triple(row.deviceId, row.markerKey, row.day))
+        }
+        for ((deviceId, markerKey, day) in cells) {
+            reprojectCell(deviceId, markerKey, day)
+        }
+        return rows.size
+    }
+
+    /**
      * Delete one reading by id; if it was the last numeric reading for its (markerKey, day) cell the
      * projected day is removed, otherwise the projection is recomputed from the remainder. Returns
      * true if a row was deleted. Byte-identical to Swift WhoopStore.deleteLabMarker.
@@ -487,10 +792,12 @@ interface WhoopDao : DeviceRegistryDao {
     /**
      * Delete one journal answer by natural key (the native logging card's "clear"). Source-scoped
      * by deviceId, so clearing a native ("noop-journal") answer never removes an identical imported
-     * row. Port of JournalWorkoutAppleCache.swift deleteJournal(deviceId:day:question:).
+     * row. Port of JournalWorkoutAppleCache.swift deleteJournal(deviceId:day:question:). Widened
+     * Unit -> Int for the iOS Room branch (the Swift original returns rows deleted); existing
+     * Kotlin callers discard it.
      */
     @Query("DELETE FROM journal WHERE deviceId = :deviceId AND day = :day AND question = :question")
-    suspend fun deleteJournalEntry(deviceId: String, day: String, question: String)
+    suspend fun deleteJournalEntry(deviceId: String, day: String, question: String): Int
 
     /**
      * Delete a device's journal within a day range (#136). The WHOOP importer clears exactly the span
@@ -532,9 +839,10 @@ interface WhoopDao : DeviceRegistryDao {
     suspend fun appleDaily(deviceId: String, from: String, to: String): List<AppleDaily>
 
     /** Delete a computed source's workouts of a given [sport] whose startTs is in [from, to]
-     *  (makes detected-workout re-derivation idempotent). (#78) */
+     *  (makes detected-workout re-derivation idempotent). (#78) Widened Unit -> Int for the iOS Room
+     *  branch (the Swift original returns rows deleted); existing Kotlin callers discard it. */
     @Query("DELETE FROM workout WHERE deviceId = :deviceId AND sport = :sport AND startTs >= :from AND startTs <= :to")
-    suspend fun deleteWorkoutsBySport(deviceId: String, sport: String, from: Long, to: Long)
+    suspend fun deleteWorkoutsBySport(deviceId: String, sport: String, from: Long, to: Long): Int
 
     /** Delete ONE workout by its full natural key (deviceId, startTs, sport). Used by the Workouts
      *  screen to remove a single manual / re-labelled session. (#107) */
@@ -593,6 +901,11 @@ interface WhoopDao : DeviceRegistryDao {
     @Query("SELECT COUNT(*) FROM stepSample") suspend fun countSteps(): Int
     @Query("SELECT COUNT(*) FROM respSample") suspend fun countResp(): Int
     @Query("SELECT COUNT(*) FROM gravitySample") suspend fun countGravity(): Int
+    // Persist-only stream counts (not summed by storageStats, but read by the iOS store's
+    // per-table test helpers, sleepStateCountForTest / ppgHrCountForTest, so the streams suites can
+    // assert row counts against the Room backend exactly as they do against GRDB).
+    @Query("SELECT COUNT(*) FROM sleepStateSample") suspend fun countSleepState(): Int
+    @Query("SELECT COUNT(*) FROM ppgHrSample") suspend fun countPpgHr(): Int
 
     // MARK: - Live convenience reads
 

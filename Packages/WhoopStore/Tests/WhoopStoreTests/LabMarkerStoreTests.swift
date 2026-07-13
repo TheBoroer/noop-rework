@@ -7,7 +7,7 @@ final class LabMarkerStoreTests: XCTestCase {
     // MARK: - v17 migration (additive: new table + indexes, nothing else dropped)
 
     func testV17CreatesLabMarkerTable() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("labMarker"))
 
@@ -22,7 +22,7 @@ final class LabMarkerStoreTests: XCTestCase {
     }
 
     func testV17CreatesIndexes() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let names = try await store.indexNamesForTest(table: "labMarker")
         XCTAssertTrue(names.contains("idx_labMarker_natural"))
         XCTAssertTrue(names.contains("idx_labMarker_device_marker_takenAt"))
@@ -32,7 +32,7 @@ final class LabMarkerStoreTests: XCTestCase {
     /// Additive: v17 must not drop any table that existed before it (incl. metricSeries,
     /// the projection sink).
     func testV17IsAdditive() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
                   "sleepSession", "dailyMetric", "journal", "workout", "appleDaily",
@@ -60,7 +60,7 @@ final class LabMarkerStoreTests: XCTestCase {
     // MARK: - upsert + read by marker / category / keys present
 
     func testUpsertReadByMarkerAndCategory() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertLabMarkers([
             mk(id: "a", key: "ldl", day: "2026-01-10", takenAt: 1_736_500_000, value: 3.4),
             mk(id: "b", key: "ldl", day: "2026-03-10", takenAt: 1_741_600_000, value: 3.1),
@@ -82,7 +82,7 @@ final class LabMarkerStoreTests: XCTestCase {
     // MARK: - idempotent by natural key (re-import does not duplicate)
 
     func testUpsertIdempotentByNaturalKey() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertLabMarkers([
             mk(id: "a", key: "ldl", day: "2026-01-10", takenAt: 1_736_500_000, value: 3.4),
         ])
@@ -99,7 +99,7 @@ final class LabMarkerStoreTests: XCTestCase {
     // MARK: - projection into metricSeries under lab-book
 
     func testWriteProjectsLatestNumericPerDayToMetricSeries() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // Two LDL readings on the SAME day — the later takenAt must win in the projection.
         try await store.upsertLabMarkers([
             mk(id: "a", key: "ldl", day: "2026-01-10", takenAt: 1_736_500_000, value: 3.4),
@@ -115,7 +115,7 @@ final class LabMarkerStoreTests: XCTestCase {
 
     /// A qualitative (valueText-only) reading must NOT project a row into metricSeries.
     func testQualitativeReadingDoesNotProject() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertLabMarkers([
             mk(id: "q", key: "covid_test", day: "2026-02-01", takenAt: 1_738_400_000,
                value: nil, valueText: "negative", source: "manual", category: "appointmentNote", unit: ""),
@@ -128,7 +128,7 @@ final class LabMarkerStoreTests: XCTestCase {
     // MARK: - delete removes the marker row AND its projected day
 
     func testDeleteRemovesRowAndProjection() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertLabMarkers([
             mk(id: "a", key: "ldl", day: "2026-01-10", takenAt: 1_736_500_000, value: 3.4),
         ])
@@ -150,7 +150,7 @@ final class LabMarkerStoreTests: XCTestCase {
     /// Deleting ONE of several same-day readings re-projects from the remainder rather
     /// than dropping the day.
     func testDeleteOneOfManyReProjectsRemainder() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertLabMarkers([
             mk(id: "a", key: "ldl", day: "2026-01-10", takenAt: 1_736_500_000, value: 3.4),
             mk(id: "b", key: "ldl", day: "2026-01-10", takenAt: 1_736_590_000, value: 3.0),

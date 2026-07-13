@@ -25,7 +25,7 @@ Everything platform-neutral lives in five SwiftPM packages under [`Packages/`](.
 declaring **both** `.macOS(.v13)` and `.iOS(.v16)`. Both app targets depend on them unchanged:
 
 - **`WhoopProtocol`** — BLE frame parsing, CRC, command/event/historical decode (the reverse-engineering core). *Never* imports CoreBluetooth or any UI framework; exposes GATT UUIDs as plain strings the app wraps in `CBUUID`.
-- **`WhoopStore`** — GRDB/SQLite persistence (decoded streams, daily/sleep/workout caches).
+- **`WhoopStore`**: on-device SQLite persistence (decoded streams, daily/sleep/workout caches). Same Swift API across macOS and iOS; as of Phase 2c-1 its storage is backed by the **shared Kotlin Room database** (the same store Android uses, via `Shared.xcframework`), so this is now genuinely shared with Android too, not just parity-mirrored. GRDB is retained only for the device-local raw outbox and BLE cursors (removed in Phase 2c-2). See [`DATA_MODEL.md`](DATA_MODEL.md) and the Phase 2c-1 appendix in [`superpowers/plans/phase1-baseline.md`](superpowers/plans/phase1-baseline.md).
 - **`StrandAnalytics`** — HRV / recovery / strain / sleep / calories / correlation math. Pure computation.
 - **`StrandImport`** — WHOOP CSV + Apple Health (`export.xml`) importers.
 - **`StrandDesign`** — the SwiftUI design system (palette, components, charts).

@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Shared
 
 // MARK: - v9 cache: generic long-format metric store
 // The substrate for a metric explorer. Where MetricsCache / JournalWorkoutAppleCache use a
@@ -29,19 +30,33 @@ extension WhoopStore {
     /// creating a duplicate.
     @discardableResult
     public func upsertMetricSeries(_ rows: [MetricPoint], deviceId: String) async throws -> Int {
-        try syncWrite { db in
-            var n = 0
-            for r in rows {
-                try db.execute(sql: """
-                    INSERT INTO metricSeries
-                        (deviceId, day, key, value)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(deviceId, day, key) DO UPDATE SET
-                        value = excluded.value
-                    """, arguments: [deviceId, r.day, r.key, r.value])
-                n += db.changesCount
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            // @Upsert on the natural key (deviceId, day, key): every row is guaranteed to touch
+            // exactly one, matching GRDB's accumulated changesCount above.
+            try await roomDb.whoopDao().upsertMetricSeries(rows: rows.map { r in
+                Shared.MetricSeriesRow(deviceId: deviceId, day: r.day, key: r.key, value: r.value)
+            })
+            return rows.count
+            #endif
+        case .legacyGrdb:
+            return try syncWrite { db in
+                var n = 0
+                for r in rows {
+                    try db.execute(sql: """
+                        INSERT INTO metricSeries
+                            (deviceId, day, key, value)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(deviceId, day, key) DO UPDATE SET
+                            value = excluded.value
+                        """, arguments: [deviceId, r.day, r.key, r.value])
+                    n += db.changesCount
+                }
+                return n
             }
-            return n
         }
     }
 
@@ -50,38 +65,68 @@ extension WhoopStore {
     /// Points for a single `key` on days in [from, to] (lexicographic YYYY-MM-DD compare),
     /// oldest day first. Served index-only by idx_metricSeries_device_key_day.
     public func metricSeries(deviceId: String, key: String, from: String, to: String) async throws -> [MetricPoint] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT day, key, value FROM metricSeries
-                WHERE deviceId = ? AND key = ? AND day >= ? AND day <= ?
-                ORDER BY day ASC
-                """, arguments: [deviceId, key, from, to])
-                .map { MetricPoint(day: $0["day"], key: $0["key"], value: $0["value"]) }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let rows = try await roomDb.whoopDao().metricSeries(deviceId: deviceId, key: key, from: from, to: to)
+            return rows.map { MetricPoint(day: $0.day, key: $0.key, value: $0.value) }
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Row.fetchAll(db, sql: """
+                    SELECT day, key, value FROM metricSeries
+                    WHERE deviceId = ? AND key = ? AND day >= ? AND day <= ?
+                    ORDER BY day ASC
+                    """, arguments: [deviceId, key, from, to])
+                    .map { MetricPoint(day: $0["day"], key: $0["key"], value: $0["value"]) }
+            }
         }
     }
 
     /// Distinct metric keys present for a device, sorted ascending.
     public func metricKeys(deviceId: String) async throws -> [String] {
-        try syncRead { db in
-            try String.fetchAll(db, sql: """
-                SELECT DISTINCT key FROM metricSeries
-                WHERE deviceId = ?
-                ORDER BY key ASC
-                """, arguments: [deviceId])
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            return try await roomDb.whoopDao().metricKeys(deviceId: deviceId)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                try String.fetchAll(db, sql: """
+                    SELECT DISTINCT key FROM metricSeries
+                    WHERE deviceId = ?
+                    ORDER BY key ASC
+                    """, arguments: [deviceId])
+            }
         }
     }
 
     /// Earliest and latest day for a given metric `key`, or nil if the key has no points.
     public func metricDays(deviceId: String, key: String) async throws -> (earliest: String, latest: String)? {
-        try syncRead { db in
-            guard let row = try Row.fetchOne(db, sql: """
-                SELECT MIN(day) AS earliest, MAX(day) AS latest FROM metricSeries
-                WHERE deviceId = ? AND key = ?
-                """, arguments: [deviceId, key]),
-                let earliest: String = row["earliest"],
-                let latest: String = row["latest"]
-            else { return nil }
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let range = try await roomDb.whoopDao().metricDayRange(deviceId: deviceId, key: key)
+            guard let earliest = range.earliest, let latest = range.latest else { return nil }
             return (earliest, latest)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                guard let row = try Row.fetchOne(db, sql: """
+                    SELECT MIN(day) AS earliest, MAX(day) AS latest FROM metricSeries
+                    WHERE deviceId = ? AND key = ?
+                    """, arguments: [deviceId, key]),
+                    let earliest: String = row["earliest"],
+                    let latest: String = row["latest"]
+                else { return nil }
+                return (earliest, latest)
+            }
         }
     }
 }

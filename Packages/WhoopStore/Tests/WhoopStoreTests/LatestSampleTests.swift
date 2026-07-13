@@ -4,7 +4,7 @@ import WhoopProtocol
 
 final class LatestSampleTests: XCTestCase {
     func testLatestHRSampleTs() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "d", mac: nil, name: nil)
         // No rows yet → nil.
         let empty = try await store.latestHRSampleTs(deviceId: "d")
@@ -19,7 +19,7 @@ final class LatestSampleTests: XCTestCase {
     /// The stuck-strap watchdog frontier must advance on a PPG-only offload too (#156): a v26
     /// WHOOP 5 night with no measured HR still has a real data frontier from its PPG rows.
     func testLatestHRSampleTsIncludesPpgFallbackRows() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "d", mac: nil, name: nil)
         _ = try await store.insert(Streams(hr: [HRSample(ts: 100, bpm: 60)]), deviceId: "d")
         _ = try await store.insert(

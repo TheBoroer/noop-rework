@@ -2,79 +2,176 @@ import XCTest
 import GRDB
 @testable import WhoopStore
 
-/// #222: a foreign (Android/Room) database dropped over ours by a bad cross-platform restore has our
-/// table names but NO `grdb_migrations` bookkeeping, so the migrator re-runs v1 and crashes forever
-/// with `table "device" already exists`. WhoopStore.init must quarantine such a file and open fresh,
-/// while leaving a valid GRDB backup untouched.
+/// #222 self-heal, REWRITTEN for the Phase 2c-1 Task 7 storage flip. A foreign database dropped over
+/// ours by a bad cross-platform restore would strand the store on open (the GRDB migrator re-runs v1
+/// → `table "device" already exists`, or Room meets a schema it never created). `WhoopStore` now
+/// stores in Room `noop.db` beside the legacy GRDB `whoop.sqlite`, so quarantine is PATH-AWARE and
+/// pins this matrix:
+///
+///   | file schema                    | at legacy `whoop.sqlite` | at Room `noop.db` |
+///   |--------------------------------|--------------------------|-------------------|
+///   | GRDB (`grdb_migrations`)       | fine — native legacy     | QUARANTINE        |
+///   | Room (`room_master_table`)     | (n/a here)               | fine — native     |
+///   | unknown schema, holds data     | QUARANTINE               | QUARANTINE        |
+///   | empty / housekeeping only      | left untouched           | left untouched    |
+///
+/// Most cases test the pure `quarantineIncompatibleDatabase(at:expecting:)` gate directly; one drives
+/// the whole self-heal end to end through `WhoopStore.init`.
 final class ForeignDatabaseQuarantineTests: XCTestCase {
 
-    private func tempPath() -> String {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("noop-quarantine-\(UUID().uuidString).sqlite").path
+    private var dir: URL!
+
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noop-quarantine-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    // MARK: - Fixtures
+
+    /// GRDB migrator bookkeeping + a data table + a row: a valid GRDB store's signature.
+    private static let grdbSchema = [
+        "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)",
+        "INSERT INTO grdb_migrations (identifier) VALUES ('v1')",
+        "CREATE TABLE device (id TEXT NOT NULL PRIMARY KEY)",
+        "INSERT INTO device (id) VALUES ('mine')",
+    ]
+
+    /// Room's identity table + a data table + a row: a valid Room store's signature.
+    private static let roomSchema = [
+        "CREATE TABLE room_master_table (id INTEGER PRIMARY KEY, identity_hash TEXT)",
+        "INSERT INTO room_master_table (id, identity_hash) VALUES (42, '0df28b445fbde09ef5d4b64485b99b1f')",
+        "CREATE TABLE hrSample (deviceId TEXT, ts INTEGER, bpm INTEGER)",
+        "INSERT INTO hrSample (deviceId, ts, bpm) VALUES ('d', 1, 60)",
+    ]
+
+    /// A valid SQLite file that holds data but carries NEITHER migrator's bookkeeping: some other
+    /// app's database.
+    private static let unknownSchema = [
+        "CREATE TABLE foo (id INTEGER PRIMARY KEY, note TEXT)",
+        "INSERT INTO foo (id, note) VALUES (1, 'not a noop store')",
+    ]
+
+    /// Build a SQLite file at `path` with the given DDL/DML, releasing the handle before returning so
+    /// quarantine can move/probe it freely.
+    private func makeSqlite(at path: String, _ statements: [String]) throws {
+        let queue = try DatabaseQueue(path: path)
+        try queue.write { db in for sql in statements { try db.execute(sql: sql) } }
+        // queue drops out of scope here; GRDB closes the connection on deinit.
+    }
+
+    private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
+
+    /// True when a `<name>.incompatible-<ts>` quarantine sidecar was written next to `path`.
+    private func quarantined(_ path: String) -> Bool {
+        let folder = (path as NSString).deletingLastPathComponent
+        let base = (path as NSString).lastPathComponent
+        let siblings = (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? []
+        return siblings.contains { $0.hasPrefix(base + ".incompatible-") }
+    }
+
+    // MARK: - grdb file at legacy path = fine legacy
+
+    func testGrdbFileAtLegacyPathIsNotQuarantined() throws {
+        let path = dir.appendingPathComponent("whoop.sqlite").path
+        try makeSqlite(at: path, Self.grdbSchema)
+
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .grdb)
+
+        XCTAssertTrue(exists(path), "a valid legacy GRDB store must be left in place")
+        XCTAssertFalse(quarantined(path), "no quarantine sidecar for a native GRDB file")
+    }
+
+    // MARK: - room file at room path = native
+
+    func testRoomFileAtRoomPathIsNotQuarantined() throws {
+        let path = dir.appendingPathComponent("noop.db").path
+        try makeSqlite(at: path, Self.roomSchema)
+
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .room)
+
+        XCTAssertTrue(exists(path), "a valid Room store at the Room path is native and must be kept")
+        XCTAssertFalse(quarantined(path), "no quarantine sidecar for a native Room file")
+    }
+
+    // MARK: - grdb file at room path = quarantine
+
+    func testGrdbFileAtRoomPathIsQuarantined() throws {
+        let path = dir.appendingPathComponent("noop.db").path
+        try makeSqlite(at: path, Self.grdbSchema)
+
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .room)
+
+        XCTAssertFalse(exists(path), "a GRDB file where Room belongs must be moved aside")
+        XCTAssertTrue(quarantined(path), "the GRDB-at-Room-path file was quarantined")
+    }
+
+    // MARK: - unknown schema anywhere = quarantine
+
+    func testUnknownSchemaAtRoomPathIsQuarantined() throws {
+        let path = dir.appendingPathComponent("noop.db").path
+        try makeSqlite(at: path, Self.unknownSchema)
+
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .room)
+
+        XCTAssertFalse(exists(path))
+        XCTAssertTrue(quarantined(path), "a data-holding unknown schema at the Room path was quarantined")
+    }
+
+    func testUnknownSchemaAtLegacyPathIsQuarantined() throws {
+        let path = dir.appendingPathComponent("whoop.sqlite").path
+        try makeSqlite(at: path, Self.unknownSchema)
+
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .grdb)
+
+        XCTAssertFalse(exists(path))
+        XCTAssertTrue(quarantined(path), "a data-holding unknown schema at the legacy path was quarantined")
+    }
+
+    // MARK: - empty / housekeeping-only file is never quarantined
+
+    func testEmptyFileIsNeverQuarantined() throws {
+        let path = dir.appendingPathComponent("noop.db").path
+        _ = try DatabaseQueue(path: path) // creates an empty SQLite file with no user tables
+
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .room)
+        WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .grdb)
+
+        XCTAssertTrue(exists(path), "an empty/fresh file holds no data and is always left untouched")
+        XCTAssertFalse(quarantined(path))
+    }
+
+    // MARK: - End-to-end self-heal through WhoopStore.init
+
+    func testForeignFileAtRoomPathSelfHealsOnOpen() async throws {
+        // A GRDB-shaped file sitting where the Room `noop.db` belongs — a bad cross-platform restore.
+        // Opening the store must quarantine it and start Room fresh, never strand.
+        let legacyPath = dir.appendingPathComponent("whoop.sqlite").path // deliberately absent
+        let roomPath = dir.appendingPathComponent("noop.db").path
+        try makeSqlite(at: roomPath, Self.grdbSchema)
+        XCTAssertFalse(try tableNames(at: roomPath).contains("room_master_table"),
+                       "precondition: the planted file lacks Room's bookkeeping")
+
+        let store = try await WhoopStore(path: legacyPath)
+
+        XCTAssertEqual(store.storageBackend, .room,
+                       "a fresh Room store opened once the foreign file was quarantined")
+        XCTAssertTrue(quarantined(roomPath), "the foreign Room-path file was quarantined")
+        XCTAssertTrue(exists(roomPath), "a clean Room store now lives at noop.db")
+        let tables = try await store.tableNames()
+        XCTAssertTrue(tables.contains("grdb_migrations"), "the legacy GRDB pool still migrated normally")
     }
 
     private func tableNames(at path: String) throws -> Set<String> {
-        let q = try DatabaseQueue(path: path)
-        return try q.read { db in
+        var config = Configuration()
+        config.readonly = true
+        let queue = try DatabaseQueue(path: path, configuration: config)
+        return try queue.read { db in
             try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
         }
-    }
-
-    private func cleanup(_ path: String) {
-        let fm = FileManager.default
-        let dir = (path as NSString).deletingLastPathComponent
-        let base = (path as NSString).lastPathComponent
-        for s in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where s.hasPrefix(base) {
-            try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(s))
-        }
-    }
-
-    func testForeignDatabaseIsQuarantinedAndStoreOpensFresh() async throws {
-        let path = tempPath()
-        defer { cleanup(path) }
-
-        // Simulate the foreign DB: our table names + a row, but NO grdb_migrations bookkeeping.
-        let raw = try DatabaseQueue(path: path)
-        try await raw.write { db in
-            try db.execute(sql: "CREATE TABLE device (id TEXT PRIMARY KEY, mac TEXT, name TEXT, firstSeen INTEGER, lastSeen INTEGER)")
-            try db.execute(sql: "CREATE TABLE hrSample (deviceId TEXT, ts INTEGER, bpm INTEGER)")
-            try db.execute(sql: "INSERT INTO device (id, name) VALUES ('foreign', 'WHOOP')")
-        }
-        // Release the probe handle before opening the store.
-        _ = raw
-        XCTAssertFalse(try tableNames(at: path).contains("grdb_migrations"),
-                       "precondition: a foreign DB has no grdb_migrations")
-
-        // Opening must NOT throw `table "device" already exists` — it quarantines + starts fresh.
-        let store = try await WhoopStore(path: path)
-        let tables = try await store.tableNames()
-        XCTAssertTrue(tables.contains("grdb_migrations"), "fresh store ran its migrations")
-        XCTAssertTrue(tables.contains("device"))
-
-        let dir = (path as NSString).deletingLastPathComponent
-        let base = (path as NSString).lastPathComponent
-        let siblings = try FileManager.default.contentsOfDirectory(atPath: dir)
-        XCTAssertTrue(siblings.contains { $0.hasPrefix(base + ".incompatible-") },
-                      "the foreign DB was quarantined to a .incompatible sidecar")
-    }
-
-    func testValidGrdbBackupIsNotQuarantined() async throws {
-        let path = tempPath()
-        defer { cleanup(path) }
-
-        // A real GRDB store (migrations applied), then reopened.
-        do {
-            let store = try await WhoopStore(path: path)
-            try await store.upsertDevice(id: "mine", mac: nil, name: "WHOOP")
-        }
-        let store = try await WhoopStore(path: path)
-        let reopenedTables = try await store.tableNames()
-        XCTAssertTrue(reopenedTables.contains("grdb_migrations"))
-
-        let dir = (path as NSString).deletingLastPathComponent
-        let base = (path as NSString).lastPathComponent
-        let siblings = try FileManager.default.contentsOfDirectory(atPath: dir)
-        XCTAssertFalse(siblings.contains { $0.hasPrefix(base + ".incompatible-") },
-                       "a valid GRDB DB must never be quarantined")
     }
 }

@@ -11,17 +11,23 @@ import ZIPFoundation
 
 /// Full-database EXPORT / IMPORT for device migration.
 ///
-/// NOOP keeps everything in one SQLite file (`<AppSupport>/OpenWhoop/whoop.sqlite`, plus the
-/// `-wal`/`-shm` WAL sidecars while the store is open). Export checkpoints the WAL (so the
-/// single file is whole), then wraps the SQLite in a ZIP written as `.noopbak`, alongside a
-/// small `settings.json` entry (#1000) carrying the whitelisted profile/display settings (see
-/// `BackupSettings`) so a restore also brings back weight/height/units, not just the rows.
-/// ZIP deflate typically cuts a 100 MB+ SQLite backup to 10–20 MB. The format is a standard
-/// ZIP — users can rename `.noopbak` → `.zip` and extract the SQLite manually on any OS.
+/// Phase 2c-1 Task 7 (the backup flip): the store is now the shared Room `noop.db` (beside the legacy
+/// GRDB `whoop.sqlite`, which retains only device-local outbox/cursors). Export checkpoints the Room
+/// WAL (so the single file is whole), then wraps `noop.db` in a ZIP written as `.noopbak` under the
+/// unchanged entry name `noop-backup.sqlite`, alongside a small `settings.json` entry (#1000) carrying
+/// the whitelisted profile/display settings (see `BackupSettings`) so a restore also brings back
+/// weight/height/units, not just the rows. Because it is now Room-format, an Apple export is
+/// restorable on Android (proven cross-platform in shared `AppleRoomBackupCrossPlatformTest`), and the
+/// container stays byte-compatible with the Android exporter.
 ///
-/// Import detects the format by magic bytes: ZIP (`PK\x03\x04`) or legacy plain SQLite. ZIP
-/// backups are extracted to a temp dir, validated, then swapped in exactly like a plain import.
-/// Old `.sqlite` / `.noopdb` backups keep working.
+/// Import detects the format by magic bytes (ZIP `PK\x03\x04` or plain SQLite), extracts + validates,
+/// then routes by the backup's own bookkeeping table onto the live `noop.db`:
+///  - a Room backup (`room_master_table`) is NATIVE and swapped straight in;
+///  - a legacy GRDB backup (`grdb_migrations`, any pre-2c-1 Mac/iOS export) is migrated through the
+///    `GrdbMigrator` ETL into a fresh Room file first, so legacy `.noopbak` / `.sqlite` backups remain
+///    importable forever;
+///  - a foreign schema that holds data is rejected. (Android's "this is a Mac backup, rejected"
+///    message is therefore now reachable only for those pre-2c-1 legacy GRDB exports.)
 ///
 /// Sandbox-safe: relies on the `com.apple.security.files.user-selected.read-write` entitlement and
 /// security-scoped access on the panel-returned URLs. Every path is best-effort — failures surface
@@ -54,7 +60,7 @@ enum DataBackup {
     @MainActor
     static func runExport(checkpoint: @escaping () async -> Bool) async -> BackupResult {
         let dbPath: String
-        do { dbPath = try StorePaths.defaultDatabasePath() }
+        do { dbPath = try Self.liveExportDatabasePath() }
         catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         let dbURL = URL(fileURLWithPath: dbPath)
@@ -175,7 +181,7 @@ enum DataBackup {
     /// (start/stop around this call). Never presents UI, so it is safe off the main actor.
     static func writeBackup(checkpoint: @escaping () async -> Bool, to dest: URL) async -> BackupResult {
         let dbPath: String
-        do { dbPath = try StorePaths.defaultDatabasePath() }
+        do { dbPath = try Self.liveExportDatabasePath() }
         catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         let dbURL = URL(fileURLWithPath: dbPath)
@@ -218,8 +224,10 @@ enum DataBackup {
     /// the caller informs the user.
     @MainActor
     static func runImport() async -> BackupResult {
+        // Import lands on the live Room store `noop.db` (Phase 2c-1 Task 7): after the swap + relaunch,
+        // `WhoopStore.detectMigrateOpen` opens the imported Room file directly.
         let dbPath: String
-        do { dbPath = try StorePaths.defaultDatabasePath() }
+        do { dbPath = try StorePaths.roomDatabasePath() }
         catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         #if os(macOS)
@@ -263,7 +271,7 @@ enum DataBackup {
     /// live database untouched.
     static func restore(from pickedSource: URL) -> BackupResult {
         let dbPath: String
-        do { dbPath = try StorePaths.defaultDatabasePath() }
+        do { dbPath = try StorePaths.roomDatabasePath() }
         catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
         return restore(from: pickedSource, toDatabaseAt: dbPath)
     }
@@ -311,29 +319,15 @@ enum DataBackup {
             return .failure(String(localized: "That file isn't a NOOP backup. It doesn't look like a SQLite database."))
         }
 
-        // Reject any backup that isn't a clean GRDB (this-app) backup. The magic check passes for ANY
-        // SQLite file, so an Android (Room) backup — or any other SQLite file that happens to carry our
-        // table names without our `grdb_migrations` bookkeeping — would otherwise replace the live DB
-        // and leave the migrator re-running v1 forever (`table "device" already exists`, #222). A valid
-        // NOOP-Mac/iOS backup always carries `grdb_migrations`; reject everything else that holds data.
-        let backupTables = sqliteTableNames(at: source)
-        let origin = backupOrigin(of: backupTables)
-        let holdsData = backupTables.contains("device") || backupTables.contains("hrSample")
-        if origin == .android || (origin == .unknown && holdsData) {
-            return .failure(String(localized: "This isn't a NOOP backup from this app. It's missing the migration bookkeeping a NOOP backup carries (it looks like an Android backup or another app's database), and restoring it would strand your store. To move your history across platforms, export the WHOOP-format CSV on the other device (Settings → Export data) and import that here, or import your original WHOOP / Apple Health export."))
-        }
-
-        // #1014 defence-in-depth: both gates above read only the FIRST pages of the file — the
-        // 16-byte magic and sqlite_master both survive a backup that was truncated mid-upload or
-        // torn by a flaky drive/cloud sync, and such a file then "restores" into a store that
-        // silently shows no data (the #1014 report; the #1000 settings code was exonerated, the
-        // family needed armour). Run SQLite's own `PRAGMA quick_check` over the STAGED file,
-        // read-only, BEFORE anything touches the live database, and refuse the swap honestly.
-        // One carve-out: a legacy plain-SQLite file still travelling with its -wal/-shm siblings
-        // (an uncheckpointed manual copy) skips THIS gate — a read-only probe can't recover someone
-        // else's WAL (shm rebuild needs write access) and would refuse spuriously. Those rare files
-        // are still verified by the post-swap check below, which runs on the landed main file
-        // BEFORE the sidecars are laid down and rolls back automatically on failure.
+        // #1014 defence-in-depth: the magic check reads only the FIRST pages of the file — the 16-byte
+        // magic and sqlite_master both survive a backup truncated mid-upload or torn by a flaky
+        // drive/cloud sync, and such a file then "restores" into a store that silently shows no data.
+        // Run SQLite's own `PRAGMA quick_check` over the STAGED file, read-only, BEFORE anything
+        // touches the live database (and before the possibly-expensive legacy ETL below), and refuse
+        // honestly. One carve-out: a legacy plain-SQLite file still travelling with its -wal/-shm
+        // siblings (an uncheckpointed manual copy) skips THIS gate — a read-only probe can't recover
+        // someone else's WAL (shm rebuild needs write access) and would refuse spuriously. Those rare
+        // files are still verified by the post-swap check below, on the landed main file.
         let legacySidecarsPresent = extractedDir == nil
             && (fm.fileExists(atPath: source.path + "-wal") || fm.fileExists(atPath: source.path + "-shm"))
         if !legacySidecarsPresent,
@@ -341,12 +335,44 @@ enum DataBackup {
             return .failure(String(localized: "This backup file is damaged and can't be restored (SQLite reports: \(complaint)). Your current data was left untouched. Try an earlier backup file."))
         }
 
+        // Origin routing (Phase 2c-1 Task 7 — the backup flip). The live store is Room `noop.db` now:
+        //  • a Room backup (`room_master_table`) is NATIVE — swap the staged file straight in;
+        //  • a legacy GRDB backup (`grdb_migrations`, any pre-2c-1 Mac/iOS export) is migrated through
+        //    the SAME `GrdbMigrator` ETL as the one-time in-place cutover, into a fresh Room file that
+        //    is then swapped in — so legacy `.noopbak` / `.sqlite` backups stay importable forever;
+        //  • an unknown schema that still holds data is some other app's database: refuse it, restoring
+        //    it would strand the store. An empty/pre-migration file falls through and opens fresh.
+        // (`GrdbMigrator` lives in the Shared framework, which only WhoopStore links; the ETL step is
+        // delegated to `WhoopStore.migrateLegacyGrdbArchive` for that reason.)
+        let backupTables = sqliteTableNames(at: source)
+        let origin = backupOrigin(of: backupTables)
+        let swapSource: URL
+        var etlWorkDir: URL?
+        defer { if let etlWorkDir { try? fm.removeItem(at: etlWorkDir) } }
+        switch origin {
+        case .room:
+            swapSource = source
+        case .grdb:
+            do {
+                let migratedRoom = try WhoopStore.migrateLegacyGrdbArchive(atPath: source.path)
+                swapSource = URL(fileURLWithPath: migratedRoom)
+                etlWorkDir = swapSource.deletingLastPathComponent()
+            } catch {
+                return .failure(String(localized: "This looks like an older NOOP backup, but it couldn't be upgraded to the current format (\(error.localizedDescription)). Your existing data was left untouched. Try an earlier backup, or export the WHOOP-format CSV (Settings → Export data) and import that here."))
+            }
+        case .unknown:
+            if DataBackup.holdsData(backupTables) {
+                return .failure(String(localized: "This isn't a NOOP backup from this app. It's missing the database bookkeeping a NOOP backup carries (it looks like another app's database), and restoring it would strand your store. To move your history across platforms, export the WHOOP-format CSV on the other device (Settings → Export data) and import that here, or import your original WHOOP / Apple Health export."))
+            }
+            swapSource = source
+        }
+
         let dbURL = URL(fileURLWithPath: dbPath)
 
         do {
             // Snapshot the current DB (+ sidecars) to a timestamped side file so the user can roll back.
             var sidecar = dbURL.deletingLastPathComponent()
-                .appendingPathComponent("whoop-replaced-\(timestamp()).sqlite")
+                .appendingPathComponent("noop-replaced-\(timestamp()).sqlite")
             if fm.fileExists(atPath: dbURL.path) {
                 if fm.fileExists(atPath: sidecar.path) { try fm.removeItem(at: sidecar) }
                 try fm.copyItem(at: dbURL, to: sidecar)
@@ -355,13 +381,14 @@ enum DataBackup {
                 sidecar = dbURL
             }
 
-            // Remove the live DB and its WAL/SHM siblings, then drop the backup in.
+            // Remove the live DB and its WAL/SHM siblings, then drop the backup in. `swapSource` is the
+            // staged file for a Room backup, or the freshly-migrated Room file for a legacy GRDB backup.
             removeIfPresent(dbURL)
             removeIfPresent(URL(fileURLWithPath: dbPath + "-wal"))
             removeIfPresent(URL(fileURLWithPath: dbPath + "-shm"))
 
             do {
-                try fm.copyItem(at: source, to: dbURL)
+                try fm.copyItem(at: swapSource, to: dbURL)
             } catch {
                 // The live DB was just removed and the replacement didn't land. Roll back to the
                 // snapshot so a failed import leaves the user's data exactly as it was, instead of a
@@ -395,11 +422,19 @@ enum DataBackup {
                 return .failure(String(localized: "Import failed its post-restore integrity check (SQLite reports: \(complaint)). The damaged file was removed; there was no previous data to roll back."))
             }
 
-            // Restore sidecars only for legacy plain-SQLite backups whose WAL wasn't
-            // checkpointed at export. ZIP imports are always checkpointed; no sidecars expected.
-            // Deliberately AFTER the post-swap integrity check (see above) — this is best-effort
-            // (`try?` inside) and can't throw, so the rollback semantics are unchanged.
-            if extractedDir == nil {
+            // The imported/migrated `noop.db` has landed and passed its integrity check. Write the
+            // completion sentinel beside it (Phase 2c-1 Task 7) so the next launch's
+            // `WhoopStore.detectMigrateOpen` opens THIS file as-is, instead of mistaking a
+            // sentinel-less Room file for a crashed partial ETL and deleting it (which would silently
+            // discard the restore). Idempotent: a live Room store already has one; this refreshes it.
+            WhoopStore.markRoomDatabaseImported(roomPath: dbPath)
+
+            // Restore sidecars only for a legacy plain-SQLite backup swapped in DIRECTLY (a Room-format
+            // `.sqlite` whose WAL wasn't checkpointed at export). Not for a ZIP import (always
+            // checkpointed) nor for a GRDB backup routed through the ETL (its output is a fresh Room
+            // file, and the staged GRDB sidecars would corrupt it). Deliberately AFTER the post-swap
+            // integrity check — best-effort (`try?` inside), can't throw, rollback semantics unchanged.
+            if extractedDir == nil && swapSource.path == source.path {
                 restoreSidecar(from: source, toMainPath: dbPath, suffix: "-wal")
                 restoreSidecar(from: source, toMainPath: dbPath, suffix: "-shm")
             }
@@ -426,6 +461,18 @@ enum DataBackup {
     }
 
     // MARK: - Helpers
+
+    /// The live database to EXPORT (Phase 2c-1 Task 7). The store is the shared Room `noop.db` now, so
+    /// export that. Falls back to the legacy GRDB `whoop.sqlite` ONLY when no Room file exists yet, the
+    /// rare `.legacyGrdb` state after an interrupted ETL where the user's live data is still the GRDB
+    /// file (exporting it there produces a legacy backup, which import upgrades through the ETL). When
+    /// Room is live BOTH files exist and `noop.db` (the source of truth) wins. Kept in lockstep with
+    /// `checkpointForBackup`, which checkpoints whichever backend is live before this resolves.
+    private static func liveExportDatabasePath() throws -> String {
+        let roomPath = try StorePaths.roomDatabasePath()
+        if FileManager.default.fileExists(atPath: roomPath) { return roomPath }
+        return try StorePaths.defaultDatabasePath()
+    }
 
     /// Canonical entry name for the SQLite inside a `.noopbak` ZIP. Matches the Android exporter so
     /// a backup produced on either platform restores on the other.
@@ -458,24 +505,36 @@ enum DataBackup {
         return types
     }
 
-    /// Which platform produced a NOOP backup, judged by its migrator's bookkeeping table.
-    enum BackupOrigin: Equatable { case mac, android, unknown }
+    /// Which migrator's bookkeeping a NOOP backup carries, deciding how `restore` handles it after the
+    /// Phase 2c-1 Task 7 flip: `.room` (`room_master_table`) is this app's NATIVE format now, swapped
+    /// straight onto `noop.db`; `.grdb` (`grdb_migrations`, any pre-2c-1 Mac/iOS export) is a legacy
+    /// backup migrated through the ETL on import; `.unknown` (neither marker) is an empty file or some
+    /// other app's database, judged by whether it holds data.
+    enum BackupOrigin: Equatable { case grdb, room, unknown }
 
-    /// Pure classification over a backup's `sqlite_master` table names: GRDB (this app) writes
-    /// `grdb_migrations`, Room (the Android app) writes `room_master_table`. `.unknown` (neither —
-    /// an empty or pre-migration file) falls through to the normal import path, where the
-    /// open-time migrator decides. Mirrors the Android `DataBackup.backupOriginOf`.
+    /// Pure classification over a backup's `sqlite_master` table names: Room (this app now, and the
+    /// Android app) writes `room_master_table`; GRDB (the pre-2c-1 Mac/iOS app) writes
+    /// `grdb_migrations`. `.unknown` (neither, an empty or pre-migration file) falls through to the
+    /// normal import path. Mirrors the shared `BackupRestore.backupOriginOf` byte-for-byte (Room is the
+    /// accepted native on both), including the tie-break: Room wins the degenerate both-present case.
     static func backupOrigin(of tableNames: Set<String>) -> BackupOrigin {
-        // This platform's marker wins on the (degenerate) both-present case: restoring here is the
-        // less destructive read.
-        if tableNames.contains("grdb_migrations") { return .mac }
-        if tableNames.contains("room_master_table") { return .android }
+        if tableNames.contains("room_master_table") { return .room }
+        if tableNames.contains("grdb_migrations") { return .grdb }
         // Older Room layouts didn't carry `room_master_table`; treat the Room/AndroidX duo of
-        // `android_metadata` + an internal `sqlite_sequence` as an Android backup too.
+        // `android_metadata` + an internal `sqlite_sequence` as a Room backup too.
         if tableNames.contains("android_metadata") && tableNames.contains("sqlite_sequence") {
-            return .android
+            return .room
         }
         return .unknown
+    }
+
+    /// Does this backup actually hold app data (vs an empty/fresh file)? True when it carries any
+    /// user-content table beyond the SQLite/Android/GRDB housekeeping ones. Mirrors the shared
+    /// `BackupRestore.holdsData` (and `WhoopStore.holdsData`) so the import gate, the quarantine gate,
+    /// and Android all agree on what "holds data" means.
+    static func holdsData(_ tableNames: Set<String>) -> Bool {
+        let housekeeping: Set<String> = ["android_metadata", "sqlite_sequence", "room_master_table", "grdb_migrations"]
+        return tableNames.contains { !housekeeping.contains($0) && !$0.hasPrefix("sqlite_") }
     }
 
     /// Every table name in a SQLite file, opened READ-ONLY through the system SQLite so the probed

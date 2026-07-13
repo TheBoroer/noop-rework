@@ -37,6 +37,35 @@ class DeviceRegistryTest {
             devices[row.id] = row // INSERT OR REPLACE by id PK
         }
 
+        override suspend fun upsertPairedDevicePreservingAddedAt(
+            id: String,
+            brand: String,
+            model: String,
+            nickname: String?,
+            peripheralId: String?,
+            sourceKind: String,
+            capabilities: String,
+            status: String,
+            addedAt: Long,
+            lastSeenAt: Long,
+        ) {
+            // ON CONFLICT(id) DO UPDATE whose SET list omits addedAt: existing rows keep their
+            // original addedAt (so re-adding never reshuffles the addedAt ASC ordering).
+            val existing = devices[id]
+            devices[id] = PairedDeviceRow(
+                id = id,
+                brand = brand,
+                model = model,
+                nickname = nickname,
+                peripheralId = peripheralId,
+                sourceKind = sourceKind,
+                capabilities = capabilities,
+                status = status,
+                addedAt = existing?.addedAt ?: addedAt,
+                lastSeenAt = lastSeenAt,
+            )
+        }
+
         override suspend fun demoteActive() {
             for ((id, row) in devices) {
                 if (row.status == DeviceStatus.active.name) {

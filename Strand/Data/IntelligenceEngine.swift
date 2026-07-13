@@ -436,9 +436,9 @@ final class IntelligenceEngine: ObservableObject {
         // stable for the run. With only the seeded 'my-whoop' row paired (the default and every
         // single-WHOOP install) the active strap is `deviceId`, so `resolveDayOwner` below returns
         // `deviceId` for every day and the per-day reads are byte-identical to the pre-I2 behaviour.
-        let registry = DeviceRegistryStore(dbQueue: store.registryWriter)
-        let regDevices = (try? registry.all()) ?? []
-        let regActiveId = (try? registry.activeDeviceId()) ?? deviceId
+        let registry = DeviceRegistryStore(store: store)
+        let regDevices = (try? await registry.all()) ?? []
+        let regActiveId = (try? await registry.activeDeviceId()) ?? deviceId
 
         // Floor `now` to LOCAL midnight (#277) so each `dayStart` lands on a local-day boundary and the
         // day keys are LOCAL calendar days, consistent with the dashboard's local "today" lookup. A
@@ -1346,7 +1346,7 @@ final class IntelligenceEngine: ObservableObject {
                                             registry: DeviceRegistryStore,
                                             fallbackDeviceId: String) async -> String {
         // A locked override wins outright and skips the presence checks entirely.
-        if let locked = (try? registry.dayOwner(day))?.deviceId {
+        if let locked = (try? await registry.dayOwner(day))?.deviceId {
             return locked
         }
         // No registry rows (shouldn't happen , v15 seeds one , but be safe): keep the legacy id.

@@ -94,6 +94,10 @@ export.zip
 # above matches this dir case-insensitively on macOS.
 !shared/src/commonTest/fixtures/
 !shared/src/commonTest/fixtures/noopbak-demo-v17-mini.zip
+# Deliberate exception (Phase 2c-1 Task 2): the committed GRDB-to-Room ETL test fixture.
+# SYNTHETIC formulaic data only, generated deterministically by Tools/make-grdb-fixture.sh
+# (fixed epoch base, recursive CTEs, no real user data); overrides the `*.sqlite` rule above.
+!shared/src/commonTest/fixtures/grdb-mini.sqlite
 
 # Python bytecode
 __pycache__/

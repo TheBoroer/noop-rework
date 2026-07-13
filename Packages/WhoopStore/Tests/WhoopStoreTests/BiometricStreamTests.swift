@@ -18,7 +18,7 @@ final class BiometricStreamTests: XCTestCase {
     // MARK: - v3 migration
 
     func testV3CreatesBiometricTables() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         for t in ["spo2Sample", "skinTempSample", "respSample", "gravitySample"] {
             XCTAssertTrue(tables.contains(t), "missing table \(t)")
@@ -26,7 +26,7 @@ final class BiometricStreamTests: XCTestCase {
     }
 
     func testV3PrimaryKeysAreDeviceIdTs() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         for t in ["spo2Sample", "skinTempSample", "respSample", "gravitySample"] {
             let cols = try await store.primaryKeyColumns(t)
             XCTAssertEqual(cols, ["deviceId", "ts"], "PK mismatch for \(t)")
@@ -35,7 +35,7 @@ final class BiometricStreamTests: XCTestCase {
 
     func testV3AppliesOnTopOfV1V2() async throws {
         // Building from a fresh DB runs v1 → v2 → v3 in order; assert old + new coexist.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
                   "cursors", "spo2Sample", "skinTempSample", "respSample", "gravitySample"] {
@@ -46,7 +46,7 @@ final class BiometricStreamTests: XCTestCase {
     // MARK: - insert
 
     func testInsertReturnsBiometricCounts() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         let n = try await store.insert(bioStreams(), deviceId: "dev1")
         XCTAssertEqual(n.hr, 1)
@@ -57,7 +57,7 @@ final class BiometricStreamTests: XCTestCase {
     }
 
     func testInsertBiometricIsIdempotent() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         _ = try await store.insert(bioStreams(), deviceId: "dev1")
         let second = try await store.insert(bioStreams(), deviceId: "dev1")
@@ -69,7 +69,7 @@ final class BiometricStreamTests: XCTestCase {
 
     func testBackwardCompatHrRrOnly() async throws {
         // A Streams with no biometric arrays still inserts cleanly; new counts are 0.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         let n = try await store.insert(
             Streams(hr: [HRSample(ts: 100, bpm: 60)],
@@ -86,7 +86,7 @@ final class BiometricStreamTests: XCTestCase {
     // MARK: - reads
 
     func testBiometricReadsRoundTrip() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         try await store.upsertDevice(id: "other", mac: nil, name: nil)
         _ = try await store.insert(bioStreams(), deviceId: "dev1")
@@ -108,7 +108,7 @@ final class BiometricStreamTests: XCTestCase {
     }
 
     func testBiometricReadsRespectRangeAndScope() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         _ = try await store.insert(
             Streams(spo2: [SpO2Sample(ts: 100, red: 1, ir: 2),

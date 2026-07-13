@@ -7,7 +7,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     // MARK: - migration (v8 creates the three tables with the right PKs)
 
     func testV8CreatesTables() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("journal"))
         XCTAssertTrue(tables.contains("workout"))
@@ -22,7 +22,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testExistingTablesStillPresentAfterV8() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
                   "sleepSession", "dailyMetric"] {
@@ -33,7 +33,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     // MARK: - journal
 
     func testJournalUpsertReadAndIdempotency() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let e = JournalEntry(day: "2026-05-23", question: "Did you drink alcohol?",
                              answeredYes: true, notes: "two beers")
         try await store.upsertJournal([e], deviceId: "devA")
@@ -55,7 +55,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     func testDeleteJournalTouchesOnlyTheNamedSource() async throws {
         // The native logging card clears under "noop-journal" only, an identical
         // (day, question) imported under "my-whoop" must survive the clear.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let e = JournalEntry(day: "2026-06-09", question: "Any alcohol?", answeredYes: true, notes: nil)
         try await store.upsertJournal([e], deviceId: "my-whoop")
         try await store.upsertJournal([e], deviceId: "noop-journal")
@@ -72,7 +72,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testJournalDistinctQuestionsCoexist() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertJournal([
             JournalEntry(day: "2026-05-23", question: "Caffeine?", answeredYes: true, notes: nil),
             JournalEntry(day: "2026-05-23", question: "Alcohol?", answeredYes: false, notes: nil),
@@ -82,7 +82,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testJournalDayRangeAndDeviceFilter() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertJournal([
             JournalEntry(day: "2026-05-01", question: "Q", answeredYes: true, notes: nil),
             JournalEntry(day: "2026-05-20", question: "Q", answeredYes: true, notes: nil),
@@ -96,7 +96,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testUpsertJournalReturnsChangeCount() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let n = try await store.upsertJournal([
             JournalEntry(day: "2026-05-01", question: "A", answeredYes: true, notes: nil),
             JournalEntry(day: "2026-05-01", question: "B", answeredYes: false, notes: nil),
@@ -108,7 +108,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
 
     func testV20AddsNumericValueColumn() async throws {
         // The v20 migration must add `numericValue` to the journal table (additive, nullable).
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.columnNamesForTest(table: "journal")
         XCTAssertTrue(cols.contains("numericValue"), "v20 must add journal.numericValue")
         // The PK is unchanged (still natural key), so existing history keys the same way.
@@ -118,7 +118,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
 
     func testJournalNumericValueRoundTrips() async throws {
         // A numeric log stores answeredYes=true AND the value; both survive the round-trip.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let e = JournalEntry(day: "2026-06-20", question: "Caffeine (mg)",
                              answeredYes: true, notes: nil, numericValue: 180)
         try await store.upsertJournal([e], deviceId: "noop-journal")
@@ -131,7 +131,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
 
     func testJournalPlainAnswerHasNilNumericValue() async throws {
         // A plain yes/no answer (and every legacy/imported row) reads back numericValue == nil.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertJournal(
             [JournalEntry(day: "2026-06-20", question: "Alcohol?", answeredYes: false, notes: nil)],
             deviceId: "noop-journal")
@@ -144,7 +144,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     func testJournalNumericValueUpdatesOnConflict() async throws {
         // Re-logging the same (day, question) with a new value updates in place (no duplicate),
         // and clearing the value (nil) round-trips as nil.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let day = "2026-06-21", q = "Water (L)"
         try await store.upsertJournal(
             [JournalEntry(day: day, question: q, answeredYes: true, notes: nil, numericValue: 2)],
@@ -166,7 +166,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     // MARK: - workout
 
     func testWorkoutUpsertReadAndIdempotency() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let w = WorkoutRow(startTs: 1_000, endTs: 4_600, sport: "run", source: "apple",
                            durationS: 3600, energyKcal: 520.5, avgHr: 148, maxHr: 176,
                            strain: 12.4, distanceM: 8000, zonesJSON: "{\"z1\":10,\"z2\":40}",
@@ -190,7 +190,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testWorkoutDistinctSportSameStartCoexist() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertWorkouts([
             WorkoutRow(startTs: 1_000, endTs: 2_000, sport: "run", source: "apple",
                        durationS: nil, energyKcal: nil, avgHr: nil, maxHr: nil, strain: nil,
@@ -204,7 +204,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testWorkoutNullableMetricsRoundTripAsNil() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let w = WorkoutRow(startTs: 50, endTs: 60, sport: "yoga", source: "apple",
                            durationS: nil, energyKcal: nil, avgHr: nil, maxHr: nil, strain: nil,
                            distanceM: nil, zonesJSON: nil, notes: nil)
@@ -218,7 +218,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testWorkoutRangeAndLimit() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertWorkouts([
             WorkoutRow(startTs: 100, endTs: 200, sport: "run", source: "a", durationS: nil,
                        energyKcal: nil, avgHr: nil, maxHr: nil, strain: nil, distanceM: nil,
@@ -240,7 +240,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
         // Pins deleteWorkouts (detected-workout idempotency, port of WhoopDao.deleteWorkoutsBySport):
         // deletes only the matching (deviceId, sport, startTs-range) rows, leaving other sports,
         // other devices and out-of-range rows untouched.
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         func row(_ ts: Int, _ sport: String) -> WorkoutRow {
             WorkoutRow(startTs: ts, endTs: ts + 600, sport: sport, source: "devA-noop",
                        durationS: 600, energyKcal: nil, avgHr: nil, maxHr: nil, strain: nil,
@@ -262,7 +262,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     // MARK: - appleDaily
 
     func testAppleDailyUpsertReadAndIdempotency() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let a = AppleDaily(day: "2026-05-23", steps: 9123, activeKcal: 540.2, basalKcal: 1600.0,
                            vo2max: 48.5, avgHr: 62, maxHr: 171, walkingHr: 98, weightKg: 78.4)
         try await store.upsertAppleDaily([a], deviceId: "devA")
@@ -281,7 +281,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testAppleDailyNullableMetricsRoundTripAsNil() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let a = AppleDaily(day: "2026-05-25", steps: nil, activeKcal: nil, basalKcal: nil,
                            vo2max: nil, avgHr: nil, maxHr: nil, walkingHr: nil, weightKg: nil)
         try await store.upsertAppleDaily([a], deviceId: "devA")
@@ -294,7 +294,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     }
 
     func testAppleDailyDayRangeFilter() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertAppleDaily([
             AppleDaily(day: "2026-05-01", steps: 1, activeKcal: nil, basalKcal: nil, vo2max: nil,
                        avgHr: nil, maxHr: nil, walkingHr: nil, weightKg: nil),

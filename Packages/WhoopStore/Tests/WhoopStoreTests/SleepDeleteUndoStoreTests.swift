@@ -22,7 +22,7 @@ final class SleepDeleteUndoStoreTests: XCTestCase {
     // MARK: - Restore into the ORIGINAL namespace (HAZARD 2)
 
     func testUndoRestoresComputedRowIntoComputedNamespaceOnly() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let row = session(start: 1000, end: 5000)
         try await store.upsertSleepSessions([row], deviceId: computed)
 
@@ -40,7 +40,7 @@ final class SleepDeleteUndoStoreTests: XCTestCase {
     }
 
     func testUndoRestoresImportedRowIntoImportedNamespaceOnly() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let row = session(start: 2000, end: 8000)
         try await store.upsertSleepSessions([row], deviceId: imported)
 
@@ -62,7 +62,7 @@ final class SleepDeleteUndoStoreTests: XCTestCase {
     // MARK: - userEdited preserved on restore (HAZARD 2)
 
     func testUndoRestoresUserEditedNightWithFlagIntact() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // A hand-corrected night: userEdited, an adjusted onset, custom stages.
         let edited = session(start: 3000, end: 9000, edited: true,
                              stages: "[{\"start\":3200,\"end\":9000,\"stage\":\"deep\"}]",
@@ -89,7 +89,7 @@ final class SleepDeleteUndoStoreTests: XCTestCase {
     /// pins the store half of that path: the two per-epoch series must round-trip through
     /// delete → upsert → re-persist intact (the bug was they came back NULL, diverging from Android).
     func testUndoRestoresUserEditedNightMotionAndBandStateTracks() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let edited = session(start: 4000, end: 10_000, edited: true)
         try await store.upsertSleepSessions([edited], deviceId: computed)
 
