@@ -433,3 +433,213 @@ ONLY_ACTIVE_ARCH=NO`), then `swift test --package-path Packages/WhoopProtocol`:
   HistoricalStreams.swift, PpgHr.swift, Streams.swift, RejectedHistoricalRecordsTest.kt); these
   were caught and fixed in the final-review pass.
 - Nothing pushed by any Phase 2b task; the controller pushes after final whole-branch review.
+
+---
+
+## Phase 2c-1 close-out (Task 9)
+
+Date: 2026-07-13
+Final code commit: `9e268a3c` (Task 8, "test: pin Room read/write concurrency guarantee + add ETL
+bench"). Task 9 is docs-only, no code changes; it commits on top of this sha. Branch:
+`phase2c1-room-cutover` (base `682645c3`, itself on top of the Phase 2b baseline).
+
+Phase 2b made the shared Kotlin protocol decoders reachable from the Apple *app* targets. Phase
+2c-1's job was the storage cutover on Apple: the `WhoopStore` actor keeps its public API for all 61
+consumer files, but its method bodies now store everything (except the transient raw outbox and
+cursors) in the shared Kotlin Room database via SKIE-`async` DAO calls, existing GRDB users migrate
+once through a batched Kotlin ETL, and Apple backups flip to Room-format so an Apple export restores
+on Android (the spec's stated cross-platform payoff, now proven). The shared Room schema did NOT
+change: version stays 17, identity hash `0df28b445fbde09ef5d4b64485b99b1f` untouched.
+
+### Backend state machine
+
+`WhoopStore.init` runs a detect-migrate-open state machine
+(`WhoopStore.detectMigrateOpen`, `Packages/WhoopStore/Sources/WhoopStore/WhoopStore.swift`) that
+resolves an internal backend once, at open, and every delegated actor method switches on it:
+
+```swift
+enum Backend {
+    case room(WhoopDatabase)   // the shared Kotlin Room db (noop.db)
+    case legacyGrdb            // the old GRDB whoop.sqlite, used only on ETL failure
+}
+```
+
+A public, `nonisolated` diagnostics surface exposes the outcome without hopping onto the actor:
+`storageBackend: StorageBackend` (`.room` or `.legacyGrdb(fallbackReason:)`) and
+`migrationProgress: AsyncStream<Double>?` (the one-time ETL progress, replayed after open returns so
+the launch UI and back-compat callers can observe it). The four init paths:
+
+| Situation | Action |
+|---|---|
+| Fresh install (no files) | Open Room `noop.db` directly; `onCreate` seeds the `my-whoop` paired device (parity with Android's `#1037` fix). |
+| Legacy `whoop.sqlite` only | Run the ETL into a fresh `noop.db`, verify per-table counts, then open Room. |
+| Both files present | Open Room `noop.db` without re-running the ETL. |
+| ETL fails / interrupts | Fall back to `.legacyGrdb` (reads/writes hit the old GRDB path, users lose nothing) and retry next launch. A partial `noop.db` is discarded and rebuilt: the ETL is idempotent-by-restart and never mutates `whoop.sqlite`. |
+
+Paths (`Strand/Collect/StorePaths.swift`): Room lives at `<AppSupport>/OpenWhoop/noop.db`, the
+legacy GRDB file stays at `<AppSupport>/OpenWhoop/whoop.sqlite` (same directory, same iOS
+file-protection). A completion sentinel (`noop.db.migrated`) marks a finished ETL / import so the
+next launch opens the file as-is instead of treating a sentinel-less `noop.db` as a crashed partial
+ETL and deleting it.
+
+### ETL numbers (Task 8 bench)
+
+`GrdbMigrator` (`shared/src/appleMain/kotlin/com/noop/data/GrdbMigrator.kt`) reads the legacy file
+read-only over the bundled SQLite driver and batch-copies into Room in 10,000-row transactions,
+streaming the source via a `SELECT` cursor (memory bounded by batch size, not row count), and
+checkpoints (`PRAGMA wal_checkpoint(TRUNCATE)`) at the end so the output is a single whole file.
+
+- **5,000,000 hr rows migrate in ~5.1-5.5s wall** (two runs 5.09s / 5.18s; reviewer reproduction
+  5.47s), **peak RSS ~109 MB** (whole test process, an upper bound on the migrator's own footprint),
+  **batch size 10,000** (unchanged, no tuning needed). That is **~16-17x under the 90s target** for
+  5M rows; extrapolating ~1.0µs/row, a ~50M-row multi-year device projects to ~1 min, well under the
+  plan's ~15-min ceiling. Bench driver: `Tools/bench-etl.sh` (a developer tool, not a CI gate;
+  generates a ~239 MB fixture at run time, never committed) plus the env-gated, normally-`XCTSkip`ped
+  `testBenchGrdbMigrator` in `RoomConcurrencyTests`.
+- **Concurrency gate PASSES on Room's defaults.** The ship-deciding guarantee (a bulk insert
+  transaction in flight must not block a concurrent committed-data read, the property
+  `DatabasePoolConcurrencyTests` pinned for GRDB) holds for Room out of the box: KMP's
+  `Room.databaseBuilder(...).setDriver(BundledSQLiteDriver())` defaults to WAL and opens a writer
+  connection plus separate reader connections, so a reader `SELECT` sees the last committed WAL
+  snapshot immediately. No `setQueryCoroutineContext`/pool-size tuning was required. Measured:
+  against a ~1.4s in-flight 500k-row transaction, ~30k concurrent reads all completed with a
+  worst-case ~6ms latency and only ever observed committed data (snapshot isolation held), versus the
+  ~1.4s a serialized backend would impose per read.
+
+### What stays GRDB (rawBatch/cursors) and why
+
+`rawBatch` (the compressed raw BLE frame outbox) and `cursors` (BLE sync highwater marks) are NOT
+copied by the ETL and are NOT stored in Room. They stay on a retained GRDB handle against the legacy
+`whoop.sqlite`. Reasons: they are transient, device-local data that never appear in backups and match
+Android's own handling; putting them in Room would need new tables, which would change the shared
+schema and its identity hash (a hard constraint this phase); and they are the natural seam for the
+2c-2 BLE/outbox redesign, where GRDB is removed entirely. So the legacy GRDB file is retained
+read-mostly for these two tables even after a successful Room cutover. A consequence to watch: after
+a Room *import* (restore), the stale `whoop.sqlite` BLE cursors can be inconsistent with the freshly
+imported Room data; the strap simply re-syncs, exactly as on any restore and matching Android.
+
+### The flipped backup matrix
+
+Backups flip from GRDB-format to Room-format. Export zips `noop.db` (entry name
+`noop-backup.sqlite` unchanged), checkpointing the live Room WAL first. Import routes by the backup's
+own bookkeeping table, and the open-time quarantine check (`WhoopStore.detectMigrateOpen`) is now
+path-aware. The four cases:
+
+| File contents | At the legacy path (`whoop.sqlite`) | At the Room path (`noop.db`) / on import |
+|---|---|---|
+| GRDB bookkeeping (`grdb_migrations`) | **Fine legacy** (expected there; opens in `.legacyGrdb` fallback) | **Quarantine** on open; on import, a legacy backup is **migrated** through `GrdbMigrator` into a fresh Room db then swapped (legacy backups stay importable forever) |
+| Room bookkeeping (`room_master_table`) | (n/a) | **Native**, swapped straight in |
+| Unknown schema holding data | **Quarantine** | **Quarantine** / rejected on import |
+| Empty / pre-migration | Untouched, falls through to the ETL | Untouched |
+
+Compared to Phase 1's matrix, the origin that is *native* has flipped: a Room database is now the
+app's own format (`BackupOrigin.room`), and a GRDB database is the foreign/legacy one
+(`BackupOrigin.grdb`), the exact inverse of the pre-2c-1 `.mac`/`.android` naming. The cross-platform
+proof (`shared/src/appleTest/kotlin/com/noop/data/AppleRoomBackupCrossPlatformTest.kt`) ETLs the
+synthetic `grdb-mini.sqlite` fixture into a Room `noop.db`, checkpoints it as the export does, then
+runs the *real* Android import path (`BackupRestore.restore` + `BackupRestore.backupOriginOf`) on the
+macOS-native target and reads rows back: an Apple export is Android-restorable.
+
+**Android "Mac backups rejected" message is now legacy-only.** Android's restore engine
+(`shared/src/commonMain/kotlin/com/noop/data/BackupRestore.kt`) rejects a `BackupOrigin.MAC` archive
+with *"This isn't a NOOP backup from this app. It looks like a backup from the Mac or iOS NOOP app
+..."*. That case triggers on the `grdb_migrations` marker. Because an Apple export is now a Room
+database (`room_master_table`, classified `BackupOrigin.ANDROID` and accepted), that rejection
+message is **reachable only for a pre-2c-1 legacy GRDB export** from an old Mac/iOS build. A current
+Apple export restores natively on Android with no CSV round-trip. (Documented also in
+`docs/DATA_MODEL.md`'s storage section, where the store and its backup behavior are described.)
+
+### DeviceRegistry redesign
+
+`DeviceRegistryStore` used to open its own synchronous handle directly onto `WhoopStore`'s underlying
+GRDB writer, skipping both actor serialization and any backend indirection. A raw synchronous writer
+cannot survive a suspend-based Room backend, so Task 6 killed the bypass deliberately rather than
+papering over it with scattered `runBlocking`. `DeviceRegistryStore` is now a thin `Sendable` struct
+wrapping the actor; every method is `async throws` and routes through a backend-switched
+`extension WhoopStore` method (Room branch: `whoopDao()` calls; legacy branch: the original
+synchronous GRDB SQL verbatim). Two new `@Transaction` composite DAO methods were needed
+(`setActiveAtomic`, `deleteDeviceDataAtomic`), each fanning out to already-existing per-column/table
+DAO methods, no new `@Query` SQL and no schema change. This forced a sanctioned, mechanical
+async-cascade through the app-side `DeviceRegistry` facade and its callers (SwiftUI button actions
+and Combine sinks wrapped in `Task { await ... }`). Note for a future Android/Apple parity audit:
+Android's native `DeviceRegistry`/`Transactor` and this Swift path now hold two independent
+(behaviorally identical, separately tested) atomic-write implementations of those two operations.
+
+### Test-suite disposition (which suites rewritten, and why)
+
+The ~232 WhoopStore tests were the behavior net: they keep passing against the Room-backed store,
+with these deliberate changes. The Swift WhoopStore suite is now **272 tests, 1 skipped** (the
+env-gated ETL bench), 0 failures.
+
+| Suite | Disposition | Why |
+|---|---|---|
+| `ForeignDatabaseQuarantineTests` | **Rewritten** | Pins the new path-aware matrix above (grdb@legacy fine, room@room native, grdb@room quarantine, unknown@either quarantine, empty untouched) plus one end-to-end self-heal through `WhoopStore.init`. The old suite pinned the pre-flip origin logic. |
+| `RoomConcurrencyTests` | **Added** | Ports `DatabasePoolConcurrencyTests`' guarantee to Room (the ship-deciding gate) plus the production actor-path responsiveness test and the env-gated bench driver. |
+| `LegacyBackupMigrationTests` | **Added** | Proves `migrateLegacyGrdbArchive` end to end: a GRDB backup yields a native Room file. |
+| `AppleRoomBackupCrossPlatformTest` (Kotlin appleTest) | **Added** | The cross-platform payoff: an Apple Room export passes Android's origin check and restores through the real shared engine. |
+| `DeviceRegistryStoreTests` | **Converted to Room** | Same assertions, `try await` added, constructed via `WhoopStore.roomBackedForTest()`. |
+| `LegacyGrdb*PinTests` family (`...DeviceRegistry`, `...Streams`, `...MetricsSleep`, `...MetricSeries`, `...JournalWorkoutApple`, `...LabMarker`, `...LiveSession`) | **Added** | A representative slice per delegated store re-run against `WhoopStore.inMemory()` (always `.legacyGrdb`), so the retained legacy branch keeps coverage. |
+| Kotlin: `WhoopDaoDeviceRegistryQueryTest` (commonTest), `WhoopDatabaseSeedHandoffTest` (appleTest), `GrdbMigratorTest` (appleTest) | **Added** | The two composite DAO methods, the fresh-install seed handoff, and the ETL fixture round-trip. |
+
+Every other suite runs unchanged against Room via a test flag that forces the backend; upsert /
+sleep-edit / dedup semantics are pinned byte-level by their existing tests as the arbiter.
+
+### Test totals per target (clean full verification, this task)
+
+Task 9 is docs-only (no Kotlin or Swift source touched), so the framework was not rebuilt; the gates
+below ran once as the phase's clean final verification against the existing `Shared.xcframework`.
+
+| Gate | Command | Result |
+|---|---|---|
+| Kotlin | `:shared:macosArm64Test` (JAVA_HOME = JDK 17) | 800 tests / 0 failures / 0 skipped. `BUILD SUCCESSFUL`. |
+| Swift (WhoopStore) | `swift test --package-path Packages/WhoopStore` | 272 tests / 1 skipped (env-gated bench) / 0 failures. |
+| xcodebuild | `xcodegen generate` then `xcodebuild -scheme NOOPiOS` (generic iOS Simulator) and `xcodebuild -scheme Strand` (macOS universal, `ARCHS="x86_64 arm64"`) | both `** BUILD SUCCEEDED **`. |
+
+### Deliberately out of scope, and handoffs to Phase 2c-2
+
+Carried forward from the concerns/handoffs of Tasks 6-8 and their reviews:
+
+- **GRDB dependency removal.** The retained GRDB handle (`rawBatch`/`cursors`, the `.legacyGrdb`
+  fallback, and `registryWriter` kept `internal` solely for `DatabasePoolConcurrencyTests`' pragma
+  assertions) is removed in 2c-2 together with the outbox redesign; that test and this property need
+  attention together.
+- **Outbox / `rawBatch` redesign** and **`BLEManager.swift` thinning + Kable**, the remaining big
+  Apple-side items from the original spec.
+- **Two parallel restore implementations must be kept in sync by hand.** The in-app Swift swap core
+  (`restore(from:toDatabaseAt:)` in `Strand/Data/DataBackup.swift`) and the shared
+  `BackupRestore.restore` (Kotlin) replicate the same stage → validate → swap sequence (gate ordering
+  differs harmlessly). The integrated Swift `.grdb` restore branch has no app-level test of its own,
+  because the `StrandTests` scheme is broken independent of this phase: its `TEST_HOST` hardcodes
+  `NOOP.app` but the app's `PRODUCT_NAME` is `NOOP Staging`, so the test host can't resolve. Fixing
+  that scheme is a prerequisite for an end-to-end app-level restore test. The pieces are covered
+  separately, and the shared-engine acceptance of an Apple export is proven by
+  `AppleRoomBackupCrossPlatformTest`.
+- **`insertViaRoom` builds entities synchronously on the actor** before the `await` (~100ms for 500k
+  rows). Fine at production backfill chunk sizes (far below 500k); revisit if chunk sizes grow in the
+  BLE/outbox redesign.
+- **`RoomConcurrencyTests`' 250ms wall-clock per-read bound over ~30k reads is a CI flakiness
+  surface** on slow/loaded runners. Monitor; if flakes appear, raise the ceiling or switch to a
+  high-percentile-plus-hard-cap assertion (`RoomConcurrencyTests.swift:39,110,160`).
+- **The post-import sentinel write is `try?` best-effort** (`WhoopStore.swift`). In the narrow
+  `.legacyGrdb`-fallback-plus-import sequence, a silently failed sentinel write reverts a good restore
+  on the next launch (recoverable via the retained `noop-replaced-<ts>.sqlite` snapshot). Matches the
+  existing sentinel philosophy; narrow revert-on-disk-full edge.
+- **Old-Room-layout accept-then-quarantine seam.** A hypothetical file carrying `android_metadata` +
+  `sqlite_sequence` but no `room_master_table` classifies `.room` at import yet quarantines on next
+  open. Unreachable for modern Room exports; parity with the shared classifier is intentional.
+- **Standing watch list (carried from Phase 2b):** the archive/banking historical-decoder split is
+  now empirical, not structural (watch if either the Kotlin or Swift historical decoder changes);
+  Kotlin lacks WHOOP5 v20/21 historical decode (v18-only, a verified non-divergence today).
+- **Also out of scope (2c-2 / later):** `StrandAnalytics`/`StrandImport` package delegation, oura
+  crypto `expect`/`actual`, the remaining `ingest`/`update` hoists, Strand macOS menu-bar polish, and
+  removing `WhoopProtocol`'s Swift implementations entirely.
+
+### Self-review notes
+
+- Spec coverage: spec Phase 2 step 2 ("storage replaced by shared Room") is this phase; the
+  backup cross-platform restore is the spec's stated payoff, proven in Task 7's
+  `AppleRoomBackupCrossPlatformTest`.
+- The shared Room schema (version 17, identity hash `0df28b445fbde09ef5d4b64485b99b1f`) was untouched
+  throughout; anything that would have needed a new table stayed in the retained GRDB file.
+- Nothing pushed by any Phase 2c-1 task; the controller pushes and runs the PR flow after final
+  whole-branch review.

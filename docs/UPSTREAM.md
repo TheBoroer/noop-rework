@@ -58,4 +58,30 @@ After hand-porting a fix into a delegated Kotlin file, re-run both the Kotlin an
 (step 4 above, plus `swift test --package-path Packages/WhoopProtocol`) since the Swift tests are
 the parity net for the delegation.
 
+## Phase 2c-1: storage fixes land in Kotlin (shared Room) for both platforms
+
+As of Phase 2c-1, the Apple `WhoopStore` no longer has its own GRDB storage implementation to keep
+in parity: it stores everything (except the transient raw outbox and BLE cursors) in the **same
+shared Kotlin Room database** as Android, via `Shared.xcframework`. Practically:
+
+- An **upstream storage/schema/DAO fix** on the Android side (Room entities, `WhoopDao` `@Query`s,
+  `DeviceRegistry`, `BackupRestore`, under `shared/src/commonMain/kotlin/com/noop/data/`) now applies
+  to macOS and iOS for free once hand-ported into `commonMain`. There is usually **no separate Swift
+  GRDB port** to do. Re-run the Swift `WhoopStore` suite
+  (`swift test --package-path Packages/WhoopStore`) as the parity net, and rebuild
+  `Shared.xcframework` first if the DAO/interface surface changed (a Kotlin `data`-layer change is
+  invisible to the Swift side until the framework is rebuilt).
+- The shared Room **schema must not drift**: version 17, identity hash
+  `0df28b445fbde09ef5d4b64485b99b1f`. A fix that would add or alter a table needs a schema-migration
+  plan on both platforms, not a spot edit.
+- **Backups are Room-format on every platform now.** A backup-format change (`BackupRestore.kt`,
+  `DataBackup.swift`) must stay aligned across the two restore paths by hand (the Swift in-app swap
+  core and the shared `BackupRestore.restore` engine replicate the same sequence). Apple exports are
+  Android-restorable; the only Apple GRDB path left is the one-time legacy-`whoop.sqlite` import ETL
+  (`shared/src/appleMain/kotlin/com/noop/data/GrdbMigrator.kt`) and the retained device-local outbox/
+  cursors, both removed in Phase 2c-2.
+
+See the Phase 2c-1 appendix in `docs/superpowers/plans/phase1-baseline.md` for the backend state
+machine, backup matrix, and the full stays-GRDB / moved-to-Room breakdown.
+
 Last reviewed upstream commit: 7df521c8aace491970df59fbe9c1225837d3e93f (`Release 8.5.2: add to AltStore source`, the last commit on `main` before this fork's Phase 1 KMP migration work began)

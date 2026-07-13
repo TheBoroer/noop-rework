@@ -15,6 +15,26 @@ and the migration history that produced the current schema.
 
 ## Where the database lives
 
+> **Phase 2c-1 storage cutover (Apple).** As of Phase 2c-1, the Apple `WhoopStore` keeps the public
+> API and the table shapes described below, but its method bodies now store everything (except the
+> transient raw outbox `rawBatch` and `cursors`) in the **shared Kotlin Room database** at
+> `<AppSupport>/OpenWhoop/noop.db`, the same store that backs Android, linked in via
+> `Shared.xcframework`. Existing users' legacy GRDB `whoop.sqlite` migrates into `noop.db` once, on
+> first launch, through a batched read-only ETL (`GrdbMigrator`); the legacy file is never mutated and
+> is retained (it still holds `rawBatch`/`cursors`, and is the ETL-failure fallback). GRDB is removed
+> entirely in Phase 2c-2. The connection-configuration PRAGMA table and the GRDB migration history
+> below still describe the legacy file and the Android-parity schema; the durable table set and the
+> unix-seconds/`YYYY-MM-DD` conventions are unchanged under Room.
+>
+> **Backups are Room-format now, and cross-platform.** An Apple export zips `noop.db` (entry name
+> `noop-backup.sqlite` unchanged) and **restores on Android**; a legacy GRDB backup is migrated
+> through the same ETL on import, so old backups stay importable forever. One consequence: Android's
+> restore engine (`shared/.../data/BackupRestore.kt`) still rejects a backup carrying GRDB
+> bookkeeping with *"It looks like a backup from the Mac or iOS NOOP app ..."*, but because a current
+> Apple export is now a Room database, **that rejection message is reachable only for a pre-2c-1
+> legacy GRDB export.** See the Phase 2c-1 appendix in
+> `docs/superpowers/plans/phase1-baseline.md` for the backend state machine and the full backup matrix.
+
 The persistence layer is the `WhoopStore` Swift package
 (`Packages/WhoopStore`), built on [GRDB](https://github.com/groue/GRDB.swift) over SQLite. Like
 every package in the repo, it declares both platforms — `.iOS(.v16)` and `.macOS(.v13)`
