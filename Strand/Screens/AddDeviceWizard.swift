@@ -192,8 +192,8 @@ struct AddDeviceWizard: View {
         // After adding, offer to make the new device active (generic non-Oura paths only).
         .alert("Make this your active device?",
                isPresented: $askMakeActive) {
-            Button("Not now", role: .cancel) { finishAdd(makeActive: false) }
-            Button("Make active") { finishAdd(makeActive: true) }
+            Button("Not now", role: .cancel) { Task { await finishAdd(makeActive: false) } }
+            Button("Make active") { Task { await finishAdd(makeActive: true) } }
         } message: {
             Text("Make \(confirmName) your active device now? It will provide your live data. You can change this any time.")
         }
@@ -202,7 +202,7 @@ struct AddDeviceWizard: View {
         // runs the one-time key install), and moves the wizard to its honest Adopting step. Cancel returns.
         .alert("Take over this ring?", isPresented: $ouraConfirmAdopt) {
             Button("Cancel", role: .cancel) { }
-            Button("Take over", role: .destructive) { commitOuraAdopt() }
+            Button("Take over", role: .destructive) { Task { await commitOuraAdopt() } }
         } message: {
             Text("NOOP will install its own key on the ring and become its owner. The Oura app will no longer control this ring. This is intended and it cannot be undone from NOOP.")
         }
@@ -831,7 +831,7 @@ struct AddDeviceWizard: View {
                 // Non-destructive: the user's own key authenticates without resetting the ring, so this reads
                 // as a plain accent connect and skips the destructive confirm.
                 Button {
-                    finishAdvancedOura()
+                    Task { await finishAdvancedOura() }
                 } label: {
                     Text("Connect to this ring")
                         .font(StrandFont.headline)
@@ -1231,7 +1231,7 @@ struct AddDeviceWizard: View {
     }
 
     /// Build the right `PairedDevice` for the chosen path, register it, optionally activate, then close.
-    private func finishAdd(makeActive: Bool) {
+    private func finishAdd(makeActive: Bool) async {
         stopAllScans()
         let now = Int(Date().timeIntervalSince1970)
         let name = confirmName
@@ -1296,7 +1296,7 @@ struct AddDeviceWizard: View {
             onClose(); return
         }
 
-        model.registerDevice(device, makeActive: makeActive)
+        await model.registerDevice(device, makeActive: makeActive)
         onClose()
     }
 
@@ -1330,24 +1330,24 @@ struct AddDeviceWizard: View {
     /// registers it active; the live source then runs the one-time key install (s3.2). The wizard moves to its
     /// honest Adopting step, which the live source's adopt phase drives to success (close) or Failed. NO key is
     /// stored here: the live install persists NOOP's freshly-generated key only on an OK `0x25` ack.
-    private func commitOuraAdopt() {
+    private func commitOuraAdopt() async {
         guard let device = buildOuraDevice() else { onClose(); return }
         stopAllScans()
         ouraStep = .adopting
-        model.adoptOuraRing(device)   // grants adopt consent + registers active; never prompts make-active
+        await model.adoptOuraRing(device)   // grants adopt consent + registers active; never prompts make-active
     }
 
     /// COMMIT the non-destructive Advanced-key path: persist the user-supplied 16-byte key, register the ring
     /// active (it authenticates with that key, no reset, no install), then close. This path NEVER installs a
     /// key and NEVER passes through the Adopting/Take-over gates. Validates the key first (the Scan button was
     /// already gated on a valid key, so this is belt-and-braces).
-    private func finishAdvancedOura() {
+    private func finishAdvancedOura() async {
         guard let device = buildOuraDevice(), let key = ouraKeyBytes else { onClose(); return }
         stopAllScans()
         OuraKeyStore.save(key, deviceId: device.id)
         // The user supplied their own key; this is their new live source. Register active (no adopt consent,
         // so the live source can NEVER install a key on this path).
-        model.registerDevice(device, makeActive: true)
+        await model.registerDevice(device, makeActive: true)
         onClose()
     }
 

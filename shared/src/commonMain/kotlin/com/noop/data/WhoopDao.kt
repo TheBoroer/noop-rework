@@ -38,6 +38,48 @@ interface WhoopDao : DeviceRegistryDao {
     // (no Robolectric — see DeviceRegistryTest). Room flattens the inherited @Query/@Insert methods
     // into this @Dao at compile time, so they generate exactly as if declared here.
 
+    // MARK: - Device registry atomic composites (Task 6)
+    //
+    // [DeviceRegistry] (the Kotlin-only façade Android uses) wraps its own two-step writes in a
+    // `Transactor` (`db.useWriterConnection { it.immediateTransaction { ... } }`) that isn't a `fun
+    // interface` (its one method is generic), so it isn't SAM-convertible and bridging it to Swift is
+    // unproven. The Swift `WhoopStore` Room branch instead calls these two directly on `whoopDao()`,
+    // the exact same surface every other delegated store already uses: `@Transaction` on a
+    // default-implemented suspend method wraps its body (calls to other DAO methods on `this`) in one
+    // transaction at Room codegen time, so these are as atomic as [DeviceRegistry]'s own equivalents.
+
+    /** I1: promote [id] to active, demoting whatever was active before, in ONE transaction (mirrors
+     *  the Swift store's single write transaction / [DeviceRegistry.setActive]). */
+    @Transaction
+    suspend fun setActiveAtomic(id: String, now: Long) {
+        demoteActive()
+        promote(id, now)
+    }
+
+    /** Delete every recorded row for [deviceId] across all deviceId-keyed tables in ONE transaction
+     *  (all-or-nothing) -- mirrors Swift's `DeviceRegistryStore.deleteAllData` /
+     *  [DeviceRegistry.deleteDeviceData]. */
+    @Transaction
+    suspend fun deleteDeviceDataAtomic(deviceId: String) {
+        deleteHrFor(deviceId)
+        deleteRrFor(deviceId)
+        deleteSpo2For(deviceId)
+        deleteSkinTempFor(deviceId)
+        deleteRespFor(deviceId)
+        deleteGravityFor(deviceId)
+        deleteStepsFor(deviceId)
+        deletePpgHrFor(deviceId)
+        deleteEventsFor(deviceId)
+        deleteBatteryFor(deviceId)
+        deleteDailyMetricsFor(deviceId)
+        deleteSleepSessionsFor(deviceId)
+        deleteJournalFor(deviceId)
+        deleteWorkoutsFor(deviceId)
+        deleteAppleDailyFor(deviceId)
+        deleteMetricSeriesFor(deviceId)
+        deleteDayOwnershipFor(deviceId)
+    }
+
     // MARK: - Stream inserts (idempotent by natural key)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)

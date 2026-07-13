@@ -127,7 +127,8 @@ private struct DevicesContent: View {
                presenting: switchTarget) { device in
             Button("Cancel", role: .cancel) { switchTarget = nil }
             Button("Make active") {
-                registry.setActive(device.id)
+                let id = device.id
+                Task { await registry.setActive(id) }
                 switchTarget = nil
             }
         } message: { device in
@@ -141,7 +142,9 @@ private struct DevicesContent: View {
             TextField("Name", text: $renameDraft)
             Button("Cancel", role: .cancel) { renameTarget = nil }
             Button("Save") {
-                registry.rename(device.id, to: renameDraft)
+                let id = device.id
+                let draft = renameDraft
+                Task { await registry.rename(id, to: draft) }
                 renameTarget = nil
             }
         } message: { device in
@@ -153,7 +156,7 @@ private struct DevicesContent: View {
                                     set: { if !$0 { removeTarget = nil } }),
                presenting: removeTarget) { device in
             Button("Cancel", role: .cancel) { removeTarget = nil }
-            Button("Remove", role: .destructive) { confirmRemove(device) }
+            Button("Remove", role: .destructive) { Task { await confirmRemove(device) } }
         } message: { device in
             Text("Remove \(device.displayName)? NOOP will stop connecting to it. Its recorded data is kept and you can re-add it any time.")
         }
@@ -182,7 +185,10 @@ private struct DevicesContent: View {
                             isPresented: $pickNewActive,
                             titleVisibility: .visible) {
             ForEach(activeDevices) { device in
-                Button(device.displayName) { registry.setActive(device.id) }
+                Button(device.displayName) {
+                    let id = device.id
+                    Task { await registry.setActive(id) }
+                }
             }
             Button("Leave none active", role: .cancel) { }
         } message: {
@@ -211,7 +217,10 @@ private struct DevicesContent: View {
                     onMakeActive: { switchTarget = device },
                     onRename: { renameDraft = device.nickname ?? device.displayName; renameTarget = device },
                     onRemove: nil,
-                    onReAdd: { registry.setActive(device.id) },
+                    onReAdd: {
+                        let id = device.id
+                        Task { await registry.setActive(id) }
+                    },
                     onDeleteData: { deleteDataTarget = device })
             }
         }
@@ -249,13 +258,13 @@ private struct DevicesContent: View {
     /// Archive the device, then — if it was the active one and other non-archived devices remain —
     /// prompt for a new active device. The active row is demoted to `.paired` by the registry's reload,
     /// so the dialog's choices come from the still-paired devices.
-    private func confirmRemove(_ device: PairedDevice) {
+    private func confirmRemove(_ device: PairedDevice) async {
         let wasActive = device.status == .active
         // #78: actually RELEASE the BLE link, not just archive the registry row — otherwise NOOP keeps
         // re-grabbing the strap (reconnect timer + targeted-connect pin + iOS state restoration), holding
         // it connected so it can never enter pairing mode to be re-paired.
         model.ble.forgetDevice(device.peripheralId)
-        registry.archive(device.id)
+        await registry.archive(device.id)
         removeTarget = nil
         if wasActive {
             // Other paired devices left → ask which becomes active; otherwise no active device remains.

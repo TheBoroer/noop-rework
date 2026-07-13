@@ -1445,7 +1445,7 @@ final class Repository: ObservableObject {
         // #938: resolve each source id's strap family ONCE (skin-temp raw→°C is family-specific: 5/MG
         // centidegrees vs a 4.0 v24 raw ADC). Cheap registry snapshot; a positively-identified 4.0 maps to
         // `.whoop4`, everything else (5/MG, imports, unknown) to `.whoop5` — the prior /100 behaviour.
-        let familyById = Self.skinTempFamilies(store: store, ids: unionIds)
+        let familyById = await Self.skinTempFamilies(store: store, ids: unionIds)
         var perId: [[TrendPoint]] = []
         for id in unionIds {
             perId.append(await timelineRawMetric(metric: metric, store: store, source: id,
@@ -1463,8 +1463,8 @@ final class Repository: ObservableObject {
     /// and every other id — a 5/MG, a non-WHOOP import, or an id absent from the registry — maps to
     /// `.whoop5` (the prior /100 behaviour), so only a KNOWN 4.0 changes scale. Best-effort: an unreadable
     /// registry yields an empty map, so every caller falls back to `.whoop5`.
-    private static func skinTempFamilies(store: WhoopStore, ids: [String]) -> [String: DeviceFamily] {
-        let devices = (try? DeviceRegistryStore(dbQueue: store.registryWriter).all()) ?? []
+    private static func skinTempFamilies(store: WhoopStore, ids: [String]) async -> [String: DeviceFamily] {
+        let devices = (try? await DeviceRegistryStore(store: store).all()) ?? []
         var out: [String: DeviceFamily] = [:]
         for id in ids {
             let isW4 = devices.first(where: { $0.id == id }).map { WhoopModel(rawValue: $0.model) == .whoop4 } ?? false

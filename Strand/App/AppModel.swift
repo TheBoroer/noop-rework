@@ -404,8 +404,8 @@ final class AppModel: ObservableObject {
     /// model's `scan()` / `disconnect()`), so the coordinator never references BLEManager directly.
     private func wireSourceCoordinator() async {
         guard sourceCoordinator == nil, let store = await repo.storeHandle() else { return }
-        let registry = DeviceRegistry(store: DeviceRegistryStore(dbQueue: store.registryWriter))
-        registry.reload()
+        let registry = DeviceRegistry(store: DeviceRegistryStore(store: store))
+        await registry.reload()
         let coordinator = SourceCoordinator(
             registry: registry,
             live: live,
@@ -834,16 +834,16 @@ final class AppModel: ObservableObject {
     /// single write path: `add` upserts the row, and when `makeActive` is true `setActive` promotes it
     /// (the SourceCoordinator reacts to the active-device change and connects). No-op if the registry
     /// hasn't been wired yet (pre store-open) , the wizard is only reachable once it has.
-    func registerDevice(_ device: PairedDevice, makeActive: Bool) {
+    func registerDevice(_ device: PairedDevice, makeActive: Bool) async {
         guard let registry = deviceRegistry else { return }
-        registry.add(device)
+        await registry.add(device)
         if makeActive {
             // `setActive` republishes `registry.$activeDeviceId`, which the read-spine subscription
             // (`readSpineCancellable`, wired in `wireSourceCoordinator`) observes and re-points the reads
             // off, so the dashboard follows a re-add without a one-shot call here. The explicit adopt below
             // is kept as a belt-and-braces immediate re-point (idempotent, so it's a safe no-op once the
             // subscription has also fired). The just-activated id IS `device.id` (`setActive` made it active).
-            registry.setActive(device.id)
+            await registry.setActive(device.id)
             Task { [weak self] in await self?.adoptActiveDevice(device.id) }
         }
     }
@@ -867,12 +867,12 @@ final class AppModel: ObservableObject {
     /// session), then begin mirroring its adopt outcome for the wizard. The irreversible-consent gate has
     /// ALREADY been passed in the wizard (the consent tick + the "Take over this ring?" confirm); this is the
     /// commit. Never prompts to make-active (the takeover IS the user's new active source).
-    func adoptOuraRing(_ device: PairedDevice) {
+    func adoptOuraRing(_ device: PairedDevice) async {
         sourceCoordinator?.requestOuraAdopt(deviceId: device.id)
         // Reset the mirror so a previous attempt's outcome never leaks into this one.
         ouraAdoptPhase = .idle
         ouraNeedsPairing = nil
-        registerDevice(device, makeActive: true)
+        await registerDevice(device, makeActive: true)
         bindOuraAdoptMirror()
     }
 

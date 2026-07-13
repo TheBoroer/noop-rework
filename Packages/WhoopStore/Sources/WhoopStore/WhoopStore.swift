@@ -25,11 +25,16 @@ public enum WhoopStoreInfo {
 public actor WhoopStore {
     let dbWriter: any DatabaseWriter
 
-    /// Read-only handle to the underlying GRDB writer for the synchronous `DeviceRegistryStore`.
-    /// `nonisolated` because a GRDB `DatabaseWriter` (here a `DatabasePool`) is `Sendable` and
-    /// manages its own concurrency, so concurrent access alongside the actor's own DB work is safe
-    /// (the Pool serializes writes and runs reads in parallel under WAL).
-    public nonisolated var registryWriter: any DatabaseWriter { dbWriter }
+    /// Task 6: no longer `public`. `DeviceRegistryStore` now routes through the actor (async, backend-
+    /// aware) instead of opening its own synchronous handle onto this GRDB writer directly -- that was
+    /// the "sync bypass" this task kills: a raw `DatabaseWriter` handed out for direct synchronous use
+    /// skips both actor serialization AND the Room backend entirely. `internal` (not removed outright):
+    /// `DatabasePoolConcurrencyTests` still needs a direct handle to assert the production pool's
+    /// pragma configuration on reader connections, unrelated to device-registry semantics, and reaches
+    /// this via `@testable import WhoopStore`. `nonisolated` because a GRDB `DatabaseWriter` (here a
+    /// `DatabasePool`) is `Sendable` and manages its own concurrency, so concurrent access alongside the
+    /// actor's own DB work is safe (the Pool serializes writes and runs reads in parallel under WAL).
+    nonisolated var registryWriter: any DatabaseWriter { dbWriter }
 
     // MARK: - Room cutover (Phase 2c-1 Task 3)
     //
@@ -455,24 +460,6 @@ public actor WhoopStore {
         try dbWriter.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
         }
-    }
-
-    /// Permanently delete every recorded sample/derived row for one device across all `deviceId`-keyed
-    /// tables (16+ `DELETE FROM <table> WHERE deviceId = ?` in one GRDB transaction). Wraps the
-    /// synchronous `DeviceRegistryStore.deleteAllData` so the heavy multi-table write runs on the actor's
-    /// own serial executor, OFF the main thread. The "Delete all of this device's data" and "Remove
-    /// Apple Health data" actions previously ran this same store write synchronously on the main actor and
-    /// froze the UI on a large dataset. The `pairedDevice` registry row is left intact (archiving/removing
-    /// it is a separate op). Async entry point; the actual write is on `deleteAllDataImpl`.
-    public func deleteAllData(deviceId: String) async throws {
-        try deleteAllDataImpl(deviceId: deviceId)
-    }
-
-    /// Non-async so the synchronous `DeviceRegistryStore.deleteAllData` (a blocking GRDB write) is called
-    /// directly (mirrors the syncRead/syncWrite pattern). Runs on the actor's executor, off the main
-    /// thread. Builds the synchronous registry wrapper over the same GRDB writer the store owns.
-    private func deleteAllDataImpl(deviceId: String) throws {
-        try DeviceRegistryStore(dbQueue: dbWriter).deleteAllData(deviceId: deviceId)
     }
 
     /// Total on-disk size of the database — the main file plus its `-wal`/`-shm` siblings — in bytes.
