@@ -13,7 +13,7 @@ final class InsertTests: XCTestCase {
     }
 
     func testInsertReturnsRowCounts() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: "AA:BB", name: "Strap")
         let n = try await store.insert(sampleStreams(), deviceId: "dev1")
         XCTAssertEqual(n.hr, 2)
@@ -23,7 +23,7 @@ final class InsertTests: XCTestCase {
     }
 
     func testInsertIsIdempotentByNaturalKey() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         _ = try await store.insert(sampleStreams(), deviceId: "dev1")
         let second = try await store.insert(sampleStreams(), deviceId: "dev1")
@@ -44,7 +44,7 @@ final class InsertTests: XCTestCase {
     }
 
     func testUpsertDeviceUpdatesFields() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: "AA", name: "first")
         try await store.upsertDevice(id: "dev1", mac: "BB", name: "second")
         let row = try await store.deviceRowForTest(id: "dev1")
@@ -53,7 +53,7 @@ final class InsertTests: XCTestCase {
     }
 
     func testTwoDevicesAreIndependent() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "a", mac: nil, name: nil)
         try await store.upsertDevice(id: "b", mac: nil, name: nil)
         _ = try await store.insert(sampleStreams(), deviceId: "a")

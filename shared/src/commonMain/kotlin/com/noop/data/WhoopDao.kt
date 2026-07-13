@@ -217,6 +217,39 @@ interface WhoopDao : DeviceRegistryDao {
     )
     suspend fun hrBuckets(deviceId: String, from: Long, to: Long, bucketSeconds: Long): List<HrBucket>
 
+    /**
+     * Like [hrBuckets] but ALSO surfaces the per-bucket weakest confidence (`MIN(conf)`): measured
+     * `hrSample` rows contribute 1.0, PPG-derived fallback rows their stored autocorrelation conf, so a
+     * bucket touched by ANY weak-optical estimate reads weak (conservative) and a purely-measured bucket
+     * stays 1.0. The bpm aggregate + COALESCE anti-join (PPG fills only seconds the strap never reported)
+     * are BYTE-IDENTICAL to [hrBuckets]; only the extra projection differs. Mirrors Swift Reads.swift
+     * hrBuckets, which the iOS chart reads to shade a weak-optical stretch (ryanAtriumAi #988).
+     */
+    @Query(
+        "SELECT (ts / :bucketSeconds) * :bucketSeconds AS bucket, AVG(bpm) AS avgBpm, MIN(conf) AS minConf FROM (" +
+            "SELECT ts, bpm, 1.0 AS conf FROM hrSample " +
+            "WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
+            "UNION ALL " +
+            "SELECT p.ts AS ts, p.bpm AS bpm, p.conf AS conf FROM ppgHrSample p " +
+            "WHERE p.deviceId = :deviceId AND p.ts >= :from AND p.ts <= :to " +
+            "AND NOT EXISTS (SELECT 1 FROM hrSample h WHERE h.deviceId = p.deviceId AND h.ts = p.ts)" +
+            ") GROUP BY ts / :bucketSeconds ORDER BY bucket ASC"
+    )
+    suspend fun hrBucketsWithConf(deviceId: String, from: Long, to: Long, bucketSeconds: Long): List<HrBucketConf>
+
+    /**
+     * Cheap raw-HR change fingerprint over a window: `(count, maxTs)` for one device in `[from, to]`,
+     * measured `hrSample` ONLY (no PPG union, this is the RAW stream watermark). One indexed aggregate,
+     * no row materialisation (#836). COALESCE so an empty window is `(0, 0)`, never null. Mirrors Swift
+     * Reads.swift hrFingerprint (device- and window-scoped), distinct from the whole-history
+     * [WhoopRepository.hrFingerprint] idle-tick gate built on [countHr]/[maxHrTs].
+     */
+    @Query(
+        "SELECT COUNT(*) AS count, COALESCE(MAX(ts), 0) AS maxTs FROM hrSample " +
+            "WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to"
+    )
+    suspend fun hrFingerprint(deviceId: String, from: Long, to: Long): HrFingerprint
+
     /** Raw v26 PPG-derived HR samples in [from, to] (ascending). (#156) */
     @Query(
         "SELECT * FROM ppgHrSample WHERE deviceId = :deviceId AND ts >= :from AND ts <= :to " +
@@ -593,6 +626,11 @@ interface WhoopDao : DeviceRegistryDao {
     @Query("SELECT COUNT(*) FROM stepSample") suspend fun countSteps(): Int
     @Query("SELECT COUNT(*) FROM respSample") suspend fun countResp(): Int
     @Query("SELECT COUNT(*) FROM gravitySample") suspend fun countGravity(): Int
+    // Persist-only stream counts (not summed by storageStats, but read by the iOS store's
+    // per-table test helpers, sleepStateCountForTest / ppgHrCountForTest, so the streams suites can
+    // assert row counts against the Room backend exactly as they do against GRDB).
+    @Query("SELECT COUNT(*) FROM sleepStateSample") suspend fun countSleepState(): Int
+    @Query("SELECT COUNT(*) FROM ppgHrSample") suspend fun countPpgHr(): Int
 
     // MARK: - Live convenience reads
 

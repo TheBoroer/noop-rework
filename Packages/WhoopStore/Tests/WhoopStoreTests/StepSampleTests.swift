@@ -6,19 +6,19 @@ import WhoopProtocol
 /// v10 migration: WHOOP5 step_motion_counter persistence (macOS parity with Android, #78).
 final class StepSampleTests: XCTestCase {
     func testV10CreatesStepTable() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("stepSample"))
     }
 
     func testStepPrimaryKeyIsDeviceIdTs() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.primaryKeyColumns("stepSample")
         XCTAssertEqual(cols, ["deviceId", "ts"])
     }
 
     func testStepInsertRoundTripAndDedup() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let streams = Streams(steps: [
             StepSample(ts: 1_780_916_150, counter: 50),
             StepSample(ts: 1_780_916_151, counter: 51),
@@ -34,7 +34,7 @@ final class StepSampleTests: XCTestCase {
 
     /// v19 migration: the @63 activity-class column exists on stepSample (#316).
     func testV19AddsActivityClassColumn() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.columnNamesForTest(table: "stepSample")
         XCTAssertTrue(cols.contains("activityClass"))
     }
@@ -44,7 +44,7 @@ final class StepSampleTests: XCTestCase {
     /// absent, never a fabricated 0/"still"). This is the chain the tigercraft4 PR #901 botched on Apple:
     /// it SELECTed a column that didn't exist. Here the v19 migration + INSERT + SELECT carry it end to end.
     func testActivityClassRoundTrips() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let streams = Streams(steps: [
             StepSample(ts: 1_780_916_200, counter: 60, activityClass: 0),   // still
             StepSample(ts: 1_780_916_201, counter: 61, activityClass: 1),   // walk

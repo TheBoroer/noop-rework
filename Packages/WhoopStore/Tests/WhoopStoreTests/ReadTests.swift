@@ -4,7 +4,7 @@ import WhoopProtocol
 
 final class ReadTests: XCTestCase {
     private func seeded() async throws -> WhoopStore {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertDevice(id: "dev1", mac: nil, name: nil)
         try await store.upsertDevice(id: "other", mac: nil, name: nil)
         let s = Streams(

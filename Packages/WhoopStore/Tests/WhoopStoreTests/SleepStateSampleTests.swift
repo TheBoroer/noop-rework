@@ -9,13 +9,13 @@ import WhoopProtocol
 /// (deviceId, ts), and round-trips + dedupes exactly like stepSample.
 final class SleepStateSampleTests: XCTestCase {
     func testV21CreatesSleepStateTable() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("sleepStateSample"))
     }
 
     func testSleepStatePrimaryKeyIsDeviceIdTs() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let cols = try await store.primaryKeyColumns("sleepStateSample")
         XCTAssertEqual(cols, ["deviceId", "ts"])
     }
@@ -23,7 +23,7 @@ final class SleepStateSampleTests: XCTestCase {
     /// The raw stream round-trips through insert + read, INCLUDING state 0 (a real wake reading, not
     /// "absent"), and re-inserting the same (deviceId, ts) is idempotent (ON CONFLICT DO NOTHING).
     func testSleepStateInsertRoundTripAndDedup() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let streams = Streams(sleepState: [
             SleepStateSample(ts: 1_780_916_150, state: 0),   // wake (real, carried verbatim)
             SleepStateSample(ts: 1_780_916_180, state: 1),   // still
@@ -47,7 +47,7 @@ final class SleepStateSampleTests: XCTestCase {
     /// The read is device-scoped and range-scoped: another device's band state never leaks in, and a
     /// window that predates the samples returns empty (a strap that never reported it → no rows).
     func testSleepStateReadIsDeviceAndRangeScoped() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         _ = try await store.insert(Streams(sleepState: [SleepStateSample(ts: 2_000, state: 2)]),
                                    deviceId: "my-whoop")
         _ = try await store.insert(Streams(sleepState: [SleepStateSample(ts: 2_000, state: 3)]),

@@ -73,6 +73,31 @@ data class HrBucket(
     val avgBpm: Double,
 )
 
+/**
+ * One downsampled HR point WITH the per-bucket weakest confidence: the bucket's start (unix seconds),
+ * the mean bpm over it, and MIN(conf) across its contributing rows (measured `hrSample` rows = 1.0,
+ * PPG-derived fallback rows their stored autocorrelation conf). Query result of
+ * [WhoopDao.hrBucketsWithConf], not a table. The bpm aggregate + anti-join are byte-identical to
+ * [HrBucket]/[WhoopDao.hrBuckets]; only the extra `minConf` projection differs. Mirrors the Swift
+ * `HRBucket` (ts, bpm, conf) the iOS chart reads to shade a weak-optical stretch (ryanAtriumAi #988).
+ */
+data class HrBucketConf(
+    val bucket: Long,
+    val avgBpm: Double,
+    val minConf: Double,
+)
+
+/**
+ * Cheap raw-HR change fingerprint over a window: row count + latest ts for one device in `[from, to]`,
+ * measured `hrSample` ONLY (no PPG union). Query result of [WhoopDao.hrFingerprint], not a table.
+ * Computed as one indexed aggregate with no row materialisation (#836); COALESCE keeps an empty window
+ * `(0, 0)`, never null. Mirrors the Swift `WhoopStore.hrFingerprint` `(count, maxTs)` reader.
+ */
+data class HrFingerprint(
+    val count: Int,
+    val maxTs: Long,
+)
+
 /** Aggregate HR over a time window, sample count + avg/max bpm. Query result of
  *  [WhoopDao.hrWindowStats], not a table. Used to derive a workout's HR from strap samples when
  *  the imported session carries none (#77). avg/max are null when n == 0. */

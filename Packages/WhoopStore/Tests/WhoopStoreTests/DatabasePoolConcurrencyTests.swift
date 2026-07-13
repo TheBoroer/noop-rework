@@ -18,6 +18,17 @@ final class DatabasePoolConcurrencyTests: XCTestCase {
         for suffix in ["", "-wal", "-shm"] {
             try? FileManager.default.removeItem(atPath: path + suffix)
         }
+        // `WhoopStore(path:)` now opens a shared Room database at `<dir>/noop.db` beside the GRDB file
+        // (Phase 2c-1 cutover), plus a `.migrated` completion sentinel and a `.lck` lock. None of those
+        // are keyed to `path`, and this suite puts its GRDB file directly in the shared temp dir, so a
+        // re-run would otherwise reopen a STALE, already-populated `noop.db` (both-present branch) and
+        // the natural-key inserts would no-op (0 rows). Clean the Room sibling here so re-runs are
+        // hermetic, matching the per-test isolation the newer suites get from a unique subdirectory.
+        let roomBase = ((path as NSString).deletingLastPathComponent as NSString)
+            .appendingPathComponent("noop.db")
+        for suffix in ["", "-wal", "-shm", "-journal", ".migrated", ".lck"] {
+            try? FileManager.default.removeItem(atPath: roomBase + suffix)
+        }
     }
 
     /// The file-backed store (now Pool-backed) writes then reads the same rows back unchanged:

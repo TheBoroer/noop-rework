@@ -60,6 +60,19 @@ public actor WhoopStore {
     }
     let backend: Backend
 
+    /// Thrown by a Room-backed method if it is somehow reached on the x86_64 iOS-Simulator slice.
+    /// That slice is a phantom: `Shared.xcframework` ships no x86_64 iOS-Simulator slice (only arm64),
+    /// so the SKIE Swift surface (`whoopDatabase` / `onEnum` / the async DAO members) is absent there,
+    /// the app EXCLUDED_ARCHS-drops the arch at link (project.yml), and this compiled-but-unlinked
+    /// slice is never run. Every Room branch is therefore `#if`-compiled out of that one slice and
+    /// throws this instead, so the whole package still type-checks for `generic/platform=iOS Simulator`
+    /// (the exact CI destination). The arm64 device/simulator and macOS slices carry the real Room path.
+    struct RoomBackendUnavailableError: Error, CustomStringConvertible {
+        var description: String {
+            "Room is unavailable on the x86_64 iOS-Simulator slice (no Shared slice); never linked or run."
+        }
+    }
+
     /// Public diagnostic surface (Settings / support screens, and this init's own tests): which
     /// backend actually ended up live, and why. `nonisolated`: decided once, at init, and never
     /// changes afterward, so callers can read it without an `await`.
@@ -187,6 +200,18 @@ public actor WhoopStore {
         // GRDB-only forever (Task 2), and a `.legacyGrdb` fallback must be on the CURRENT schema.
         try WhoopStore.makeMigrator().migrate(legacyPool)
 
+        #if targetEnvironment(simulator) && arch(x86_64)
+        // Phantom x86_64 iOS-Simulator slice (see RoomBackendUnavailableError): Shared has no such
+        // slice, so the Room/ETL machinery below (whoopDatabase / onEnum / suspend DAO calls) cannot
+        // type-check here. This slice is never linked or run; return the always-open legacy GRDB
+        // backend so the package compiles for `generic/platform=iOS Simulator`. The arm64 slices carry
+        // the real detect-migrate-open cutover.
+        _ = (roomPath, legacyExistedBefore, roomExistedBefore, sentinelExistedBefore)
+        return OpenResult(dbWriter: legacyPool, backend: .legacyGrdb,
+                          storageBackend: .legacyGrdb(fallbackReason: "unbuilt on x86_64 iOS Simulator"),
+                          migrationProgress: nil)
+        #else
+
         if roomExistedBefore && sentinelExistedBefore {
             // Both files present AND the sentinel confirms a PRIOR migration (ETL or fresh install)
             // actually completed: open Room as-is, no re-ETL (re-running it would blow away any
@@ -263,6 +288,7 @@ public actor WhoopStore {
                                storageBackend: .legacyGrdb(fallbackReason: reason),
                                migrationProgress: progressStream)
         }
+        #endif
     }
 
     /// Forces Room's on-disk file to actually exist: Room's builder opens its bundled-driver
@@ -270,7 +296,11 @@ public actor WhoopStore {
     /// database otherwise wouldn't be on disk yet when `init(path:)` returns. A cheap DAO read is
     /// enough to open the connection; the fresh schema always has zero rows.
     private static func warmUpRoomDatabase(_ room: WhoopDatabase) async throws {
+        #if targetEnvironment(simulator) && arch(x86_64)
+        _ = room  // Unreachable on the phantom x86_64 iOS-Simulator slice (see detectMigrateOpen).
+        #else
         _ = try await room.whoopDao().countHr()
+        #endif
     }
 
     /// The Room sibling of a legacy GRDB path: same directory, filename `noop.db` (mirrors
