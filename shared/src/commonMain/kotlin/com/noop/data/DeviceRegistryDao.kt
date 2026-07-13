@@ -21,9 +21,33 @@ interface DeviceRegistryDao {
     @Query("SELECT id FROM pairedDevice WHERE status = 'active' LIMIT 1")
     suspend fun activeDeviceId(): String?
 
-    /** Insert-or-replace a device by its id PK (Swift `add`'s ON CONFLICT(id) DO UPDATE upsert). */
+    /** Insert-or-replace a device by its id PK (Android's long-standing REPLACE upsert). */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPairedDevice(row: PairedDeviceRow)
+
+    /** Insert-or-update a device by its id PK, preserving the original `addedAt` on conflict: the exact
+     *  column set of Swift `add`'s ON CONFLICT(id) DO UPDATE upsert, whose SET list deliberately omits
+     *  `addedAt` so re-adding an existing id never resets its position in the `addedAt ASC` ordering.
+     *  Same column-omission idiom as [WhoopDao.upsertWorkoutPreservingRoute]. */
+    @Query(
+        "INSERT INTO pairedDevice (id, brand, model, nickname, peripheralId, sourceKind, capabilities, status, addedAt, lastSeenAt) " +
+            "VALUES (:id, :brand, :model, :nickname, :peripheralId, :sourceKind, :capabilities, :status, :addedAt, :lastSeenAt) " +
+            "ON CONFLICT(id) DO UPDATE SET brand = excluded.brand, model = excluded.model, nickname = excluded.nickname, " +
+            "peripheralId = excluded.peripheralId, sourceKind = excluded.sourceKind, capabilities = excluded.capabilities, " +
+            "status = excluded.status, lastSeenAt = excluded.lastSeenAt"
+    )
+    suspend fun upsertPairedDevicePreservingAddedAt(
+        id: String,
+        brand: String,
+        model: String,
+        nickname: String?,
+        peripheralId: String?,
+        sourceKind: String,
+        capabilities: String,
+        status: String,
+        addedAt: Long,
+        lastSeenAt: Long,
+    )
 
     /** Demote whatever device is currently active to `paired`. Half of the single-active swap
      *  (invariant I1); MUST run in the same transaction as [promote] — see [DeviceRegistry.setActive]. */

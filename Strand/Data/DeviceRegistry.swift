@@ -8,7 +8,7 @@ import WhoopStore
 // converted to async in Task 6 as part of killing the "sync bypass" DeviceRegistryStore used to be).
 // The UI observes this for the paired-device list + the currently active device; the app's
 // `deviceId` is sourced from `activeDeviceId` so it's "the active device's id" rather than the
-// hardcoded "my-whoop" literal. Behaviour is unchanged today — migration v15 (GRDB) / the Room
+// hardcoded "my-whoop" literal. Behaviour is unchanged today: migration v15 (GRDB) / the Room
 // seed callback (Task 6) seeds a single 'my-whoop' row as `.active`, so the active id is still
 // "my-whoop".
 //
@@ -79,7 +79,7 @@ final class DeviceRegistry: ObservableObject {
     /// Routed through the `WhoopStore` actor's `deleteAllData(deviceId:)`, so the heavy 16+-table delete
     /// runs on the actor's OWN (off-main) executor instead of blocking the main thread (this is a
     /// `@MainActor` cache). This deliberately bypasses `DeviceRegistryStore` and calls the actor
-    /// directly, same as before Task 6 — `DeviceRegistryStore` is now also async (it routes through the
+    /// directly, same as before Task 6. `DeviceRegistryStore` is now also async (it routes through the
     /// same actor), so going through it here would cost nothing extra, but the direct call keeps this
     /// method's intent obvious (a bulk data purge, not a registry-row mutation). Best-effort: a store
     /// failure leaves the recordings and published state untouched. Awaits the delete BEFORE `reload()`

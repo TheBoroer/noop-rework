@@ -34,6 +34,23 @@ final class DeviceRegistryStoreTests: XCTestCase {
         XCTAssertEqual(activeCount, 1)  // I1
     }
 
+    func testReAddPreservesOriginalAddedAt() async throws {
+        // Review fix (Task 6): `add` on the Room branch must match the GRDB upsert's SET list, which
+        // deliberately omits addedAt, so re-adding an existing id (e.g. re-pairing via the Add wizard,
+        // which builds addedAt = now) never resets the device's position in the addedAt ASC ordering.
+        let store = try await makeStore()
+        try await store.add(PairedDevice(id: "polar-1", brand: "Polar", model: "H10", sourceKind: .liveBLE,
+                                         capabilities: [.hr], status: .paired, addedAt: 100, lastSeenAt: 100))
+        try await store.add(PairedDevice(id: "polar-1", brand: "Polar", model: "H10", nickname: "Chest strap",
+                                         sourceKind: .liveBLE, capabilities: [.hr, .hrv], status: .paired,
+                                         addedAt: 999, lastSeenAt: 999))
+        let fetched = try await store.all().first { $0.id == "polar-1" }
+        XCTAssertEqual(fetched?.addedAt, 100)          // preserved, NOT 999
+        XCTAssertEqual(fetched?.lastSeenAt, 999)       // updated
+        XCTAssertEqual(fetched?.nickname, "Chest strap")
+        XCTAssertEqual(fetched?.capabilities, [.hr, .hrv])
+    }
+
     func testArchiveKeepsRowAndClearsActive() async throws {
         let store = try await makeStore()
         try await store.archive("my-whoop")

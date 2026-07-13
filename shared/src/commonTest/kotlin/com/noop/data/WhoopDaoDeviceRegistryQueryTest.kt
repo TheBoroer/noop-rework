@@ -94,4 +94,37 @@ class WhoopDaoDeviceRegistryQueryTest {
             db.close()
         }
     }
+
+    /** Re-adding an existing id through the preserving upsert updates every mutable column but keeps
+     *  the original addedAt (the Swift GRDB upsert's SET list omits addedAt, so the Room branch must
+     *  too; a plain REPLACE would reset the row's position in the addedAt ASC ordering). */
+    @Test
+    fun preservingUpsertKeepsOriginalAddedAtOnConflict() = runTest {
+        if (!canRunFullRestore) return@runTest
+        val db = freshDb("dao-registry-preserving-upsert.db")
+        try {
+            val dao = db.whoopDao()
+            dao.upsertPairedDevicePreservingAddedAt(
+                id = "polar-1", brand = "Polar", model = "H10", nickname = null, peripheralId = null,
+                sourceKind = "liveBLE", capabilities = "hr", status = "paired",
+                addedAt = 100, lastSeenAt = 100,
+            )
+
+            // Re-add the same id later (e.g. re-pairing via the Add wizard builds addedAt = now).
+            dao.upsertPairedDevicePreservingAddedAt(
+                id = "polar-1", brand = "Polar", model = "H10", nickname = "Chest strap",
+                peripheralId = "AA:BB", sourceKind = "liveBLE", capabilities = "hr,hrv",
+                status = "paired", addedAt = 999, lastSeenAt = 999,
+            )
+
+            val row = dao.pairedDevices().first { it.id == "polar-1" }
+            assertEquals(100L, row.addedAt) // preserved, NOT 999
+            assertEquals(999L, row.lastSeenAt) // updated
+            assertEquals("Chest strap", row.nickname) // updated
+            assertEquals("AA:BB", row.peripheralId) // updated
+            assertEquals("hr,hrv", row.capabilities) // updated
+        } finally {
+            db.close()
+        }
+    }
 }

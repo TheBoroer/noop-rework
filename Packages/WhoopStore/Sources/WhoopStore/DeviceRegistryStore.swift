@@ -123,7 +123,14 @@ extension WhoopStore {
             #if targetEnvironment(simulator) && arch(x86_64)
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
-            try await roomDb.whoopDao().upsertPairedDevice(row: Self.encodeRoom(d))
+            // Preserving upsert (not the REPLACE-based upsertPairedDevice): matches the .legacyGrdb
+            // branch's ON CONFLICT(id) DO UPDATE, whose SET list omits addedAt so a re-add of an
+            // existing id keeps the original pairing time (and its position in the addedAt ASC list).
+            try await roomDb.whoopDao().upsertPairedDevicePreservingAddedAt(
+                id: d.id, brand: d.brand, model: d.model, nickname: d.nickname,
+                peripheralId: d.peripheralId, sourceKind: d.sourceKind.rawValue,
+                capabilities: d.capabilities.map(\.rawValue).sorted().joined(separator: ","),
+                status: d.status.rawValue, addedAt: Int64(d.addedAt), lastSeenAt: Int64(d.lastSeenAt))
             #endif
         case .legacyGrdb:
             try syncWrite { db in try Self.upsertGrdb(db, d) }

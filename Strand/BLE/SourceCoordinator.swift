@@ -146,6 +146,11 @@ final class SourceCoordinator: ObservableObject {
 
         connectedPeripheralUUID
             .removeDuplicates()
+            // Task 6 note: the handler is async (it awaits the registry), so each emission is handled
+            // in its own @MainActor Task. Two rapid DISTINCT uuids could in theory both read the
+            // registry's pre-write state before either setPeripheralId lands (the sync version could
+            // not interleave). Unreachable at BLE connect cadence + removeDuplicates, but if adopt
+            // races ever surface (#52), serialize emissions through a single AsyncStream consumer.
             .sink { [weak self] uuid in Task { await self?.connectedPeripheralChanged(to: uuid) } }
             .store(in: &cancellables)
     }
