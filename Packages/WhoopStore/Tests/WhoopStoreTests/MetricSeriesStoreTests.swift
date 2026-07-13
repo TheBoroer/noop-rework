@@ -7,7 +7,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     // MARK: - migration (v9 creates the table with the right PK + index)
 
     func testV9CreatesMetricSeriesTable() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("metricSeries"))
 
@@ -21,14 +21,14 @@ final class MetricSeriesStoreTests: XCTestCase {
     }
 
     func testV9CreatesPerMetricIndex() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let names = try await store.indexNamesForTest(table: "metricSeries")
         XCTAssertTrue(names.contains("idx_metricSeries_device_key_day"),
                       "v9 must create the (deviceId, key, day) index for fast per-metric reads")
     }
 
     func testExistingTablesStillPresentAfterV9() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
         for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
                   "sleepSession", "dailyMetric", "journal", "workout", "appleDaily"] {
@@ -39,7 +39,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     // MARK: - upsert + read by key + range + ordering
 
     func testUpsertReadByKeyAndRangeOrdering() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         // Insert out of order across two keys.
         try await store.upsertMetricSeries([
             MetricPoint(day: "2026-05-20", key: "restingHr", value: 54),
@@ -68,7 +68,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     // MARK: - idempotency + conflict-update
 
     func testIdempotencyAndConflictUpdate() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertMetricSeries([
             MetricPoint(day: "2026-05-10", key: "recovery", value: 60),
         ], deviceId: "devA")
@@ -85,7 +85,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     }
 
     func testUpsertReturnsChangeCount() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let n = try await store.upsertMetricSeries([
             MetricPoint(day: "2026-05-01", key: "steps", value: 9000),
             MetricPoint(day: "2026-05-02", key: "steps", value: 11000),
@@ -94,7 +94,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     }
 
     func testDeviceIsolation() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertMetricSeries([
             MetricPoint(day: "2026-05-10", key: "steps", value: 1),
         ], deviceId: "devA")
@@ -112,7 +112,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     // MARK: - distinct metricKeys (sorted)
 
     func testMetricKeysDistinctAndSorted() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertMetricSeries([
             MetricPoint(day: "2026-05-01", key: "steps", value: 1),
             MetricPoint(day: "2026-05-02", key: "steps", value: 2),     // dup key, different day
@@ -125,7 +125,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     }
 
     func testMetricKeysEmptyForUnknownDevice() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let keys = try await store.metricKeys(deviceId: "ghost")
         XCTAssertEqual(keys, [])
     }
@@ -133,7 +133,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     // MARK: - metricDays (min/max)
 
     func testMetricDaysReturnsEarliestAndLatest() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         try await store.upsertMetricSeries([
             MetricPoint(day: "2026-05-20", key: "restingHr", value: 54),
             MetricPoint(day: "2026-05-01", key: "restingHr", value: 58),
@@ -151,7 +151,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     }
 
     func testMetricDaysNilWhenAbsent() async throws {
-        let store = try await WhoopStore.inMemory()
+        let store = try await WhoopStore.roomBackedForTest()
         let span = try await store.metricDays(deviceId: "devA", key: "missing")
         XCTAssertNil(span)
     }
