@@ -133,6 +133,34 @@ class OutboxStoreTest {
     }
 
     @Test
+    fun rejectedRawFramesRoundTripThroughOutboxWithoutLoss() = runTest {
+        // Phase 2c-2 Task 12 scope 3: REJECTED/raw historical records (CRC-garbled, unmapped-version,
+        // gate-failed — anything the decoder left raw) must survive enqueue → framesBlob byte-for-byte,
+        // because re-decode after a future firmware RE pass is the whole point of keeping them. Encodes
+        // with the shared [com.noop.ble.OutboxCodec] (the Kotlin twin of Swift RawOutbox) and asserts
+        // the decoded frames are content-identical, including a deliberately corrupt frame.
+        val garbledRejected = ByteArray(84) { ((it * 13 + 1) and 0xFF).toByte() } // fails every CRC/gate
+        val healthy = byteArrayOf(0xAA.toByte(), 0x03, 0x00, 0x07, 0x2F, 0x18)
+        val original = listOf(healthy, garbledRejected, ByteArray(0))
+        val blob = com.noop.ble.OutboxCodec.zlibCompressWithLength(
+            com.noop.ble.OutboxCodec.packFrames(original),
+        )
+
+        val store = storeWith(FakeOutboxDao())
+        store.enqueue(meta("rejected-batch", capturedAt = 42, byteSize = blob.size), blob)
+
+        val readBack = store.framesBlob("rejected-batch")
+        assertTrue(readBack != null && blob.contentEquals(readBack), "blob is opaque to the store — byte-identical")
+        val frames = com.noop.ble.OutboxCodec.unpackFrames(
+            com.noop.ble.OutboxCodec.zlibDecompressWithLength(readBack!!),
+        )
+        assertEquals(original.size, frames.size)
+        for (i in original.indices) {
+            assertTrue(original[i].contentEquals(frames[i]), "frame $i must survive the outbox untouched")
+        }
+    }
+
+    @Test
     fun pendingReturnsOldestFirst_upToLimit() = runTest {
         val store = storeWith(FakeOutboxDao())
         store.enqueue(meta("new", capturedAt = 300), frames)

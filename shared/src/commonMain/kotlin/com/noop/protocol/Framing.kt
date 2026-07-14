@@ -261,6 +261,7 @@ object Framing {
 
         when (name) {
             "REALTIME_DATA" -> decodeRealtime(frame, parsed)
+            "REALTIME_RAW_DATA" -> decodeRawData(frame, length, parsed)
             "EVENT" -> decodeEvent(frame, length, parsed)
             "COMMAND_RESPONSE" -> decodeCommandResponse(frame, length, parsed)
             "METADATA" -> decodeMetadata(frame, length, parsed)
@@ -426,6 +427,39 @@ object Framing {
             if (v != null && v > 0) rrs.add(v)
         }
         parsed["rr_intervals"] = rrs
+    }
+
+    /**
+     * REALTIME_RAW_DATA (type 43) — header per whoop_protocol.json packets.REALTIME_RAW_DATA:
+     * cmd@6 (u8), record_hdr@7 (u32), timestamp@11 (u32, DEVICE epoch — not wall time),
+     * subseconds@15 (u16), unknown_hdr@17 (u32). The variant is keyed by declared length - 7
+     * (mirrors Swift PostHooks "raw_data"):
+     *   1917 = IMU: heart_rate@21 (u8), rr_count@22 (u8), rr[0..3]@23 (u16 LE each) — the
+     *          canonical HR/RR stream during a historical backfill (type-40 frames are absent).
+     *          RR values are appended verbatim (no >0 filter — Swift's raw_data hook has none,
+     *          unlike the type-40 realtime decode above).
+     *   1921 = optical PPG: no biometrics header. The PPG/IMU research surfaces (axis means,
+     *          ppg_mean) stay Swift-side; only the fields consumed by extractHistoricalStreams
+     *          are ported here.
+     * Unknown variants keep the header fields and nothing else (fail closed).
+     */
+    private fun decodeRawData(frame: ByteArray, length: Int?, parsed: MutableMap<String, Any?>) {
+        frame.u8(6)?.let { parsed["cmd"] = it }
+        frame.u32(7)?.let { parsed["record_hdr"] = it.toInt() }
+        frame.u32(11)?.let { parsed["timestamp"] = it.toInt() }
+        frame.u16(15)?.let { parsed["subseconds"] = it }
+        frame.u32(17)?.let { parsed["unknown_hdr"] = it.toInt() }
+        val dataLen = (length ?: return) - 7
+        if (dataLen == 1917) { // schema variants."1917" (imu)
+            frame.u8(21)?.let { parsed["heart_rate"] = it }
+            val rrn = frame.u8(22) ?: 0
+            parsed["rr_count"] = rrn
+            val rrs = ArrayList<Int>()
+            for (i in 0 until minOf(rrn, 4)) {
+                frame.u16(23 + i * 2)?.let { rrs.add(it) }
+            }
+            parsed["rr_intervals"] = rrs
+        }
     }
 
     /**
