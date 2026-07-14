@@ -57,4 +57,18 @@ extension WhoopStore {
     // pulls are incremental.
     public func setReadHighwater(_ stream: String, _ ts: Int) async throws { try await setCursor("read:" + stream, ts) }
     public func readHighwater(_ stream: String) async throws -> Int? { try await cursor("read:" + stream) }
+
+    /// Every cursor name currently stored in the legacy GRDB `cursors` table, unordered. Phase 2c-2
+    /// Task 6's one-shot drain calls this on a `.legacyGrdb` source to enumerate which cursors exist so
+    /// it can copy the keep-set (`strap_trim` / `highwater:*` / `read:*`) into the Room outbox. It reads
+    /// `dbWriter` (the legacy GRDB connection) directly rather than routing through the backend switch:
+    /// the drain only ever holds a `.legacyGrdb` source here, and the Room side deliberately grew no
+    /// enumerate-names bridge method (a one-shot migration is not worth a new Kotlin `OutboxStore`
+    /// surface). On any store this is `dbWriter`'s `cursors` table, which the `cursors` migration always
+    /// creates, so the read is safe even when empty (returns `[]`).
+    func legacyCursorNames() throws -> [String] {
+        try syncRead { db in
+            try String.fetchAll(db, sql: "SELECT name FROM cursors")
+        }
+    }
 }

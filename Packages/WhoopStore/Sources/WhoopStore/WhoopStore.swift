@@ -529,6 +529,25 @@ public actor WhoopStore {
                            storageBackend: .legacyGrdb(fallbackReason: nil), migrationProgress: nil)
     }
 
+    /// Opens `path` as a pure legacy-GRDB store: a file-backed `DatabasePool` with the current GRDB
+    /// migrations applied and `backend = .legacyGrdb`, WITHOUT `detectMigrateOpen`'s Room cutover — it
+    /// never opens the `noop.db` sibling, runs no ETL, and writes no sentinel. Phase 2c-2 Task 6's
+    /// one-shot drain uses this to read the legacy `whoop.sqlite` raw outbox (`rawBatch` + `cursors`)
+    /// through the SAME `.legacyGrdb` branch of `pendingRawBatches`/`rawFrames`/`cursor` the store has
+    /// always had, so it can fold pending batches and the surviving cursors into the live Room outbox
+    /// before archiving the file. Deliberately narrow (WAL via `DatabasePool`, 5-second busy timeout,
+    /// none of the bulk-write PRAGMAs the production open tunes) so opening it can't disturb the
+    /// flipped-storage cutover state the main `open(path:)`/`init(path:)` flow manages. Unlike
+    /// `inMemory()` this is file-backed, so the pending rows it reads are the ones actually on disk.
+    public static func openLegacyGrdb(path: String) throws -> WhoopStore {
+        var config = Configuration()
+        config.busyMode = .timeout(5)
+        let pool = try DatabasePool(path: path, configuration: config)
+        try WhoopStore.makeMigrator().migrate(pool)
+        return WhoopStore(dbWriter: pool, backend: .legacyGrdb,
+                          storageBackend: .legacyGrdb(fallbackReason: nil), migrationProgress: nil)
+    }
+
     // MARK: - Synchronous GRDB helpers
     // GRDB 6 marks its sync read/write overloads @_disfavoredOverload so that in an async
     // context Swift would otherwise pick the async overloads. These thin wrappers are

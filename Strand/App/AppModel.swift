@@ -337,6 +337,15 @@ final class AppModel: ObservableObject {
         // main thread free for SwiftUI during the deep-history pass right after an import / first launch.
         Task(priority: .utility) { [weak self] in
             guard let self else { return }
+            // Phase 2c-2 Task 6: fold any pending legacy GRDB outbox (`whoop.sqlite` rawBatch + cursors)
+            // into the live Room outbox, then archive the GRDB file. One-shot, idempotent, self-guarded;
+            // a no-op on a fresh install, an already-drained device, or a legacy-GRDB fallback store.
+            // Runs before the refresh/backfill below so a device upgrading across the cutover has its
+            // un-uploaded batches in the Room outbox from the first tick. `storeHandle()` joins the
+            // single-flight open the rest of launch already awaits — no extra store open.
+            if let store = await self.repo.storeHandle() {
+                await LegacyOutboxDrain.runIfNeeded(room: store)
+            }
             #if DEBUG
             // DEBUG-only: when launched with `--demo-seed`, populate a deterministic synthetic
             // dataset so an empty simulator/dev build can walk every screen (verification + marketing
