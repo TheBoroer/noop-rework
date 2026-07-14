@@ -26,7 +26,10 @@ enum SharedBridge {
 
 extension Array where Element == UInt8 {
     /// Copy this byte array into a fresh Kotlin `ByteArray` (bit-pattern preserved: UInt8 -> Int8).
-    func toKotlinByteArray() -> KotlinByteArray {
+    /// `public`: Phase 2c-2 Task 3 reuses this from the sibling `WhoopStore` package (the shared-outbox
+    /// bridge) instead of duplicating the loop, per the plan's explicit "reuse them" instruction. Every
+    /// other member in this file stays module-internal; only the four bridging methods below widen.
+    public func toKotlinByteArray() -> KotlinByteArray {
         let arr = KotlinByteArray(size: Int32(count))
         withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             for i in 0..<count { arr.set(index: Int32(i), value: Int8(bitPattern: raw[i])) }
@@ -37,7 +40,8 @@ extension Array where Element == UInt8 {
 
 extension Data {
     /// Copy this `Data` into a fresh Kotlin `ByteArray` (bit-pattern preserved: UInt8 -> Int8).
-    func toKotlinByteArray() -> KotlinByteArray {
+    /// `public`: see the `[UInt8]` overload above for why.
+    public func toKotlinByteArray() -> KotlinByteArray {
         let arr = KotlinByteArray(size: Int32(count))
         // Type the closure param: `Data.withUnsafeBytes` has a deprecated typed-pointer overload too.
         withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
@@ -49,7 +53,8 @@ extension Data {
 
 extension KotlinByteArray {
     /// Copy this Kotlin `ByteArray` into a Swift `[UInt8]` (bit-pattern preserved: Int8 -> UInt8).
-    func toUInt8Array() -> [UInt8] {
+    /// `public`: see the `toKotlinByteArray()` overloads above for why.
+    public func toUInt8Array() -> [UInt8] {
         let n = Int(size)
         var out = [UInt8](repeating: 0, count: n)
         for i in 0..<n { out[i] = UInt8(bitPattern: get(index: Int32(i))) }
@@ -57,7 +62,8 @@ extension KotlinByteArray {
     }
 
     /// Copy this Kotlin `ByteArray` into `Data` (bit-pattern preserved: Int8 -> UInt8).
-    func toData() -> Data {
+    /// `public`: see the `toKotlinByteArray()` overloads above for why.
+    public func toData() -> Data {
         var data = Data(capacity: Int(size))
         for i in 0..<size { data.append(UInt8(bitPattern: get(index: i))) }
         return data
