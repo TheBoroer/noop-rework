@@ -45,10 +45,16 @@ New Room tables for the raw-batch outbox, owned by shared code:
 
 - **Tables:** outbox batch table + cursor table, mirroring the roles of
   GRDB's `rawBatch` / `cursors`.
-- **Migration:** `MIGRATION_17_18` creates both tables (Room schema 17 → 18;
-  v17 identity hash `0df28b445fbde09ef5d4b64485b99b1f`). **No data
+- **Migration:** hand-written `MIGRATION_17_18` creates both tables (Room
+  schema 17 → 18; current version pinned at `WhoopDatabase.kt:65`). **No data
   backfill in the migration** — in-flight GRDB batches at upgrade time are
   handled by the drain-once step (§3b), not by SQL migration.
+- **Migration testing constraint:** `WhoopDatabase` sets
+  `exportSchema = false` (deliberate — kills the destructive fallback), so
+  there are no exported schema JSONs and Room's `MigrationTestHelper` is
+  unavailable. Migration test is fixture-based instead: open a copied v17
+  database file, run `MIGRATION_17_18`, assert both tables + indices exist
+  (same pattern as `grdb-mini.sqlite` fixtures in 2c-1).
 - **API:** `OutboxStore` in `commonMain` — transactional enqueue, flush,
   cursor advance. Enqueue keyed on batch identity so retries are idempotent.
 - **Concurrency:** `OutboxStoreConcurrencyTest` in `commonTest` replaces the
@@ -59,14 +65,25 @@ New Room tables for the raw-batch outbox, owned by shared code:
 
 ### 3a. Repoint call sites
 
-Four files write through `rawBatch` today:
+Full inventory of GRDB-touching Swift files (verified by grep,
+`GRDB|DatabasePool|legacyGrdb|rawBatch`):
 
-| File | New target |
-|---|---|
-| `Collector.swift` (live stream batches) | `OutboxStore.enqueue` |
-| `BLEManager.swift` (historical offload batches) | `OutboxStore.enqueue` |
-| `TestCentreReport.swift` (diagnostics reads) | outbox query API |
-| `DataBackup.swift` (backup/restore) | shared Room handle only |
+| File | Touch | New target |
+|---|---|---|
+| `Strand/Collect/Collector.swift` | `rawBatch` writes (live stream batches) | `OutboxStore.enqueue` |
+| `Strand/BLE/BLEManager.swift` | `rawBatch` writes (historical offload) | `OutboxStore.enqueue` |
+| `Strand/System/TestCentreReport.swift` | `rawBatch` reads (diagnostics) | outbox query API |
+| `Strand/Data/DataBackup.swift` | legacy GRDB fallback export + `.grdb` import routing | see below |
+| `Strand/App/AppModel.swift` | storage report reads GRDB file + WAL/SHM sizes | report Room DB + `noop-drained-<ts>.sqlite` snapshot instead |
+| `Strand/Data/BackupSync.swift` | comment-only reference | doc sweep at deletion |
+| `Strand/Data/DeviceRegistry.swift` | comment-only reference + `registryWriter` | doc sweep; `registryWriter` → `private` (§3c) |
+
+**`DataBackup.swift` detail.** Already Room-primary since 2c-1: export uses
+the Room file, falling back to legacy GRDB `whoop.sqlite` only when no Room
+file exists yet. Changes here: delete that fallback export path and the GRDB
+WAL-checkpoint probe; **keep** the `.grdb` import routing (magic-byte +
+GRDB-origin validation, ETL through `GrdbMigrator`, sidecar snapshot,
+rollback) — that is the option-(a) import path and it stays.
 
 **Persist-before-ack invariant (hard constraint).** The Backfiller archives
 raw bytes *before* acking the trim cursor. New flow preserves this exactly:
