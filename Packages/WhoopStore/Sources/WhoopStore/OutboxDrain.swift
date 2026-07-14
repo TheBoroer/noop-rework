@@ -70,14 +70,14 @@ public enum OutboxDrain {
     /// the caller renames the file — so the archived `.sqlite` is self-contained (WAL folded in) and no
     /// live pool is mid-write on the inode being renamed.
     ///
-    /// Two-pool coexistence (until Task 7): in production this second pool is opened while the live
+    /// Two-pool coexistence (until Task 8): in production this second pool is opened while the live
     /// `.room` store's own vestigial `dbWriter` pool (from `detectMigrateOpen`) is still attached to the
     /// SAME `whoop.sqlite` in the same process. That is a supported SQLite configuration — WAL mode
     /// exists precisely to let multiple connections share one database — and the TRUNCATE checkpoint
     /// below cannot drop anyone's writes: for a `.room` store the vestigial pool is write-idle (outbox
     /// and decoded reads all route to Room, verified per call site in Task 4), so this drain's own
-    /// connection is the only writer at checkpoint time. Task 7 stops opening the legacy pool for a
-    /// `.room` store, ending the coexistence. See also `archiveLegacyFile`'s rename-under-open-fd note.
+    /// connection is the only writer at checkpoint time. Task 8 (GRDB deletion) stops opening the
+    /// legacy pool, ending the coexistence. See also `archiveLegacyFile`'s rename-under-open-fd note.
     private static func drainReleasingSource(
         legacyURL: URL, openLegacy: (URL) throws -> WhoopStore, room: WhoopStore
     ) async throws -> (batches: Int, cursors: Int) {
@@ -125,13 +125,14 @@ public enum OutboxDrain {
     /// main file is already self-contained after `drainReleasingSource`'s checkpoint). Returns the
     /// archived main-file URL.
     ///
-    /// Note (resolved by Task 7): while GRDB read code is still in tree, the live `.room` store keeps its
+    /// Note (resolved by Task 8): while GRDB read code is still in tree, the live `.room` store keeps its
     /// own `DatabasePool` open on this same `whoop.sqlite` (its now-vestigial `dbWriter`), so this rename
     /// happens out from under an open — but idle — pool. That is safe on Darwin (POSIX `rename` on an
     /// open fd keeps the fd valid) and the pool is write-idle for a `.room` store (the outbox and decoded
     /// reads both route to Room); the only transient effect is `databaseFileSizeBytes` reading a stale
-    /// path for the rest of the session, self-correcting next launch. Task 7 stops opening the legacy
-    /// pool for a `.room` store, removing the overlap entirely.
+    /// path for the rest of the session, self-correcting next launch (and since Task 7 the storage
+    /// report no longer calls it). Task 8 (GRDB deletion) stops opening the legacy pool, removing the
+    /// overlap entirely.
     static func archiveLegacyFile(at legacyURL: URL, now: () -> Int, fileManager fm: FileManager) throws -> URL {
         let dir = legacyURL.deletingLastPathComponent()
         let dest = dir.appendingPathComponent("noop-drained-\(now()).sqlite")

@@ -8,7 +8,8 @@ import WhoopStore
 /// to.
 ///
 /// Why an app-level flag on top of the package's file-rename done-marker: while GRDB read code is still
-/// in tree (removed in Task 7), `WhoopStore`'s own open (`detectMigrateOpen`) re-creates an empty
+/// in tree (removed in Task 8, along with this drain), `WhoopStore`'s own open (`detectMigrateOpen`)
+/// re-creates an empty
 /// `whoop.sqlite` on EVERY launch, so the file's mere presence can't gate re-runs — a bare
 /// `OutboxDrain.run` would re-archive a freshly-created empty file each launch, piling up
 /// `noop-drained-*` files. The persisted flag makes this run exactly once per install; the file rename
