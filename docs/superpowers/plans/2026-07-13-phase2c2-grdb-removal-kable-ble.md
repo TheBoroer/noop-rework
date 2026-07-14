@@ -236,32 +236,52 @@ Verify commands (from 2c-1):
 **Verify:** export produces a Room-only archive; importing an old `.grdb` export still restores (existing `GrdbMigratorTest` + a manual import)
 **Commit:** `Phase 2c-2 Task 7: Room-only backup export; storage report off GRDB`
 
-### Task 8: Delete GRDB
+### Task 8: Delete legacy outbox drain (DESCOPED 2026-07-14)
+
+> **Descope decision (human-approved):** original Task 8 ("delete GRDB, zero imports")
+> was unsatisfiable at task size. Verified scope reality: 37 files `import GRDB`
+> (32 WhoopStore, 3 NoopLocalAccess, 2 StrandImport — the latter two were never in
+> this phase's inventory); 105 `.legacyGrdb` refs across 12 source files (~77 switch
+> branches / 11 stores); 16 test suites depend on GRDB-only `inMemory()`; 7
+> `LegacyGrdb*PinTests` suites exist solely to pin legacy behavior. Full removal
+> deferred to its own planned task (see Deferred Work below). This task now covers
+> only the self-contained drain cleanup + doc/visibility items.
 
 **Files:**
-- Delete: `Packages/WhoopStore/Sources/WhoopStore/RawOutbox.swift` GRDB internals,
-  `Cursors.swift`, `Database.swift` GRDB open/DDL, `DatabasePoolConcurrencyTests`,
-  drain code from Task 6, `.legacyGrdb` fallback enum/paths
+- Delete: `LegacyOutboxDrain` (Task 6 drain) + its drain-only GRDB helpers
+  (verified self-contained: called only by drain), `LegacyOutboxDrain` tests,
+  `DatabasePoolConcurrencyTests`
 - Modify: `Strand/Data/DeviceRegistry.swift` (`registryWriter` → `private`; doc sweep),
-  `Strand/Data/BackupSync.swift` (comment sweep), `Packages/WhoopStore/Package.swift`
-  (drop GRDB dependency), Xcode project package refs
+  `Strand/Data/BackupSync.swift` (comment sweep)
 
 **Steps:**
-- [ ] Move the still-needed pure helpers (`packFrames`/`unpackFrames`/`zlibCompressWithLength`/
-  `zlibDecompressWithLength` — Compression framework only, no GRDB) into a GRDB-free file
-  before deleting `RawOutbox.swift`; keep their unit tests.
-- [ ] Delete drain code (Task 6) — it required GRDB reads; the snapshot rename already
-  happened for every upgraded install. Keep `OutboxDrain`'s rename-marker check only if
-  startup still references it; otherwise remove wholesale.
+- [ ] Delete drain code (Task 6) — the snapshot rename already happened for every
+  upgraded install. Keep `OutboxDrain`'s rename-marker check only if startup still
+  references it; otherwise remove wholesale.
+- [ ] Delete drain-only GRDB helpers it called; do NOT touch helpers shared with the
+  `.legacyGrdb` read path (that path stays until the deferred removal task).
 - [ ] `registryWriter` → `private`; comment sweeps in `BackupSync.swift` / `DeviceRegistry.swift`.
 - [ ] Delete `DatabasePoolConcurrencyTests` (replacement `OutboxStoreConcurrencyTest`
   landed in Task 2).
-- [ ] Drop the GRDB package dependency (`Package.swift` + project).
-- [ ] **Acceptance:** `grep -rn "import GRDB\|DatabasePool\|legacyGrdb" --include='*.swift' .`
-  → zero hits (excluding `GrdbMigrator` Kotlin, which stays).
+- [ ] **Explicitly out of scope:** `.legacyGrdb` enum/fallback paths, `RawOutbox.swift`
+  GRDB internals, `Cursors.swift`, `Database.swift` open/DDL, GRDB package dependency,
+  `inMemory()` test strategy, `LegacyGrdb*PinTests`.
+- [ ] **Acceptance:** `grep -rn "LegacyOutboxDrain" --include='*.swift' .` → zero hits;
+  full build + all Swift/Kotlin tests green.
 
 **Verify:** full build + all Swift/Kotlin tests green; grep acceptance above
-**Commit:** `Phase 2c-2 Task 8: delete GRDB (zero imports)`
+**Commit:** `Phase 2c-2 Task 8: delete legacy outbox drain (full GRDB removal deferred)`
+
+#### Deferred Work: full WhoopStore GRDB removal (needs own plan)
+
+Not part of Phase 2c-2. Requires brainstorm + plan covering: migrating/removing the
+11 `.legacyGrdb` read stores (~77 branches, 12 files), a Room-compatible replacement
+for GRDB-only `inMemory()` in 16 test suites, disposition of the 7
+`LegacyGrdb*PinTests` suites, dropping the GRDB dependency from
+`Packages/WhoopStore/Package.swift` + project refs, and moving the pure
+`packFrames`/`unpackFrames`/zlib helpers out of `RawOutbox.swift`. Acceptance
+re-scoped to WhoopStore only — `NoopLocalAccess` and `StrandImport` use GRDB
+legitimately and are out of scope.
 
 ---
 

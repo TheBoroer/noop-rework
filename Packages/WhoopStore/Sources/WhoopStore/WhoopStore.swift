@@ -25,16 +25,15 @@ public enum WhoopStoreInfo {
 public actor WhoopStore {
     let dbWriter: any DatabaseWriter
 
-    /// Task 6: no longer `public`. `DeviceRegistryStore` now routes through the actor (async, backend-
-    /// aware) instead of opening its own synchronous handle onto this GRDB writer directly -- that was
-    /// the "sync bypass" this task kills: a raw `DatabaseWriter` handed out for direct synchronous use
-    /// skips both actor serialization AND the Room backend entirely. `internal` (not removed outright):
-    /// `DatabasePoolConcurrencyTests` still needs a direct handle to assert the production pool's
-    /// pragma configuration on reader connections, unrelated to device-registry semantics, and reaches
-    /// this via `@testable import WhoopStore`. `nonisolated` because a GRDB `DatabaseWriter` (here a
+    /// Task 6 (Phase 2c-1): no longer `public`. `DeviceRegistryStore` now routes through the actor
+    /// (async, backend-aware) instead of opening its own synchronous handle onto this GRDB writer
+    /// directly -- that was the "sync bypass" that task killed: a raw `DatabaseWriter` handed out for
+    /// direct synchronous use skips both actor serialization AND the Room backend entirely. `private`
+    /// since Phase 2c-2 Task 8: its last external consumer (`DatabasePoolConcurrencyTests`) was deleted
+    /// with the legacy outbox drain. `nonisolated` because a GRDB `DatabaseWriter` (here a
     /// `DatabasePool`) is `Sendable` and manages its own concurrency, so concurrent access alongside the
     /// actor's own DB work is safe (the Pool serializes writes and runs reads in parallel under WAL).
-    nonisolated var registryWriter: any DatabaseWriter { dbWriter }
+    private nonisolated var registryWriter: any DatabaseWriter { dbWriter }
 
     // MARK: - Room cutover (Phase 2c-1 Task 3)
     //
@@ -527,25 +526,6 @@ public actor WhoopStore {
         try WhoopStore.makeMigrator().migrate(dbWriter)
         return WhoopStore(dbWriter: dbWriter, backend: .legacyGrdb,
                            storageBackend: .legacyGrdb(fallbackReason: nil), migrationProgress: nil)
-    }
-
-    /// Opens `path` as a pure legacy-GRDB store: a file-backed `DatabasePool` with the current GRDB
-    /// migrations applied and `backend = .legacyGrdb`, WITHOUT `detectMigrateOpen`'s Room cutover — it
-    /// never opens the `noop.db` sibling, runs no ETL, and writes no sentinel. Phase 2c-2 Task 6's
-    /// one-shot drain uses this to read the legacy `whoop.sqlite` raw outbox (`rawBatch` + `cursors`)
-    /// through the SAME `.legacyGrdb` branch of `pendingRawBatches`/`rawFrames`/`cursor` the store has
-    /// always had, so it can fold pending batches and the surviving cursors into the live Room outbox
-    /// before archiving the file. Deliberately narrow (WAL via `DatabasePool`, 5-second busy timeout,
-    /// none of the bulk-write PRAGMAs the production open tunes) so opening it can't disturb the
-    /// flipped-storage cutover state the main `open(path:)`/`init(path:)` flow manages. Unlike
-    /// `inMemory()` this is file-backed, so the pending rows it reads are the ones actually on disk.
-    public static func openLegacyGrdb(path: String) throws -> WhoopStore {
-        var config = Configuration()
-        config.busyMode = .timeout(5)
-        let pool = try DatabasePool(path: path, configuration: config)
-        try WhoopStore.makeMigrator().migrate(pool)
-        return WhoopStore(dbWriter: pool, backend: .legacyGrdb,
-                          storageBackend: .legacyGrdb(fallbackReason: nil), migrationProgress: nil)
     }
 
     // MARK: - Synchronous GRDB helpers
