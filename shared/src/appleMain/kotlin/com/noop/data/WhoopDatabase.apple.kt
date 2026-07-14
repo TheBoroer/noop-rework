@@ -17,8 +17,12 @@ import kotlinx.coroutines.IO
  * Phase 2b Task 1, unchanged, since the bundled driver builder is Darwin-generic). iOS and macOS both
  * build the database from a file path with the bundled SQLite driver (its own SQLite, independent of
  * the host libsqlite version) and run queries on [Dispatchers.IO], mirroring the GRDB store the Swift
- * app uses. A fresh database is created straight at the current schema version (no in-place upgrade
- * path), so no migrations are registered.
+ * app uses. A fresh database is created straight at the current schema version, but an EXISTING file
+ * at an older schema (a restored backup via [BackupRestore], or a Room store left by an earlier app
+ * version) must upgrade in place, so the builder registers [WhoopDatabase.ALL_MIGRATIONS] — the same
+ * single source of truth `WhoopDatabase.android.kt` registers. Without it Room throws
+ * "migration from N to M was required but not found" the moment an older file is opened
+ * (BackupRestoreTest.restoredDatabaseOpensInRoomAndHoldsData caught this with a v17 fixture).
  *
  * Task 6 (device registry): GRDB's own MIGRATION_7_8-equivalent (v15) seeds one `pairedDevice` row
  * ("my-whoop", active) on every migrate call, including a fresh install; Room's fresh-install path
@@ -34,6 +38,10 @@ fun whoopDatabase(path: String): WhoopDatabase =
     Room.databaseBuilder<WhoopDatabase>(name = path)
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
+        // Same single source of truth as the Android builder: an existing file at an older
+        // schema (restored backup, older-app store) upgrades in place; a fresh create at the
+        // current version runs none of these.
+        .addMigrations(*WhoopDatabase.ALL_MIGRATIONS)
         .addCallback(object : RoomDatabase.Callback() {
             override fun onCreate(connection: SQLiteConnection) {
                 val now = Clock.System.now().toEpochMilliseconds() / 1000
