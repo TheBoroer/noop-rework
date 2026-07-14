@@ -1809,20 +1809,64 @@ final class AppModel: ObservableObject {
     // MARK: - Storage diagnostics (#590 , StorageView)
 
     /// A point-in-time snapshot of where the app's on-disk footprint is going, for the Storage screen.
-    /// All sizes in bytes; `db` is nil only for an unopened/in-memory store.
+    /// All sizes in bytes; `db` (the live Room `noop.db` + its `-wal`/`-shm`) is nil only before the
+    /// store's first write. `drained` is any `noop-drained-<ts>.sqlite` migration snapshot the Phase
+    /// 2c-2 GRDB→Room drain left behind — retained for recovery, so it is reported but never
+    /// auto-reclaimed.
     struct StorageReport: Equatable, Sendable {
         var db: Int64?
+        var drained: Int64
         var inbox: Int64
         var importTemp: Int64
     }
 
-    /// Gather the storage report off the main actor: the GRDB file (+ WAL/SHM) from the store, plus the
-    /// `Documents/Inbox/` picker-drop directory and the import temp files this app writes.
+    /// Gather the storage report off the main actor (Phase 2c-2 Task 7): the live Room `noop.db`
+    /// (+ WAL/SHM) read straight from disk — no longer the vestigial legacy GRDB pool — plus any
+    /// `noop-drained-<ts>.sqlite` migration snapshot, the `Documents/Inbox/` picker-drop directory,
+    /// and the import temp files this app writes.
     func storageReport() async -> StorageReport {
-        let db = await repo.storeHandle()?.databaseFileSizeBytes()
-        let inbox = Self.inboxSizeBytes()
-        let temp = Self.importTempSizeBytes()
-        return StorageReport(db: db, inbox: inbox, importTemp: temp)
+        await Task.detached(priority: .utility) {
+            StorageReport(db: Self.roomDatabaseSizeBytes(),
+                          drained: Self.drainedSnapshotSizeBytes(),
+                          inbox: Self.inboxSizeBytes(),
+                          importTemp: Self.importTempSizeBytes())
+        }.value
+    }
+
+    /// Total bytes of the live Room store — `noop.db` plus its `-wal`/`-shm` siblings — read directly
+    /// from the file system (Phase 2c-2 Task 7). Replaces `WhoopStore.databaseFileSizeBytes()`, which
+    /// reported the now-vestigial legacy GRDB pool at `whoop.sqlite`. `nil` when no Room file exists
+    /// yet (fresh install before the first write); best-effort, a missing sibling just isn't summed.
+    nonisolated static func roomDatabaseSizeBytes() -> Int64? {
+        guard let base = try? StorePaths.roomDatabasePath() else { return nil }
+        let fm = FileManager.default
+        var total: Int64 = 0
+        var found = false
+        for suffix in ["", "-wal", "-shm"] {
+            if let size = (try? fm.attributesOfItem(atPath: base + suffix))?[.size] as? NSNumber {
+                total += size.int64Value
+                found = true
+            }
+        }
+        return found ? total : nil
+    }
+
+    /// Total bytes of any `noop-drained-<ts>.sqlite` migration snapshot (+ its `-wal`/`-shm` siblings)
+    /// the Phase 2c-2 GRDB→Room drain (Task 6) parked beside the Room store. Kept deliberately for
+    /// recoverability, so it is REPORTED here but never swept by `cleanUpStorage`. 0 when none exists
+    /// (fresh install, or a device that never carried a legacy GRDB store).
+    nonisolated static func drainedSnapshotSizeBytes() -> Int64 {
+        guard let roomPath = try? StorePaths.roomDatabasePath() else { return 0 }
+        let dir = URL(fileURLWithPath: roomPath).deletingLastPathComponent()
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.fileSizeKey], options: []) else { return 0 }
+        var total: Int64 = 0
+        for item in items where item.lastPathComponent.hasPrefix("noop-drained-") {
+            let vals = try? item.resourceValues(forKeys: [.fileSizeKey])
+            total += Int64(vals?.fileSize ?? 0)
+        }
+        return total
     }
 
     /// Total bytes in `Documents/Inbox/` (the picker's `asCopy:true` drops). 0 on macOS / when absent.

@@ -60,7 +60,7 @@ enum DataBackup {
     @MainActor
     static func runExport(checkpoint: @escaping () async -> Bool) async -> BackupResult {
         let dbPath: String
-        do { dbPath = try Self.liveExportDatabasePath() }
+        do { dbPath = try StorePaths.roomDatabasePath() }
         catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         let dbURL = URL(fileURLWithPath: dbPath)
@@ -92,11 +92,10 @@ enum DataBackup {
         do {
             // NSSavePanel already handled the "replace existing?" confirmation; clear the target.
             if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            // Reading the whole SQLite and DEFLATE-compressing it is multi-second on a big library
-            // (and #1014 added a quick_check read of the whole file first); run it off the main
-            // actor so the UI never beach-balls. Only file paths cross the hop.
+            // Reading the whole SQLite and DEFLATE-compressing it is multi-second on a big library;
+            // run it off the main actor so the UI never beach-balls. Only file paths cross the hop.
             try await Task.detached(priority: .utility) {
-                try writeVerifiedBackupZip(dbURL: dbURL, to: dest, settingsJSON: currentSettingsJSON())
+                try writeBackupZip(dbURL: dbURL, to: dest, settingsJSON: currentSettingsJSON())
             }.value
             return .exported(dest)
         } catch {
@@ -111,7 +110,7 @@ enum DataBackup {
             if fm.fileExists(atPath: staged.path) { try fm.removeItem(at: staged) }
             // Off the main actor: same reason as the macOS branch (heavy read + DEFLATE). Only paths hop.
             try await Task.detached(priority: .utility) {
-                try writeVerifiedBackupZip(dbURL: dbURL, to: staged, settingsJSON: currentSettingsJSON())
+                try writeBackupZip(dbURL: dbURL, to: staged, settingsJSON: currentSettingsJSON())
             }.value
         } catch {
             return .failure(String(localized: "Export failed: \(error.localizedDescription)"))
@@ -119,30 +118,6 @@ enum DataBackup {
         guard let dest = await DocumentPicker.export(staged) else { return .cancelled }
         return .exported(dest)
         #endif
-    }
-
-    /// #1014 defence-in-depth (export side): the export's failure when the LIVE database itself is
-    /// damaged. Thrown by `writeVerifiedBackupZip`; `LocalizedError` so the existing
-    /// "Export failed: \(error.localizedDescription)" surfaces the specific, honest message.
-    private struct ExportIntegrityFailure: LocalizedError {
-        let complaint: String
-        var errorDescription: String? {
-            String(localized: "the NOOP database failed its integrity check (SQLite reports: \(complaint)). A backup of it would not restore. Export the WHOOP-format CSV (Settings → Export data) to save what's still readable.")
-        }
-    }
-
-    /// The production export path: verify, then archive. GRDB checkpoints the WAL first (the
-    /// callers' `checkpoint()` guard), so at this point the single file IS the whole store — run a
-    /// read-only `PRAGMA quick_check` over it BEFORE zipping (#1014). Archiving an already-corrupt
-    /// database writes a `.noopbak` that only fails the import-side integrity gate months later,
-    /// when the original data may be long gone; failing loudly NOW is the honest move. The read-only
-    /// probe sits safely beside the app's open GRDB pool (WAL allows concurrent readers).
-    /// `writeBackupForTesting` deliberately bypasses this so tests can build damaged containers.
-    private static func writeVerifiedBackupZip(dbURL: URL, to dest: URL, settingsJSON: Data?) throws {
-        if let complaint = DatabaseIntegrity.quickCheckFailure(atPath: dbURL.path) {
-            throw ExportIntegrityFailure(complaint: complaint)
-        }
-        try writeBackupZip(dbURL: dbURL, to: dest, settingsJSON: settingsJSON)
     }
 
     /// Write the live SQLite at `dbURL` into a fresh deflate ZIP at `dest`: the DB under the canonical
@@ -181,7 +156,7 @@ enum DataBackup {
     /// (start/stop around this call). Never presents UI, so it is safe off the main actor.
     static func writeBackup(checkpoint: @escaping () async -> Bool, to dest: URL) async -> BackupResult {
         let dbPath: String
-        do { dbPath = try Self.liveExportDatabasePath() }
+        do { dbPath = try StorePaths.roomDatabasePath() }
         catch { return .failure(String(localized: "Couldn't locate the NOOP database. \(error.localizedDescription)")) }
 
         let dbURL = URL(fileURLWithPath: dbPath)
@@ -196,7 +171,7 @@ enum DataBackup {
         do {
             let fm = FileManager.default
             if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
-            try writeVerifiedBackupZip(dbURL: dbURL, to: dest, settingsJSON: currentSettingsJSON())
+            try writeBackupZip(dbURL: dbURL, to: dest, settingsJSON: currentSettingsJSON())
             return .exported(dest)
         } catch {
             return .failure(String(localized: "Backup failed: \(error.localizedDescription)"))
@@ -461,18 +436,6 @@ enum DataBackup {
     }
 
     // MARK: - Helpers
-
-    /// The live database to EXPORT (Phase 2c-1 Task 7). The store is the shared Room `noop.db` now, so
-    /// export that. Falls back to the legacy GRDB `whoop.sqlite` ONLY when no Room file exists yet, the
-    /// rare `.legacyGrdb` state after an interrupted ETL where the user's live data is still the GRDB
-    /// file (exporting it there produces a legacy backup, which import upgrades through the ETL). When
-    /// Room is live BOTH files exist and `noop.db` (the source of truth) wins. Kept in lockstep with
-    /// `checkpointForBackup`, which checkpoints whichever backend is live before this resolves.
-    private static func liveExportDatabasePath() throws -> String {
-        let roomPath = try StorePaths.roomDatabasePath()
-        if FileManager.default.fileExists(atPath: roomPath) { return roomPath }
-        return try StorePaths.defaultDatabasePath()
-    }
 
     /// Canonical entry name for the SQLite inside a `.noopbak` ZIP. Matches the Android exporter so
     /// a backup produced on either platform restores on the other.

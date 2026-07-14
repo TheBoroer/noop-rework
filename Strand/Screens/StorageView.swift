@@ -52,6 +52,14 @@ struct StorageView: View {
                     label: "Health database",
                     bytes: r.db,
                     tint: StrandPalette.accent)
+                if r.drained > 0 {
+                    Divider().overlay(StrandPalette.hairline)
+                    row(icon: "archivebox",
+                        label: "Migration snapshot",
+                        bytes: r.drained,
+                        tint: StrandPalette.textTertiary,
+                        note: "Kept for recovery")
+                }
                 Divider().overlay(StrandPalette.hairline)
                 row(icon: "tray.full",
                     label: "Leftover import copies",
