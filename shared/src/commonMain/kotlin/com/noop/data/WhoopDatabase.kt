@@ -61,13 +61,16 @@ import kotlin.time.ExperimentalTime
         DayOwnershipRow::class,
         LabMarkerRow::class,
         LiveSessionRow::class,
+        OutboxBatchRow::class,
+        OutboxCursorRow::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = false,
 )
 @ConstructedBy(WhoopDatabaseConstructor::class)
 abstract class WhoopDatabase : RoomDatabase() {
     abstract fun whoopDao(): WhoopDao
+    abstract fun outboxDao(): OutboxDao
 
     /**
      * Fold the WAL back into the main database file (`PRAGMA wal_checkpoint(TRUNCATE)`) so a
@@ -473,13 +476,60 @@ abstract class WhoopDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v17 -> v18: ADDITIVE, adds the shared Room outbox tables ([OutboxBatchRow], [OutboxCursorRow])
+         * replacing the legacy GRDB outbox (#Phase 2c-2). Two new tables, no changes to any existing
+         * table, and NO data backfill here: Task 6's one-time "drain" reads the old GRDB outbox and
+         * populates these tables after this migration runs, so a freshly-migrated v18 database has both
+         * tables present but empty until the drain executes.
+         *
+         * The SQL MUST match Room's generated schema for [OutboxBatchRow] / [OutboxCursorRow] exactly:
+         *  - `outboxBatch` PRIMARY KEY is the single TEXT `batchId`; every column is NOT NULL (Kotlin
+         *    non-null, no SQL DEFAULT) except `syncedAt` (Kotlin `Long?`, nullable INTEGER, no NOT NULL).
+         *    `framesBlob` is a NOT NULL BLOB (Kotlin `ByteArray`, never null).
+         *  - `outboxCursor` PRIMARY KEY is the single TEXT `name`; `value` is NOT NULL INTEGER.
+         *  - Two indexes on `outboxBatch` (`syncedAt` for the pending scan, `capturedAt` for the
+         *    prune-by-age sweep and the pending scan's ORDER BY), named with this codebase's
+         *    `idx_<table>_<col>` convention rather than Room's default index naming.
+         *
+         * Exposed as [OUTBOX_MIGRATION_SQL] (plus the finer-grained constants below) so a plain-JVM unit
+         * test ([com.noop.data.OutboxMigrationTest]) can pin this shape WITHOUT needing Robolectric or a
+         * fake SupportSQLiteDatabase.
+         */
+        internal val OUTBOX_BATCH_CREATE_SQL =
+            "CREATE TABLE IF NOT EXISTS `outboxBatch` (`batchId` TEXT NOT NULL, " +
+                "`deviceId` TEXT NOT NULL, `capturedAt` INTEGER NOT NULL, " +
+                "`deviceClockRef` INTEGER NOT NULL, `wallClockRef` INTEGER NOT NULL, " +
+                "`startTs` INTEGER NOT NULL, `endTs` INTEGER NOT NULL, " +
+                "`frameCount` INTEGER NOT NULL, `byteSize` INTEGER NOT NULL, " +
+                "`framesBlob` BLOB NOT NULL, `syncedAt` INTEGER, PRIMARY KEY(`batchId`))"
+
+        internal val OUTBOX_BATCH_INDEX_SQL = listOf(
+            "CREATE INDEX IF NOT EXISTS `idx_outboxBatch_syncedAt` ON `outboxBatch` (`syncedAt`)",
+            "CREATE INDEX IF NOT EXISTS `idx_outboxBatch_capturedAt` ON `outboxBatch` (`capturedAt`)",
+        )
+
+        internal val OUTBOX_CURSOR_CREATE_SQL =
+            "CREATE TABLE IF NOT EXISTS `outboxCursor` (`name` TEXT NOT NULL, " +
+                "`value` INTEGER NOT NULL, PRIMARY KEY(`name`))"
+
+        /** All statements the migration runs, in order: the batch table, its indexes, the cursor table. */
+        internal val OUTBOX_MIGRATION_SQL: List<String> =
+            listOf(OUTBOX_BATCH_CREATE_SQL) + OUTBOX_BATCH_INDEX_SQL + listOf(OUTBOX_CURSOR_CREATE_SQL)
+
+        internal val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in OUTBOX_MIGRATION_SQL) connection.execSQL(stmt)
+            }
+        }
+
         /** Every migration, in order, for the Android upgrade path (WhoopDatabase.android.kt registers
          *  them). iOS builds fresh at the current version (no in-place upgrade), matching GRDB. */
         internal val ALL_MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
             MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
             MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
-            MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17,
+            MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
         )
     }
 }
