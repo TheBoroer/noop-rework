@@ -22,8 +22,9 @@ import androidx.room.Index
  * One captured, not-yet-uploaded (or already-uploaded, until pruned) raw outbox batch.
  *
  * Indices: `syncedAt` backs the pending scan ([OutboxDao.pendingBatches] filters `WHERE syncedAt IS
- * NULL`), `capturedAt` backs the prune-by-age sweep ([OutboxDao.pruneSyncedBefore]) and the pending
- * scan's `ORDER BY capturedAt`.
+ * NULL`) and the prune-by-age sweep ([OutboxDao.pruneSyncedBefore] filters + cuts on `syncedAt`, Phase
+ * 2c-2 Task 2 — matching GRDB `pruneRaw` Policy 1); `capturedAt` backs the pending scan's `ORDER BY
+ * capturedAt` and the Policy 2 byte-cap eviction ordering ([OutboxDao.byteSizesNewestFirst]).
  */
 @Entity(
     tableName = "outboxBatch",

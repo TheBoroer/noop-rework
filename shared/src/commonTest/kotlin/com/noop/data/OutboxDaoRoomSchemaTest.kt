@@ -64,6 +64,9 @@ class OutboxDaoRoomSchemaTest {
             val fetchedBlob = dao.framesBlob("batch-1")
             assertTrue(fetchedBlob != null && blob.contentEquals(fetchedBlob))
 
+            assertEquals(1, dao.countByBatchId("batch-1"))
+            assertEquals(0, dao.countByBatchId("no-such-batch"))
+
             val changed = dao.markSynced("batch-1", 5_000)
             assertEquals(1, changed)
             assertEquals(0, dao.pendingBatches(10).size, "synced batch drops out of the pending scan")
@@ -75,9 +78,42 @@ class OutboxDaoRoomSchemaTest {
             dao.upsertCursor(OutboxCursorRow("drain", 8)) // latest-wins
             assertEquals(8L, dao.cursorValue("drain"))
 
+            // Phase 2c-2 Task 2: pruneSyncedBefore cuts on syncedAt (not capturedAt) — batch-1 synced at
+            // 5_000 is caught by a 10_000 cutoff even though its capturedAt (1_000) is unrelated.
             val pruned = dao.pruneSyncedBefore(10_000)
             assertEquals(1, pruned)
             assertNull(dao.framesBlob("batch-1"), "pruned batch's blob is gone")
+            assertEquals(0, dao.countByBatchId("batch-1"))
+        } finally {
+            db.close()
+        }
+    }
+
+    /** Phase 2c-2 Task 2: [OutboxDao.byteSizesNewestFirst] / [OutboxDao.deleteByRowIds] — the Policy 2
+     *  (byte-cap eviction) SQL primitives — against a real Room-built schema. */
+    @Test
+    fun byteSizesNewestFirstOrdersByCapturedAtDesc_andDeleteByRowIdsRemovesExactRows() = runTest {
+        if (!canRunFullRestore) return@runTest
+        val db = freshDb("outbox-fresh-v18-bytesizes.db")
+        try {
+            val dao = db.outboxDao()
+            fun row(id: String, capturedAt: Long, bytes: Int) = OutboxBatchRow(
+                batchId = id, deviceId = "dev1", capturedAt = capturedAt,
+                deviceClockRef = 0, wallClockRef = 0, startTs = 0, endTs = capturedAt,
+                frameCount = 1, byteSize = bytes, framesBlob = byteArrayOf(1), syncedAt = null,
+            )
+            dao.insertBatch(row("old", capturedAt = 10, bytes = 100))
+            dao.insertBatch(row("mid", capturedAt = 20, bytes = 200))
+            dao.insertBatch(row("new", capturedAt = 30, bytes = 300))
+
+            val newestFirst = dao.byteSizesNewestFirst()
+            assertEquals(listOf(300, 200, 100), newestFirst.map { it.byteSize })
+
+            val oldRowId = newestFirst.last().rowId
+            val deleted = dao.deleteByRowIds(listOf(oldRowId))
+            assertEquals(1, deleted)
+            assertNull(dao.framesBlob("old"))
+            assertTrue(dao.framesBlob("mid") != null && dao.framesBlob("new") != null)
         } finally {
             db.close()
         }
