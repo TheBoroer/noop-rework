@@ -69,6 +69,15 @@ public enum OutboxDrain {
     /// Opens the legacy source, copies, checkpoints, and lets the source pool go out of scope BEFORE
     /// the caller renames the file — so the archived `.sqlite` is self-contained (WAL folded in) and no
     /// live pool is mid-write on the inode being renamed.
+    ///
+    /// Two-pool coexistence (until Task 7): in production this second pool is opened while the live
+    /// `.room` store's own vestigial `dbWriter` pool (from `detectMigrateOpen`) is still attached to the
+    /// SAME `whoop.sqlite` in the same process. That is a supported SQLite configuration — WAL mode
+    /// exists precisely to let multiple connections share one database — and the TRUNCATE checkpoint
+    /// below cannot drop anyone's writes: for a `.room` store the vestigial pool is write-idle (outbox
+    /// and decoded reads all route to Room, verified per call site in Task 4), so this drain's own
+    /// connection is the only writer at checkpoint time. Task 7 stops opening the legacy pool for a
+    /// `.room` store, ending the coexistence. See also `archiveLegacyFile`'s rename-under-open-fd note.
     private static func drainReleasingSource(
         legacyURL: URL, openLegacy: (URL) throws -> WhoopStore, room: WhoopStore
     ) async throws -> (batches: Int, cursors: Int) {

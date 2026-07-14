@@ -44,6 +44,9 @@ enum LegacyOutboxDrain {
                 legacyURL: URL(fileURLWithPath: legacyPath),
                 room: room,
                 openLegacy: { try WhoopStore.openLegacyGrdb(path: $0.path) })
+            // Crash window (accepted): a crash between `run`'s rename and this flag-set means the next
+            // launch re-drains the freshly-recreated EMPTY `whoop.sqlite`, producing one extra empty
+            // `noop-drained-*` archive. Harmless — no rows involved — so not worth engineering around.
             UserDefaults.standard.set(true, forKey: doneKey)
             if result.batchesDrained > 0 || result.cursorsCopied > 0 {
                 NSLog("LegacyOutboxDrain: folded \(result.batchesDrained) batch(es) + \(result.cursorsCopied) cursor(s) into Room; archived → \(result.archivedURL?.lastPathComponent ?? "-")")

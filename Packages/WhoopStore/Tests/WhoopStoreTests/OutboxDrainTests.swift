@@ -144,6 +144,64 @@ final class OutboxDrainTests: XCTestCase {
         XCTAssertEqual(result.cursorsCopied, 0)
     }
 
+    /// Review follow-up: the crash-before-rename path composed through `run()` itself (not its pieces).
+    /// First `run` copies but "crashes" at the rename (injected FileManager throws on move); the legacy
+    /// file survives, so a second, normal `run` — with a FRESH pool via `openLegacy`, like a real
+    /// relaunch — must produce an identical row set, not regress a newer post-cutover cursor, and then
+    /// complete the archive.
+    func testRunTwiceCrashBeforeRenameIsIdempotent() async throws {
+        final class RenameFails: FileManager {
+            override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+        }
+        let dir = try uniqueTempDir()
+        let legacyURL = dir.appendingPathComponent("whoop.sqlite")
+        try await seedLegacy(at: legacyURL)
+        let room = try await WhoopStore.roomBackedForTest()
+        // A NEWER post-cutover write the re-run must never clobber.
+        try await room.setCursor("strap_trim", 999)
+
+        // First run: copy succeeds, rename "crashes" — the error surfaces, no done-marker.
+        do {
+            _ = try await OutboxDrain.run(
+                legacyURL: legacyURL, room: room,
+                openLegacy: { try WhoopStore.openLegacyGrdb(path: $0.path) },
+                fileManager: RenameFails())
+            XCTFail("first run must surface the rename failure")
+        } catch {}
+        let legacyStillPresent = FileManager.default.fileExists(atPath: legacyURL.path)
+        XCTAssertTrue(legacyStillPresent)
+
+        // "Relaunch": full run against the same file, fresh pool, default FileManager.
+        let fixedNow = 1_700_000_888
+        let result = try await OutboxDrain.run(
+            legacyURL: legacyURL, room: room,
+            openLegacy: { try WhoopStore.openLegacyGrdb(path: $0.path) },
+            now: { fixedNow })
+
+        // Row set identical — the re-enqueue was conflict-ignored.
+        XCTAssertTrue(result.existed)
+        XCTAssertEqual(result.batchesDrained, 2)
+        let pending = try await room.pendingRawBatches(limit: 100)
+        XCTAssertEqual(pending.count, 2)
+        XCTAssertEqual(Set(pending.map(\.batchId)), ["b1", "b2"])
+
+        // Guarded cursor not regressed; keep-set cursors were all copied by the FIRST pass already.
+        let strapTrim = try await room.cursor("strap_trim")
+        let highwater = try await room.cursor("highwater:hr")
+        let read = try await room.cursor("read:hr")
+        XCTAssertEqual(strapTrim, 999)
+        XCTAssertEqual(highwater, 200)
+        XCTAssertEqual(read, 300)
+        XCTAssertEqual(result.cursorsCopied, 0)
+
+        // This time the done-marker rename completes.
+        let legacyGone = !FileManager.default.fileExists(atPath: legacyURL.path)
+        XCTAssertTrue(legacyGone)
+        XCTAssertEqual(result.archivedURL?.lastPathComponent, "noop-drained-\(fixedNow).sqlite")
+    }
+
     func testRunEndToEndDrainsAndArchives() async throws {
         let dir = try uniqueTempDir()
         let legacyURL = dir.appendingPathComponent("whoop.sqlite")
