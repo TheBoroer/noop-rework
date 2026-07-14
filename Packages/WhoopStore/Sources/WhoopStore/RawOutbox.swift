@@ -136,12 +136,24 @@ extension WhoopStore {
             let packed = WhoopStore.packFrames(frames)
             let blob = try WhoopStore.zlibCompressWithLength(packed)
             let persisted = try await OutboxBridge(db: room).outboxEnqueue(meta: meta, framesBlob: blob)
-            guard persisted else {
-                throw RawBatchNotPersistedError(batchId: meta.batchId)
-            }
+            try WhoopStore.requirePersisted(persisted, batchId: meta.batchId)
             #endif
         case .legacyGrdb:
             try enqueueRawBatchGrdb(meta, frames: frames)
+        }
+    }
+
+    /// Extracted from what used to be an inline `guard` so the Hard Invariant guard itself (not just
+    /// `RawBatchNotPersistedError`'s fields) is directly testable: `OutboxBridge` has no protocol seam
+    /// (Task 3/4 deliberately keep it a concrete Kotlin-bridging class — see its doc comment), and the
+    /// Kotlin `OutboxStore.enqueue` it wraps always verifies-or-throws in practice, so nothing in this
+    /// repo can naturally drive `outboxEnqueue` to return `false`. This static, pure (no I/O, no `self`)
+    /// helper is byte-identical to the guard that used to sit inline above — pulling it out changes
+    /// nothing about production behavior, it only gives a test a way to call the guard directly with a
+    /// forced `true`/`false`.
+    static func requirePersisted(_ persisted: Bool, batchId: String) throws {
+        guard persisted else {
+            throw RawBatchNotPersistedError(batchId: batchId)
         }
     }
 
