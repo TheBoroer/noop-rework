@@ -23,10 +23,14 @@ enum SharedStoreBridge {
 /// than caching one, so `db` itself is the only thing that needs guarding against the phantom x86_64
 /// iOS-Simulator slice below.
 ///
-/// This bridge is ADDITIVE for Task 3: nothing in production wires into it yet. Task 4 repoints
-/// `Collector`/`Backfiller`/diagnostics from the GRDB-backed `RawOutbox.swift` methods onto this
-/// bridge, deciding there how a `WhoopStore` actor obtains and holds the `WhoopDatabase` handle this
-/// initializer needs (the `.room(WhoopDatabase)` backend case already carries one).
+/// Task 4 repointed `RawOutbox.swift`/`Cursors.swift`/`Reads.swift`'s `.room` branches onto this
+/// bridge (which in turn repoints `Collector`/`Backfiller`/diagnostics, since they only ever call
+/// through those `WhoopStore` methods): each method constructs `OutboxBridge(db: room)` FRESH,
+/// scoped to the call, using the `WhoopDatabase` handle already carried by the actor's own
+/// `.room(WhoopDatabase)` backend case — nothing stores an `OutboxBridge` in actor (or any other)
+/// state. This mirrors the bridge's own per-call `OutboxStore(db:)` construction one level up, and
+/// sidesteps the `Sendable` question below entirely: there is no stored-property call site to ever
+/// trigger the compiler's check.
 ///
 /// The frame-blob codec (`packFrames`/`unpackFrames`, `zlibCompressWithLength`/
 /// `zlibDecompressWithLength`, still in `RawOutbox.swift`) stays Swift-side per the plan: this bridge
@@ -41,8 +45,10 @@ enum SharedStoreBridge {
 /// Not declared `Sendable`: it holds a Kotlin/Native-bridged `WhoopDatabase` reference whose own
 /// `Sendable` status is not asserted anywhere in the xcframework's generated interface, and no
 /// package in this repo enables strict concurrency checking (`swift-tools-version: 5.9`
-/// everywhere), so there is nothing here for the compiler to enforce yet either way. Task 4 can add
-/// the conformance if wiring this into an actor's stored state requires it.
+/// everywhere), so there is nothing here for the compiler to enforce yet either way. Task 4 resolved
+/// this by never storing an `OutboxBridge` in actor state at all (see above) — it only ever exists
+/// as a function-local value inside one `WhoopStore` method body, constructed and dropped within a
+/// single `await`, so no cross-isolation-domain hop ever needs it to be `Sendable`.
 public final class OutboxBridge {
     private let db: WhoopDatabase
 

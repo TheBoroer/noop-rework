@@ -386,9 +386,16 @@ extension WhoopStore {
 
     /// Aggregate storage footprint: total decoded rows, raw batch count, total raw byteSize.
     ///
-    /// Task 4 note: the 8 decoded-table counts follow the live backend, but `rawBatch` lives on the
-    /// legacy GRDB handle ALWAYS (the raw-frame outbox never migrated), so its two aggregates read
-    /// from GRDB under BOTH backends.
+    /// Task 4: both aggregates now follow the live backend. `.legacyGrdb` keeps the original
+    /// unfiltered `rawBatch` query (every row, synced or not). `.room` has no bridge method for an
+    /// unfiltered scan (Task 3 only exposed `outboxPending`, unsynced-only) — per the plan's Task 4
+    /// wording ("pending-batch counts/sizes now read from the outbox bridge"), the `.room` case
+    /// reports the PENDING (unsynced) footprint via `OutboxBridge.outboxPending`, not a true
+    /// synced+unsynced total. This is a deliberate scoping choice, not an oversight: nothing in this
+    /// repo calls `markRawBatchSynced`/`outboxMarkSynced` in production today (grep confirms only
+    /// tests do), so in practice every captured batch IS pending until pruned and the two numbers
+    /// coincide; adding a true unfiltered-count bridge method would require a new Kotlin DAO query
+    /// plus an xcframework rebuild, out of scope for this (Swift-only) task.
     public func storageStats() async throws -> (decodedRows: Int, rawBatches: Int, rawBytes: Int) {
         let decodedRows: Int
         switch backend {
@@ -420,11 +427,22 @@ extension WhoopStore {
                 return hr + rr + ev + bat + spo2 + skin + resp + grav
             }
         }
-        return try syncRead { db in
-            let batches = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rawBatch") ?? 0
-            let bytes   = try Int.fetchOne(db,
-                sql: "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? 0
-            return (decodedRows, batches, bytes)
+        switch backend {
+        case .room(let roomDb):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
+            #else
+            let pending = try await OutboxBridge(db: roomDb).outboxPending(limit: Int(Int32.max))
+            let bytes = pending.reduce(0) { $0 + $1.byteSize }
+            return (decodedRows, pending.count, bytes)
+            #endif
+        case .legacyGrdb:
+            return try syncRead { db in
+                let batches = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rawBatch") ?? 0
+                let bytes   = try Int.fetchOne(db,
+                    sql: "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? 0
+                return (decodedRows, batches, bytes)
+            }
         }
     }
 }

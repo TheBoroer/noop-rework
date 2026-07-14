@@ -109,10 +109,43 @@ extension WhoopStore {
         return blob
     }
 
-    // MARK: - Public API
+    // MARK: - Public API (Phase 2c-2 Task 4: backend-aware — `.room` routes through `OutboxBridge`
+    // over Room's `outboxBatch` table, `.legacyGrdb` keeps the original GRDB SQL byte-for-byte via the
+    // `*Grdb` helpers below.)
+    //
+    // `OutboxBridge(db: room)` is constructed FRESH inside each `.room` case, never stored in actor
+    // state: it mirrors the bridge's own documented design (it builds its own `OutboxStore` per call
+    // rather than caching one) and means `OutboxBridge`'s `Sendable` status never comes up — there is
+    // no stored-property call site to trigger the check. Codec helpers (`packFrames`/
+    // `zlibCompressWithLength` and their inverses) stay Swift-side and run identically for both
+    // backends; the bridge only ever sees the already-packed, already-compressed `Data` blob.
 
-    /// Compress raw frames into the outbox and store batch meta.
+    /// Compress raw frames into the outbox and store batch meta. Hard Invariant: for `.room`, only a
+    /// verified durable insert (`OutboxBridge.outboxEnqueue` returning `true`) returns normally; a
+    /// `false` (would mean the post-insert existence check somehow failed) throws
+    /// `RawBatchNotPersistedError` rather than returning as if the batch were durably enqueued, and any
+    /// thrown Kotlin exception propagates untouched. Callers (Backfiller/Collector, via
+    /// `BackfillStoreWriting`/`StoreWriting`) already gate their ack-the-strap signal on this method
+    /// throwing vs. returning — this preserves that contract without changing either protocol.
     public func enqueueRawBatch(_ meta: RawBatchMeta, frames: [[UInt8]]) async throws {
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            let packed = WhoopStore.packFrames(frames)
+            let blob = try WhoopStore.zlibCompressWithLength(packed)
+            let persisted = try await OutboxBridge(db: room).outboxEnqueue(meta: meta, framesBlob: blob)
+            guard persisted else {
+                throw RawBatchNotPersistedError(batchId: meta.batchId)
+            }
+            #endif
+        case .legacyGrdb:
+            try enqueueRawBatchGrdb(meta, frames: frames)
+        }
+    }
+
+    private func enqueueRawBatchGrdb(_ meta: RawBatchMeta, frames: [[UInt8]]) throws {
         let packed = WhoopStore.packFrames(frames)
         let blob = try WhoopStore.zlibCompressWithLength(packed)
         try syncWrite { db in
@@ -131,6 +164,23 @@ extension WhoopStore {
 
     /// Decompress and return the exact frame bytes for a batch (empty if unknown).
     public func rawFrames(batchId: String) async throws -> [[UInt8]] {
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            guard let blob = try await OutboxBridge(db: room).outboxFrames(batchId: batchId) else {
+                return []
+            }
+            let raw = try WhoopStore.zlibDecompressWithLength(blob)
+            return WhoopStore.unpackFrames(raw)
+            #endif
+        case .legacyGrdb:
+            return try rawFramesGrdb(batchId: batchId)
+        }
+    }
+
+    private func rawFramesGrdb(batchId: String) throws -> [[UInt8]] {
         let row: Row? = try syncRead { db in
             try Row.fetchOne(db,
                 sql: "SELECT framesBlob FROM rawBatch WHERE batchId = ?",
@@ -152,6 +202,19 @@ extension WhoopStore {
 
     /// Un-synced batches (syncedAt IS NULL), oldest first, capped at `limit`.
     public func pendingRawBatches(limit: Int) async throws -> [RawBatchMeta] {
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            return try await OutboxBridge(db: room).outboxPending(limit: limit)
+            #endif
+        case .legacyGrdb:
+            return try pendingRawBatchesGrdb(limit: limit)
+        }
+    }
+
+    private func pendingRawBatchesGrdb(limit: Int) throws -> [RawBatchMeta] {
         try syncRead { db in
             try Row.fetchAll(db, sql: """
                 SELECT batchId, deviceId, capturedAt, deviceClockRef, wallClockRef,
@@ -166,10 +229,38 @@ extension WhoopStore {
 
     /// Mark a batch synced (timestamp in unix seconds).
     public func markRawBatchSynced(batchId: String, at: Int) async throws {
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            try await OutboxBridge(db: room).outboxMarkSynced(batchId: batchId, at: at)
+            #endif
+        case .legacyGrdb:
+            try markRawBatchSyncedGrdb(batchId: batchId, at: at)
+        }
+    }
+
+    private func markRawBatchSyncedGrdb(batchId: String, at: Int) throws {
         try syncWrite { db in
             try db.execute(sql: "UPDATE rawBatch SET syncedAt = ? WHERE batchId = ?",
                            arguments: [at, batchId])
         }
+    }
+}
+
+/// Thrown by `enqueueRawBatch`'s `.room` branch when `OutboxBridge.outboxEnqueue` returns `false`
+/// (the post-insert existence check somehow found the row absent) rather than throwing. The Hard
+/// Invariant (persist-before-ack) requires callers to gate their trim-cursor ack on this method
+/// returning normally; silently treating a `false` as success would let an ack proceed against data
+/// that isn't actually durable, so it is surfaced as a thrown error instead. In practice this should
+/// never fire — `OutboxStore.enqueue` on the Kotlin side either verifies the row present (returns
+/// `true`) or throws — but the bridge's return type is `Bool`, not `Never`-on-failure, so this method
+/// must not silently swallow a `false`.
+public struct RawBatchNotPersistedError: Error, CustomStringConvertible {
+    public let batchId: String
+    public var description: String {
+        "Outbox enqueue for batch \(batchId) returned false (not verified durable); ack must not proceed."
     }
 }
 
@@ -192,8 +283,28 @@ extension WhoopStore {
     ///   - now: Current unix-second timestamp used to compute the synced-aging cutoff.
     ///   - keepWindowSeconds: Synced batches older than `now - keepWindowSeconds` are removed.
     ///   - maxUnsyncedBytes: Total raw-footprint cap; oldest batches beyond it are evicted.
+    ///
+    /// Backend-aware (Phase 2c-2 Task 4): `.room` routes through `OutboxBridge.outboxPrune`, which
+    /// wraps the Kotlin `OutboxStore.prune` running the identical two policies in one Room
+    /// transaction (see that method's doc comment for the GRDB-parity confirmation); `.legacyGrdb`
+    /// keeps the exact SQL below.
     @discardableResult
     public func pruneRaw(now: Int, keepWindowSeconds: Int, maxUnsyncedBytes: Int) async throws -> Int {
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            return try await OutboxBridge(db: room).outboxPrune(
+                now: now, keepWindowSeconds: keepWindowSeconds, maxUnsyncedBytes: maxUnsyncedBytes)
+            #endif
+        case .legacyGrdb:
+            return try pruneRawGrdb(now: now, keepWindowSeconds: keepWindowSeconds,
+                                    maxUnsyncedBytes: maxUnsyncedBytes)
+        }
+    }
+
+    private func pruneRawGrdb(now: Int, keepWindowSeconds: Int, maxUnsyncedBytes: Int) throws -> Int {
         try syncWrite { db in
             var pruned = 0
             // Policy 1: aged synced batches.
@@ -232,7 +343,30 @@ extension WhoopStore {
     }
 
     // MARK: - Test helper
+
+    /// All batch ids, oldest-first. `.legacyGrdb` returns every row (synced or not), matching the
+    /// original GRDB query. `.room` has no bridge method for an unfiltered scan — Task 3 only exposed
+    /// `outboxPending` (unsynced-only, see `OutboxBridge`'s doc comment) — so this falls back to that,
+    /// meaning a `.room`-backed store's result here excludes already-synced batches. That gap is
+    /// unexercised today: nothing in this repo ever calls `markRawBatchSynced`/`outboxMarkSynced` in
+    /// production (grep confirms only tests do, and existing tests using this helper — `PruneTests`
+    /// — construct their store via `.inMemory()`, which is always `.legacyGrdb`), so this is a
+    /// documented limitation rather than a live bug. A future Room-backed caller that needs a true
+    /// unfiltered scan will need a new Kotlin/bridge method; out of scope for Task 4 (Swift-only).
     public func allBatchIdsForTest() async throws -> [String] {
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            return try await OutboxBridge(db: room).outboxPending(limit: Int(Int32.max)).map(\.batchId)
+            #endif
+        case .legacyGrdb:
+            return try allBatchIdsForTestGrdb()
+        }
+    }
+
+    private func allBatchIdsForTestGrdb() throws -> [String] {
         try syncRead { db in
             try String.fetchAll(db, sql: "SELECT batchId FROM rawBatch ORDER BY capturedAt ASC")
         }

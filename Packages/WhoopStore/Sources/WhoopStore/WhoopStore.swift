@@ -53,6 +53,14 @@ public actor WhoopStore {
     // `migrationProgress` `AsyncStream` (replayed after the whole open returns, tests/back-compat),
     // and the `open(path:onProgress:)` factory additionally invokes `onProgress` LIVE, once per
     // committed ETL batch, for callers (the app) that want a real-time progress overlay.
+    //
+    // Phase 2c-2 Task 4 update: the note above ("rawBatch/cursors live there [dbWriter] regardless of
+    // backend") is now only true for `.legacyGrdb`. `RawOutbox.swift`/`Cursors.swift` are
+    // backend-aware: a `.room`-backed store routes the raw-frame outbox and cursor reads/writes
+    // through `OutboxBridge` onto the Kotlin `WhoopDatabase` handle carried by this very `.room`
+    // case instead. `dbWriter` still stays open and migrated in every case (a `.legacyGrdb` store
+    // must be fully functional on it, and it also still backs decoded-table reads for that backend),
+    // but it is no longer where the raw outbox lives for a Room-backed store.
 
     /// Which store serves this instance's per-feature methods. Internal: later tasks (Streams,
     /// Metrics, Device registry, Backup) switch on this to pick the GRDB or the Room code path.

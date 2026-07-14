@@ -2,10 +2,19 @@ import XCTest
 import GRDB
 @testable import WhoopStore
 
-/// Task 4: Room-vs-GRDB parity over the REAL ETL fixture (`grdb-mini.sqlite`, ~44k HR rows). After a
-/// legacy-only open runs the one-time ETL, `storageStats` and the per-table counts served by the
-/// ROOM backend must match direct GRDB counts over the retained legacy file exactly, and `rawBatch`
-/// aggregates must keep coming from the legacy handle (the raw outbox never migrates).
+/// Phase 2c-1 Task 4: Room-vs-GRDB parity over the REAL ETL fixture (`grdb-mini.sqlite`, ~44k HR
+/// rows). After a legacy-only open runs the one-time ETL, `storageStats` and the per-table counts
+/// served by the ROOM backend must match direct GRDB counts over the retained legacy file exactly.
+///
+/// Phase 2c-2 Task 4 update: `rawBatch`/outbox aggregates no longer "keep coming from the legacy
+/// handle" — `storageStats()` is now backend-aware (`RawOutbox.swift`/`Reads.swift`), so a Room-
+/// backed store reports its OWN `outboxBatch` pending-batch footprint via `OutboxBridge`, not the
+/// retained legacy file's `rawBatch` table. The ETL that cuts a legacy-only install over to Room
+/// (Task 2's `GrdbMigrator`, exercised here) only migrates the 8 decoded tables — it does not drain
+/// the legacy raw-frame outbox into Room's `outboxBatch` (that one-time drain is Phase 2c-2 Task 6,
+/// not yet implemented), so immediately after a fresh cutover Room's outbox is legitimately empty
+/// even though the retained legacy file still physically holds its original `rawBatch` rows. This
+/// test pins that divergence rather than asserting stale cross-backend parity.
 ///
 /// Also runs the (non-asserting) performance sanity from the brief: wall-clock timings for
 /// `hrSamples` / `hrBuckets` over the fixture's densest device, Room-backed store vs the same SQL on
@@ -80,13 +89,22 @@ final class EtlStreamParityTests: XCTestCase {
         XCTAssertEqual(roomCounts.resp, legacy.resp)
         XCTAssertEqual(roomCounts.gravity, legacy.gravity)
 
-        // storageStats: decoded rows from Room, rawBatch aggregates ALWAYS from the legacy handle.
+        // storageStats: decoded rows come from Room (ETL'd), matching the legacy file's per-table
+        // counts exactly. The raw-outbox aggregate is now backend-aware and reports Room's OWN
+        // `outboxBatch` pending footprint, not the legacy file's `rawBatch` table — see the header
+        // comment. The ETL migrates decoded tables only; the raw outbox drain is Task 6 (not yet
+        // implemented), so right after a fresh cutover Room's outbox is legitimately empty (0
+        // batches, 0 bytes) even though the retained legacy file's own `rawBatch` still holds its
+        // original fixture rows untouched (asserted below via `legacyCounts`, not lost, just not
+        // reflected by this diagnostic until Task 6's drain runs).
         let stats = try await store.storageStats()
         let expectedDecoded = legacy.hr + legacy.rr + legacy.events + legacy.battery
             + legacy.spo2 + legacy.skinTemp + legacy.resp + legacy.gravity
         XCTAssertEqual(stats.decodedRows, expectedDecoded)
-        XCTAssertEqual(stats.rawBatches, legacy.rawBatches)
-        XCTAssertEqual(stats.rawBytes, legacy.rawBytes)
+        XCTAssertEqual(stats.rawBatches, 0, "Room's outboxBatch is empty until Task 6's one-time drain")
+        XCTAssertEqual(stats.rawBytes, 0, "Room's outboxBatch is empty until Task 6's one-time drain")
+        XCTAssertGreaterThan(legacy.rawBatches, 0,
+                              "sanity: the retained legacy file itself must still carry its original rawBatch rows")
 
         // The fixture actually exercises the read (44k+ HR rows), not an empty schema.
         XCTAssertGreaterThan(legacy.hr, 40_000, "fixture must carry the dense HR stream")
