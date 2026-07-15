@@ -1,5 +1,9 @@
 import SwiftUI
 import Combine
+// Scoped on purpose: a bare `import Shared` makes the Kotlin framework's same-named exports
+// (WorkoutRow, DailyMetric, IllnessSignalEngine, …) ambiguous with the app's own types.
+import class Shared.WhoopBleClient
+import class Shared.KotlinLong
 import WhoopProtocol
 import WhoopStore
 import StrandAnalytics
@@ -47,6 +51,11 @@ final class AppModel: ObservableObject {
     let live: LiveState
     /// CoreBluetooth engine , scans, connects, bonds, streams.
     let ble: BLEManager
+    /// T15c: the Kotlin-backed BLE engine (Kable `WhoopBleClient` behind the thin Swift shim,
+    /// feeding the SAME `LiveState`). Inert until a caller drives it — it never auto-scans or
+    /// auto-connects on its own — so it can safely coexist with `ble` while callers migrate;
+    /// `ble` is deleted in T15d.
+    let shim: WhoopBleShim
     /// Read model over the on-device store (dashboard + detail screens).
     let repo: Repository
     /// User profile (age/sex/body/HR-max) for zones, calories, baselines.
@@ -206,6 +215,19 @@ final class AppModel: ObservableObject {
         // (write side) and `wireSourceCoordinator → adoptActiveDevice` (read spine, #814) re-point them to
         // the registry active id once the store opens. Single-device install keeps "my-whoop" throughout.
         self.ble = BLEManager(state: live, deviceId: deviceId)
+        // T15c: Kotlin engine beside the legacy one. Initial experimental flags mirror what
+        // BLEManager reads from PuffinExperiment at its own call sites; the Settings toggles
+        // keep the LIVE channel in step via shim.setBroadcastHr / enableWhoop5DeepData.
+        self.shim = WhoopBleShim(
+            state: live,
+            client: WhoopBleClient(
+                parentScope: nil,
+                deepDataEnabled: PuffinExperiment.deepDataEnabled,
+                broadcastHrEnabled: PuffinExperiment.broadcastHrEnabled,
+                nowUnixSeconds: { KotlinLong(value: Int64(Date().timeIntervalSince1970)) },
+                log: { [live] line in live.append(log: line) }
+            )
+        )
         self.repo = Repository(deviceId: deviceId)
         self.coach = AICoachEngine(repo: repo)
         self.intelligence = IntelligenceEngine(repo: repo, profile: profile, deviceId: deviceId)
@@ -282,6 +304,7 @@ final class AppModel: ObservableObject {
         live.$bonded.removeDuplicates().sink { [weak self] _ in
             guard let self else { return }
             self.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
+            self.shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)  // T15c dual-drive
         }.store(in: &hrCancellables)
         // A completed backfill has just written strap history. Refresh the dashboard cache,
         // but leave heavyweight analysis to its own guarded/background-friendly path.
@@ -321,6 +344,7 @@ final class AppModel: ObservableObject {
         // reflects it from launch , the reconciler then arms the dense stream as soon as the strap bonds
         // (and the bond sink above re-applies it on every reconnect).
         ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
+        shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)  // T15c dual-drive
 
         // Turn the strap's offloaded raw data into dashboard scores on launch and every 15
         // minutes, so recovery / strain / sleep populate from the strap itself with no import.

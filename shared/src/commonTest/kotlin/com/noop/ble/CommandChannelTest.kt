@@ -3,6 +3,7 @@ package com.noop.ble
 import com.noop.protocol.AlarmPayload
 import com.noop.protocol.CommandNumber
 import com.noop.protocol.DeviceFamily
+import com.noop.protocol.Whoop5Config
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -227,6 +228,27 @@ class CommandChannelTest {
         assertTrue(resolved.all { it.withResponse })
     }
 
+    @Test
+    fun planHapticPulse_matchesLegacyPerPulseSend() {
+        // BLEManager.swift buzzTimeNow (2551-2556): `[2, loops, 0, 0, 0]`, default (un-acked) write,
+        // NO RUN_ALARM chaser. LONG pulse = 2 stacked loops, SHORT = 1.
+        val long = CommandPlanner.planHapticPulse(loops = 2)
+        assertEquals(CommandNumber.RUN_HAPTICS_PATTERN, long.cmd)
+        assertContentEquals(byteArrayOf(2, 2, 0, 0, 0), long.payload)
+        assertFalse(long.withResponse, "legacy per-pulse send used the .withoutResponse default")
+        assertContentEquals(byteArrayOf(2, 1, 0, 0, 0), CommandPlanner.planHapticPulse(loops = 1).payload)
+        // UInt8(clamping:) twin — out-of-range loop counts clamp instead of overflowing.
+        assertContentEquals(byteArrayOf(2, 255.toByte(), 0, 0, 0), CommandPlanner.planHapticPulse(loops = 999).payload)
+    }
+
+    @Test
+    fun planHapticPulse_whoop5_resolvesToMaverickNotifyBuzz() {
+        val resolved = assertNotNull(
+            CommandPlanner.resolve(DeviceFamily.WHOOP5, CommandPlanner.planHapticPulse(loops = 2)))
+        assertEquals(CommandNumber.RUN_HAPTIC_PATTERN_MAVERICK, resolved.cmd)
+        assertContentEquals(CommandPlanner.maverickNotifyBody(), resolved.payload)
+    }
+
     // ---- battery (#77) ------------------------------------------------------------------------
 
     @Test
@@ -258,5 +280,77 @@ class CommandChannelTest {
         assertNull(CommandPlanner.planRename(DeviceFamily.WHOOP5, "Strand"))
         assertNull(CommandPlanner.planRename(DeviceFamily.WHOOP4, "   "))
         assertNull(CommandPlanner.planRename(DeviceFamily.WHOOP4, ""))
+    }
+
+    // ---- haptic pattern / stop (T15c: AppModel.runPattern / stopHaptics) -----------------------
+
+    @Test
+    fun planHapticPattern_matchesLegacyAppModelSend() {
+        // AppModel.swift 963: `ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])`,
+        // default (un-acked) write. planHapticPulse is the pattern-2 special case of this.
+        val send = CommandPlanner.planHapticPattern(patternId = 7, loops = 3)
+        assertEquals(CommandNumber.RUN_HAPTICS_PATTERN, send.cmd)
+        assertContentEquals(byteArrayOf(7, 3, 0, 0, 0), send.payload)
+        assertFalse(send.withResponse, "legacy per-pattern send used the send() defaults")
+        assertContentEquals(
+            CommandPlanner.planHapticPulse(loops = 2).payload,
+            CommandPlanner.planHapticPattern(patternId = 2, loops = 2).payload,
+        )
+    }
+
+    @Test
+    fun planStopHaptics_matchesLegacySend_andStaysDroppedOnWhoop5() {
+        // AppModel.swift 980: `ble.send(.stopHaptics, payload: [0x00])`. The legacy 5/MG allowlist
+        // never included STOP_HAPTICS, so whoop5Allows must keep dropping it (lockstep, not a fix).
+        val send = CommandPlanner.planStopHaptics()
+        assertEquals(CommandNumber.STOP_HAPTICS, send.cmd)
+        assertContentEquals(byteArrayOf(0x00), send.payload)
+        assertFalse(send.withResponse)
+        assertFalse(CommandPlanner.whoop5Allows(CommandNumber.STOP_HAPTICS))
+    }
+
+    // ---- broadcast HR / deep data (T15c: Settings experimental sends) --------------------------
+
+    @Test
+    fun planBroadcastHr_matchesLegacyDeviceConfigWrite() {
+        // BLEManager.swift setBroadcastHr (2106-2118, #181): SET_DEVICE_CONFIG, [0x01] + 33-byte
+        // body, ASCII '1'/'0' value, .withResponse.
+        val on = CommandPlanner.planBroadcastHr(true)
+        assertEquals(CommandNumber.SET_DEVICE_CONFIG, on.cmd)
+        assertContentEquals(
+            byteArrayOf(0x01) +
+                Whoop5Config.deviceConfigBody("whoop_live_hr_in_adv_ind_pkt", 0x31),
+            on.payload,
+        )
+        assertEquals(34, on.payload.size, "b3 byte + 33-byte device-config body")
+        assertTrue(on.withResponse)
+
+        val off = CommandPlanner.planBroadcastHr(false)
+        assertEquals(0x30.toByte(), off.payload[33], "off writes ASCII '0'")
+        assertTrue(
+            CommandPlanner.whoop5Allows(CommandNumber.SET_DEVICE_CONFIG, broadcastHrEnabled = true),
+        )
+    }
+
+    @Test
+    fun planDeepDataEnable_matchesLegacyR22Sequence() {
+        // BLEManager.swift enableWhoop5DeepData (2068-2098, #174): one SET_CONFIG per flag,
+        // [0x01] + 40-byte body, .withResponse, official-app flag order preserved.
+        val plan = CommandPlanner.planDeepDataEnable()
+        assertEquals(Whoop5Config.enableR22Sequence.size, plan.size)
+        plan.forEachIndexed { i, send ->
+            val flag = Whoop5Config.enableR22Sequence[i]
+            assertEquals(CommandNumber.SET_CONFIG, send.cmd)
+            assertContentEquals(
+                byteArrayOf(0x01) + Whoop5Config.payloadBody(flag.name, flag.value),
+                send.payload,
+            )
+            assertEquals(41, send.payload.size, "b3 byte + 40-byte feature-flag body")
+            assertTrue(send.withResponse)
+        }
+        assertEquals("enable_r22_packets", Whoop5Config.enableR22Sequence.first().name)
+        assertTrue(
+            CommandPlanner.whoop5Allows(CommandNumber.SET_CONFIG, deepDataEnabled = true),
+        )
     }
 }

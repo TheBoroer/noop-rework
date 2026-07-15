@@ -4,6 +4,7 @@ import com.juul.kable.WriteType
 import com.noop.protocol.AlarmPayload
 import com.noop.protocol.CommandNumber
 import com.noop.protocol.DeviceFamily
+import com.noop.protocol.Whoop5Config
 
 /**
  * Flow 5: device commands (Phase 2c-2 Task 14) — the Kotlin port of the BLEManager command path
@@ -175,6 +176,72 @@ object CommandPlanner {
     )
 
     /**
+     * One Haptic Clock pulse (BLEManager.swift buzzTimeNow, 2551-2556): the SAME
+     * RUN_HAPTICS_PATTERN send as [planBuzz] but with a caller-chosen loop count — a LONG
+     * ("tens") pulse is felt as a heavier buzz (2 stacked loops), a SHORT ("units") pulse as
+     * a light one (1). No RUN_ALARM chaser and NO `.withResponse` (the legacy per-pulse send
+     * used the `send()` defaults). On a 5/MG [CommandChannel.run]'s resolve step remaps this
+     * to the maverick notify buzz exactly as for the one-shot.
+     */
+    fun planHapticPulse(loops: Int): PlannedSend = PlannedSend(
+        CommandNumber.RUN_HAPTICS_PATTERN,
+        byteArrayOf(2, loops.coerceIn(0, 255).toByte(), 0, 0, 0),
+    )
+
+    /**
+     * One arbitrary haptics-pattern send (AppModel.runPattern, 963): RUN_HAPTICS_PATTERN with a
+     * caller-chosen pattern-id byte + loop count, legacy `send()` defaults (no `.withResponse`).
+     * [planHapticPulse] is the pattern-2 special case of this.
+     */
+    fun planHapticPattern(patternId: Int, loops: Int): PlannedSend = PlannedSend(
+        CommandNumber.RUN_HAPTICS_PATTERN,
+        byteArrayOf(
+            patternId.coerceIn(0, 255).toByte(),
+            loops.coerceIn(0, 255).toByte(),
+            0, 0, 0,
+        ),
+    )
+
+    /**
+     * Stop a running haptics pattern (AppModel.stopHaptics, 979-980): STOP_HAPTICS with the legacy
+     * `[0x00]` payload and `send()` defaults. Deliberately NOT added to [whoop5Allows] — the legacy
+     * Swift 5/MG allowlist dropped it too, so on a 5/MG this stays a logged no-op exactly like
+     * BLEManager (a 4.0 honors it).
+     */
+    fun planStopHaptics(): PlannedSend = PlannedSend(
+        CommandNumber.STOP_HAPTICS,
+        byteArrayOf(0x00),
+    )
+
+    /**
+     * The Broadcast-HR device-config write (BLEManager.setBroadcastHr, 2106-2118, #181):
+     * SET_DEVICE_CONFIG carrying `whoop_live_hr_in_adv_ind_pkt` = ASCII '1'/'0', with the b3
+     * byte 0x01 ahead of the 33-byte body, `.withResponse`. The family/connect/bond guards (and
+     * their log lines) stay with the caller, exactly like the legacy method.
+     */
+    fun planBroadcastHr(on: Boolean): PlannedSend = PlannedSend(
+        CommandNumber.SET_DEVICE_CONFIG,
+        byteArrayOf(0x01) +
+            Whoop5Config.deviceConfigBody("whoop_live_hr_in_adv_ind_pkt", if (on) 0x31 else 0x30),
+        withResponse = true,
+    )
+
+    /**
+     * The 15-flag enable_r22 deep-data sequence (BLEManager.enableWhoop5DeepData, 2068-2098, #174):
+     * one SET_CONFIG write per [Whoop5Config.enableR22Sequence] flag — b3 byte 0x01 + the 40-byte
+     * flag body, `.withResponse` — byte-identical to the legacy loop. The legacy 80 ms stagger
+     * between writes lives in [WhoopBleClient.enableWhoop5DeepData]; the on-wrist / encrypted-bond
+     * guards stay with the caller like every other command.
+     */
+    fun planDeepDataEnable(): List<PlannedSend> = Whoop5Config.enableR22Sequence.map { flag ->
+        PlannedSend(
+            CommandNumber.SET_CONFIG,
+            byteArrayOf(0x01) + Whoop5Config.payloadBody(flag.name, flag.value),
+            withResponse = true,
+        )
+    }
+
+    /**
      * Battery refresh is FAMILY-SPECIFIC (#77): on a WHOOP 4.0 the standard 0x2A19 characteristic
      * is a STUB that reports a constant 100 — the real charge only comes from the proprietary
      * GET_BATTERY_LEVEL command (COMMAND_RESPONSE, u16/10). A WHOOP 5/MG is the opposite: it uses
@@ -210,8 +277,10 @@ object CommandPlanner {
 class CommandChannel(
     private val session: BleSession,
     private val family: DeviceFamily,
-    private val deepDataEnabled: Boolean = false,
-    private val broadcastHrEnabled: Boolean = false,
+    // Runtime-mutable (was ctor-fixed): the legacy Settings toggles flip deep-data / Broadcast-HR
+    // mid-connection, so the client must be able to update the gating on the LIVE channel too.
+    var deepDataEnabled: Boolean = false,
+    var broadcastHrEnabled: Boolean = false,
     private val log: (String) -> Unit = {},
 ) {
     suspend fun run(planned: List<PlannedSend>) {

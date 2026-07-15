@@ -125,6 +125,11 @@ targets:
         COMBINE_HIDPI_IMAGES: YES
     dependencies:
       - package: WhoopProtocol
+      # T15b: WhoopBleShim.swift imports the Kotlin/Native framework directly (Shared is an exported
+      # product of the WhoopProtocol package wrapping Shared.xcframework). A bare `package:` entry
+      # only links the eponymous product, so the second entry is required.
+      - package: WhoopProtocol
+        product: Shared
       - package: WhoopStore
       - package: StrandAnalytics
       - package: StrandImport
@@ -268,6 +273,10 @@ targets:
         SWIFT_EMIT_LOC_STRINGS: YES
     dependencies:
       - package: WhoopProtocol
+      # T15b: Strand/BLE/WhoopBleShim.swift compiles into this target too (Strand sources above);
+      # it imports Shared directly, so link the product here as well.
+      - package: WhoopProtocol
+        product: Shared
       - package: WhoopStore
       - package: StrandAnalytics
       - package: StrandImport

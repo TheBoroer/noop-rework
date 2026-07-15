@@ -247,7 +247,10 @@ struct TestCentreView: View {
                         .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
                 }
                 .toggleStyle(.switch).tint(StrandPalette.accent)
-                .onChangeCompat(of: continuousHrvEnabled) { on in model.ble.setKeepRealtimeForData(on) }
+                .onChangeCompat(of: continuousHrvEnabled) { on in
+                    model.ble.setKeepRealtimeForData(on)
+                    model.shim.setKeepRealtimeForData(on)  // T15c dual-drive; sole driver after T15d
+                }
 
                 // 5/MG-only probes, hidden off a 4.0 strap (the #22 gate, same as SettingsView).
                 if is5MG {
@@ -272,7 +275,10 @@ struct TestCentreView: View {
                             .font(StrandFont.subhead).foregroundStyle(StrandPalette.textPrimary)
                     }
                     .toggleStyle(.switch).tint(StrandPalette.accent)
-                    .onChangeCompat(of: broadcastHrEnabled) { on in model.ble.setBroadcastHr(on) }
+                    .onChangeCompat(of: broadcastHrEnabled) { on in
+                        model.ble.setBroadcastHr(on)
+                        model.shim.setBroadcastHr(on)  // T15c dual-drive; sole driver after T15d
+                    }
 
                     Toggle(isOn: $puffinCapture) {
                         Text("Record puffin frames to a file")

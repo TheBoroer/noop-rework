@@ -852,7 +852,10 @@ struct SettingsView: View {
                 }
                 .toggleStyle(.switch)
                 .tint(StrandPalette.accent)
-                .onChangeCompat(of: continuousHrvEnabled) { on in model.ble.setKeepRealtimeForData(on) }
+                .onChangeCompat(of: continuousHrvEnabled) { on in
+                    model.ble.setKeepRealtimeForData(on)
+                    model.shim.setKeepRealtimeForData(on)  // T15c dual-drive; sole driver after T15d
+                }
                 Text("Keeps the detailed beat-to-beat heart-rate stream running all day and night, not just while a live screen is open, so NOOP captures much more for overnight HRV, recovery and sleep. Uses more battery: your strap streams heart rate continuously while connected.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)
@@ -871,6 +874,7 @@ struct SettingsView: View {
                     .tint(StrandPalette.accent)
                     .onChangeCompat(of: continuousHrvOvernightOnly) { _ in
                         model.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
+                        model.shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)  // T15c dual-drive
                     }
                     Text("Runs the continuous HRV stream only during your quiet hours window (22:00–07:00 by default), roughly halving the battery cost. Daytime Stress readings will be sparser. Note: continuous background HRV capture (including daytime naps) is paused outside this window. For on-demand daytime HRV readings (including naps), use the \"Take an HRV reading\" button on the Live screen.")
                         .font(StrandFont.caption)
@@ -1279,6 +1283,7 @@ struct SettingsView: View {
                 if deepDataEnabled {
                     NoopButton("Send enable sequence to strap", systemImage: "bolt.badge.automatic", kind: .primary) {
                         model.ble.enableWhoop5DeepData()
+                        model.shim.enableWhoop5DeepData()  // T15c dual-drive; sole driver after T15d
                     }
                     .disabled(deepDataButtonDisabled)
                     Text(deepDataButtonReason)
@@ -1318,7 +1323,10 @@ struct SettingsView: View {
                 }
                 .toggleStyle(.switch)
                 .tint(StrandPalette.accent)
-                .onChangeCompat(of: broadcastHrEnabled) { on in model.ble.setBroadcastHr(on) }
+                .onChangeCompat(of: broadcastHrEnabled) { on in
+                    model.ble.setBroadcastHr(on)
+                    model.shim.setBroadcastHr(on)  // T15c dual-drive; sole driver after T15d
+                }
                 Text("Makes your WHOOP 5.0/MG advertise its heart rate as a standard Bluetooth HR sensor, so a Garmin (Edge/watch), Zwift or gym equipment can use it during a workout. Applied on the next connection (and immediately if connected); writes the strap's whoop_live_hr_in_adv_ind_pkt flag. Reversible. iPhone-side only. A Mac can't write to a 5/MG.")
                     .font(StrandFont.caption)
                     .foregroundStyle(StrandPalette.textTertiary)

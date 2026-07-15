@@ -36,6 +36,10 @@ final class PuffinFrameRecorder {
 
     private var isEnabled: Bool { UserDefaults.standard.bool(forKey: Self.enabledKey) }
 
+    /// Cheap pre-gate for hot paths (the shim's frame pump) so callers can skip the
+    /// KotlinByteArray→[UInt8] conversion entirely while capture is off.
+    static var isCaptureEnabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+
     /// `<AppSupport>/OpenWhoop/puffin-captures/`, created on demand.
     private static func captureDirectory() throws -> URL {
         let fm = FileManager.default
@@ -48,10 +52,17 @@ final class PuffinFrameRecorder {
     }
 
     /// Record one puffin frame (off `fd4b0003/0004/0005/0007`). No-op unless capture is enabled.
+    /// Legacy CoreBluetooth entry point — delegates to the string-keyed core below.
     func capture(frame: [UInt8], char: CBUUID) {
+        capture(frame: frame, charUuid: char.uuidString.lowercased())
+    }
+
+    /// String-keyed core (T15c): the Kotlin `SessionFrame.characteristicUuid` is already a
+    /// lowercase UUID string, so the shim feeds this directly without CoreBluetooth types.
+    func capture(frame: [UInt8], charUuid: String) {
         guard isEnabled else { return }
         let tsMs = Int(Date().timeIntervalSince1970 * 1000)
-        buffer.record(frame: frame, char: char.uuidString.lowercased(),
+        buffer.record(frame: frame, char: charUuid,
                       tsMs: tsMs, hr: state?.heartRate)
         sinceFlush += 1
         state?.puffinCaptureCount = buffer.count
