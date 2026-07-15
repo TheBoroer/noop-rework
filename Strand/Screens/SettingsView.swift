@@ -1512,6 +1512,7 @@ struct SettingsView: View {
     /// session has recorded one) and tell the user where it landed.
     private func runScheduledExportNow() {
         model.ble.flushPuffinCaptures()
+        model.shim.flushPuffinCaptures()  // T15c dual-drive
         let url = ScheduledDebugExport.runNow(captureURL: live.puffinCaptureURL)
         if let url {
             backupAlertTitle = String(localized: "Strap log exported")
@@ -1582,6 +1583,7 @@ struct SettingsView: View {
     /// hand it to the system share sheet (iOS).
     private func exportPuffinCaptures() {
         model.ble.flushPuffinCaptures()
+        model.shim.flushPuffinCaptures()  // T15c dual-drive
         guard let src = live.puffinCaptureURL else { return }
         // Suggest a friendly, timestamped name so a reporter saving several captures gets sortable,
         // non-colliding files (#510) — e.g. noop-raw-capture-260617-1042.json.
@@ -1612,6 +1614,7 @@ struct SettingsView: View {
     /// each via its own NSSavePanel on macOS (no new file plumbing).
     private func exportRawAndLog() {
         model.ble.flushPuffinCaptures()
+        model.shim.flushPuffinCaptures()  // T15c dual-drive
         guard let capture = live.puffinCaptureURL else {
             backupAlertTitle = String(localized: "Nothing to export")
             backupAlertMessage = String(localized: "No raw capture has been recorded yet this session.")
@@ -1628,6 +1631,7 @@ struct SettingsView: View {
     /// Flush, then reveal the capture file in Finder so the user can grab it directly.
     private func revealPuffinCaptures() {
         model.ble.flushPuffinCaptures()
+        model.shim.flushPuffinCaptures()  // T15c dual-drive
         guard let url = live.puffinCaptureURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }

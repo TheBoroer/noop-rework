@@ -328,6 +328,7 @@ struct TestCentreView: View {
 
     private func runScheduledExportNow() {
         model.ble.flushPuffinCaptures()
+        model.shim.flushPuffinCaptures()  // T15c dual-drive
         let url = ScheduledDebugExport.runNow(captureURL: live.puffinCaptureURL)
         if let url {
             infoTitle = String(localized: "Strap log exported")

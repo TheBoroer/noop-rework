@@ -971,6 +971,7 @@ final class AppModel: ObservableObject {
     /// For a user-facing "buzz the strap now" action use `buzzStrapOnce()` instead (#921).
     func buzz(loops: UInt8 = 2) {
         ble.send(.runHapticsPattern, payload: [2, loops, 0, 0, 0])
+        shim.runHapticPattern(patternId: 2, loops: Int(loops))  // T15c dual-drive
     }
 
     /// One-shot user buzz (#921): the on-device-confirmed pattern (patternId=2, 3 loops) followed by
@@ -979,12 +980,14 @@ final class AppModel: ObservableObject {
     /// button and the Buzz Strap App Intent both route through this single sequence.
     func buzzStrapOnce() {
         ble.buzzStrapOnce()
+        Task { try? await shim.buzzStrapOnce() }  // T15c dual-drive
     }
 
     /// Fire a specific preset haptic pattern (patternId 0–6 on Harvard; loops sets length).
     /// Used by the notification-pattern picker and coaching features.
     func buzz(pattern: UInt8, loops: UInt8 = 1) {
         ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])
+        shim.runHapticPattern(patternId: Int(pattern), loops: Int(loops))  // T15c dual-drive
     }
 
     /// Tell the strap to STOP an in-progress haptic pattern (#769). The biofeedback layers (Breathe /
@@ -1002,6 +1005,7 @@ final class AppModel: ObservableObject {
     /// unbonded or when the family doesn't accept it).
     func stopHaptics() {
         ble.send(.stopHaptics, payload: [0x00])
+        shim.stopHaptics()  // T15c dual-drive
     }
 
     // MARK: - Wrist-buzz mirror notifications (PR #577 , iOS only)
