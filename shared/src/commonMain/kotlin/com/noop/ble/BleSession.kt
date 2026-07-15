@@ -19,7 +19,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
@@ -534,7 +537,11 @@ class BleSession(
                     send(CommandNumber.GET_BATTERY_LEVEL, byteArrayOf(0x00), WriteType.WithResponse)
                 }
                 bondedAtMark = TimeSource.Monotonic.markNow()
-                log("bond write acked (GET_BATTERY_LEVEL) — running handshake")
+                log("bond write acked (GET_BATTERY_LEVEL) — verifying notify path")
+                // The write ack proves the BOND, not the notify pipe: the CCCD subscribe from
+                // startObserving() may still be in flight, and a handshake fired before it lands
+                // loses every reply (incl. the GET_CLOCK correlation → zero realtime HR rows).
+                verifyNotifyPathLive()
                 runHandshakeOnce()
             }
             DeviceFamily.WHOOP5 -> {
@@ -550,6 +557,8 @@ class BleSession(
                 // Post-hello notify setup: subscribing before the link is encrypted fails with
                 // "Authentication is insufficient" (issue #17, 3081).
                 startObserving(scope)
+                // Same CCCD race as WHOOP4 — don't burst the handshake into a dead notify pipe.
+                verifyNotifyPathLive()
                 runHandshakeOnce()
             }
         }
@@ -652,6 +661,43 @@ class BleSession(
     }
 
     /**
+     * Prove the notify path is LIVE before the handshake burst goes out.
+     *
+     * [startObserving] only launches the Kable collectors; the CCCD subscribe happens
+     * asynchronously on first collect. A handshake fired before the command-response
+     * characteristic subscription lands gets every reply silently dropped by the OS — on WHOOP4
+     * that loses the GET_CLOCK correlation, so flow-3 realtime frames buffer pre-clock forever
+     * and no HR row is ever persisted (hardware-observed: t11 gate run, 284 frames / 0 rows).
+     *
+     * Sends a harmless GET_BATTERY_LEVEL probe and waits for ANY reassembled frame to echo back
+     * (an EVENT counts — it proves the notify pipe). Probe is (re)sent only after the [frames]
+     * subscription is active so the echo cannot be missed. Bounded like [bondRaceRetry]; on
+     * exhaustion we log and proceed rather than brick the connection.
+     */
+    private suspend fun verifyNotifyPathLive() {
+        var attempt = 1
+        while (true) {
+            val echoed = withTimeoutOrNull(NOTIFY_ECHO_TIMEOUT_MS) {
+                frames
+                    .onSubscription { send(CommandNumber.GET_BATTERY_LEVEL, byteArrayOf(0x00)) }
+                    .first()
+            } != null
+            if (echoed) {
+                log("notify path live (frame echo, probe $attempt/$NOTIFY_ECHO_ATTEMPTS)")
+                return
+            }
+            if (attempt >= NOTIFY_ECHO_ATTEMPTS) {
+                log(
+                    "notify echo never arrived ($attempt probes) — proceeding; " +
+                        "handshake replies may be lost",
+                )
+                return
+            }
+            attempt += 1
+        }
+    }
+
+    /**
      * Bounded insufficient-auth retry around the first acked write of a connection (Swift
      * `didWriteValueFor`, BLEManager.swift:3085-3160).
      *
@@ -746,5 +792,11 @@ class BleSession(
 
         /** Pause between insufficient-auth retries — long enough for just-works pairing to land. */
         const val BOND_RETRY_DELAY_MS: Long = 1_000L
+
+        /** Max GET_BATTERY_LEVEL probes proving the notify pipe before the handshake burst. */
+        const val NOTIFY_ECHO_ATTEMPTS: Int = 3
+
+        /** Per-probe wait for any frame echo — a CCCD subscribe completes well inside this. */
+        const val NOTIFY_ECHO_TIMEOUT_MS: Long = 1_500L
     }
 }

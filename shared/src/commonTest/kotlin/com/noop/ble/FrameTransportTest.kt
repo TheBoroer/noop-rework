@@ -282,6 +282,47 @@ class FrameTransportTest {
             send = { c, _ -> sent += c },
             noteArmed = {},
         )
-        assertEquals(listOf(CommandNumber.SEND_R10_R11_REALTIME, CommandNumber.SEND_R10_R11_REALTIME), sent)
+        assertEquals(
+            listOf(
+                CommandNumber.SEND_R10_R11_REALTIME,
+                CommandNumber.SEND_R10_R11_REALTIME,
+                // Arm-time #120 clock re-read rides behind any WHOOP4 arm (both payload forms).
+                CommandNumber.GET_CLOCK,
+                CommandNumber.GET_CLOCK,
+            ),
+            sent,
+        )
+    }
+
+    @Test
+    fun executorRereadsClockOnWhoop4ArmButNotOnDisarm() = runTest {
+        val sent = mutableListOf<Pair<CommandNumber, List<Byte>>>()
+        // Disarm-only reconcile: no clock re-read.
+        FrameTransport.applyRealtimeActions(
+            family = DeviceFamily.WHOOP4,
+            actions = listOf(RealtimeAction.ToggleRealtimeHr(on = false)),
+            send = { c, p -> sent += c to p.toList() },
+            noteArmed = {},
+        )
+        assertEquals(listOf(CommandNumber.TOGGLE_REALTIME_HR to listOf<Byte>(0x00)), sent)
+
+        // Arm: toggle, then GET_CLOCK in both hardware-accepted forms (empty + [0x00]) so a
+        // handshake correlation lost to the CCCD-subscribe race self-heals and buffered
+        // realtime frames can flush (t11 gate regression: 284 frames / 0 HR rows).
+        sent.clear()
+        FrameTransport.applyRealtimeActions(
+            family = DeviceFamily.WHOOP4,
+            actions = listOf(RealtimeAction.ToggleRealtimeHr(on = true)),
+            send = { c, p -> sent += c to p.toList() },
+            noteArmed = {},
+        )
+        assertEquals(
+            listOf(
+                CommandNumber.TOGGLE_REALTIME_HR to listOf<Byte>(0x01),
+                CommandNumber.GET_CLOCK to listOf(),
+                CommandNumber.GET_CLOCK to listOf<Byte>(0x00),
+            ),
+            sent,
+        )
     }
 }

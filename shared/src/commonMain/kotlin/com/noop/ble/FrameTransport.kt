@@ -347,6 +347,17 @@ class FrameTransport(
                         send(CommandNumber.SEND_R10_R11_REALTIME, byteArrayOf(if (a.on) 0x01 else 0x00))
                     }
             }
+            // Arm-time GET_CLOCK re-read (WHOOP4 only — 5/MG rides ClockRef.IDENTITY): a #120
+            // drift re-correlation, and the self-heal for a handshake GET_CLOCK reply lost to
+            // the CCCD-subscribe race — without a clock ref every realtime frame buffers
+            // pre-clock and no HR row ever persists (t11 gate run: 284 frames / 0 rows).
+            val arming = actions.any {
+                (it is RealtimeAction.ToggleRealtimeHr && it.on) ||
+                    (it is RealtimeAction.HeavyStream && it.on)
+            }
+            if (arming && family == DeviceFamily.WHOOP4) {
+                ClockSync.getClockPayloads(family).forEach { send(CommandNumber.GET_CLOCK, it) }
+            }
         }
     }
 }

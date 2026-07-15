@@ -2,6 +2,8 @@ package com.noop.ble.harness
 
 import com.juul.kable.Peripheral
 import com.juul.kable.Scanner
+import com.juul.kable.characteristicOf
+import com.noop.protocol.StandardHeartRate
 import com.noop.ble.BleSession
 import com.noop.ble.FrameTransport
 import com.noop.ble.FrameTransportPolicy
@@ -14,8 +16,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -37,7 +41,7 @@ import kotlin.uuid.ExperimentalUuidApi
  *
  * Exit 0 when at least one decoded HR row flowed through the insert seam.
  */
-@OptIn(ExperimentalUuidApi::class)
+@OptIn(ExperimentalUuidApi::class, kotlinx.cinterop.ExperimentalForeignApi::class)
 fun runRealtimeHarness(args: Array<String>) {
     val seconds = args.toList().zipWithNext()
         .firstOrNull { it.first == "--seconds" }?.second?.toLongOrNull() ?: 90L
@@ -52,6 +56,7 @@ fun runRealtimeHarness(args: Array<String>) {
     var rrRows = 0
     var flushes = 0
     var framesSeen = 0
+    var rawDumped = 0
     runBlocking {
         val adv = withTimeoutOrNull(30_000) {
             Scanner {
@@ -118,6 +123,16 @@ fun runRealtimeHarness(args: Array<String>) {
                             (respCmd?.let { " resp_cmd=$it clock=${frame.parsed.parsed["clock"]}" } ?: ""),
                     )
                 }
+                // Off-wrist vs decode-bug discriminator: dump the first few realtime payloads.
+                // Genuine off-wrist frames carry zeroed HR/RR fields but live accel/status bytes;
+                // a decode-offset bug shows nonzero bytes where we read zeros.
+                if (frame.parsed.typeName == "REALTIME_RAW_DATA" && rawDumped < 5) {
+                    rawDumped += 1
+                    val hex = frame.raw.joinToString(" ") { b ->
+                        (b.toInt() and 0xFF).toString(16).padStart(2, '0')
+                    }
+                    println("  [raw#$rawDumped] len=${frame.raw.size} $hex")
+                }
             }
         }
         session.state
@@ -130,6 +145,30 @@ fun runRealtimeHarness(args: Array<String>) {
         try {
             session.connect(sessionScope)
             println("realtime-harness: connected + handshake sent; arming realtime …")
+            // Standard HR profile (0x2A37) — the stream that actually feeds ingestStandardHr,
+            // i.e. the hr rows this gate counts. BleSession deliberately skips the standard
+            // profiles (flow-3 concern), and Swift subscribes them in enableLiveNotifications()
+            // right before arming (BLEManager.swift:2365-2377) — mirror that here. Without this
+            // subscription hr=0 is structural, wrist or no wrist (t11 run: 188 frames / 0 rows).
+            val hrChar = characteristicOf(
+                kotlin.uuid.Uuid.parse("0000180d-0000-1000-8000-00805f9b34fb"),
+                kotlin.uuid.Uuid.parse("00002a37-0000-1000-8000-00805f9b34fb"),
+            )
+            var hrNotifies = 0
+            peripheral.observe(hrChar)
+                .onStart { println("realtime-harness: subscribing 0x2A37 (standard HR) …") }
+                .onEach { data ->
+                    hrNotifies += 1
+                    if (hrNotifies <= 3) {
+                        val hex = data.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+                        println("  [2a37#$hrNotifies] len=${data.size} $hex")
+                    }
+                    StandardHeartRate.parse(data)?.let { m ->
+                        transport.ingestStandardHr(m.hr, m.rr, ts = platform.posix.time(null).toInt())
+                    }
+                }
+                .catch { e -> println("realtime-harness: 0x2A37 observe FAILED — ${e::class.simpleName}: ${e.message}") }
+                .launchIn(sessionScope)
             transport.applyRealtimeActions(session, policy.startRealtime())
             println("realtime-harness: armed (screen-want); holding for ${seconds}s …")
 

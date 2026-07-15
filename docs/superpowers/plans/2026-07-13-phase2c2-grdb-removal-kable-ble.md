@@ -336,10 +336,20 @@ opcodes (reboot, firmware load, force-trim, ship-mode) are excluded throughout.
 - Repoint Collector's frame intake through the shim; delete BLEManager realtime path
 
 **Steps:**
-- [ ] Characteristic I/O → `Framing.kt` reassembly → existing decoded-stream persistence
+- [x] Characteristic I/O → `Framing.kt` reassembly → existing decoded-stream persistence
   (`StreamPersistence.kt` path from 2c-1) + Collector raw path (outbox, Task 4 seam).
-- [ ] **MANUAL GATE (hardware):** live HR + raw capture session lands rows in Room streams
-  and `outboxBatch`; battery/HR UI live.
+- [x] **MANUAL GATE (hardware):** live HR + raw capture session lands rows in Room streams
+  and `outboxBatch`; battery/HR UI live. Validated via T11 realtime harness on real WHOOP
+  hardware (REALTIME + REALTIME_RAW_DATA frames landed, HR rows + raw batches persisted).
+
+**Scope note (live PPG HR — intentionally excluded):** during v26-heavy stretches the live
+path emits no HR rows; this is Swift-parity behavior, not a gap. Swift derives PPG HR only
+on the historical path (`PpgHr.derivePpgHr` called solely from `HistoricalStreams.swift`;
+`Streams.swift` merely carries the `ppgHr` field). Kotlin already mirrors this end-to-end:
+`shared/.../protocol/PpgHr.kt` is the full estimator (with `PpgHrTest.kt`), and
+`HistoricalStreams.kt` collects v26 `PpgHr.Sample`s and emits `PpgHrRow`s. HR continuity
+through v26 gaps is therefore recovered by the Backfiller (flow 4, Task 13) — no live
+decode work belongs in flow 3.
 
 **Commit:** `Phase 2c-2 Task 11: realtime streams over Kable (flow 3)`
 
