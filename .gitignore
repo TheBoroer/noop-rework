@@ -106,3 +106,7 @@ __pycache__/
 # Local release artifacts (zips/ipas built for upload; never tracked)
 dist/
 err.txt
+
+# ── Gradle (root KMP build; android/ has its own .gitignore) ───
+.gradle/
+local.properties
