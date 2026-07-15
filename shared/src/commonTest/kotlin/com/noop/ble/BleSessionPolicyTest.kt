@@ -148,6 +148,120 @@ class BleSessionPolicyTest {
         assertFalse(p.postBondLoop.tripped)
     }
 
+    // ---- shouldSalvageProbe (#78 hole-4) --------------------------------------------------------
+
+    private val floor = BOND_LOOP_SALVAGE_FLOOR_SECONDS
+
+    @Test
+    fun salvageProbe_firesAtExactlyTheFloorAndAbove() {
+        assertTrue(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = floor,
+            ),
+        )
+        assertTrue(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = floor + 3600,
+            ),
+        )
+    }
+
+    @Test
+    fun salvageProbe_blockedBelowTheFloor() {
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = floor - 1,
+            ),
+        )
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = 0L,
+            ),
+        )
+    }
+
+    @Test
+    fun salvageProbe_blockedWhenNoTripTimestamp() {
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = null,
+            ),
+        )
+    }
+
+    @Test
+    fun salvageProbe_blockedWhenNotPaused() {
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = false, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = floor,
+            ),
+        )
+    }
+
+    @Test
+    fun salvageProbe_blockedWhenConnected() {
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = true,
+                intentionalDisconnect = false, secondsSincePauseTripped = floor,
+            ),
+        )
+    }
+
+    @Test
+    fun salvageProbe_blockedWhenIntentionalDisconnect() {
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = true, connected = false,
+                intentionalDisconnect = true, secondsSincePauseTripped = floor,
+            ),
+        )
+    }
+
+    // ---- isInsufficientAuthError (#78 hole-1) ---------------------------------------------------
+
+    @Test
+    fun isInsufficientAuthError_classifiesByAttCodeEvenWhenTextIsLocalized() {
+        // German-device regression parity: the code (15 / 5) must classify regardless of what the
+        // (possibly localized) message text says.
+        val encryption = Exception(
+            "Error Domain=CBATTErrorDomain Code=15 \"Die Verschluesselung ist unzureichend.\"",
+        )
+        assertTrue(isInsufficientAuthError(encryption))
+        val auth = Exception(
+            "Error Domain=CBATTErrorDomain Code=5 \"Authentifizierung fehlgeschlagen.\"",
+        )
+        assertTrue(isInsufficientAuthError(auth))
+    }
+
+    @Test
+    fun isInsufficientAuthError_englishStringFallbackIsAdditive() {
+        // No CBATTErrorDomain/code in the message at all: only the English keyword fallback
+        // classifies these, and it must still fire.
+        assertTrue(isInsufficientAuthError(Exception("Encryption is insufficient.")))
+        assertTrue(isInsufficientAuthError(Exception("Authentication is insufficient.")))
+    }
+
+    @Test
+    fun isInsufficientAuthError_walksCauseChain() {
+        val root = Exception("Error Domain=CBATTErrorDomain Code=15 \"Encryption is insufficient.\"")
+        val wrapped = RuntimeException("write failed", root)
+        assertTrue(isInsufficientAuthError(wrapped))
+    }
+
+    @Test
+    fun isInsufficientAuthError_unrelatedErrorsDoNotClassify() {
+        assertFalse(isInsufficientAuthError(Exception("Connection timeout")))
+        val otherCode = Exception("Error Domain=CBATTErrorDomain Code=6 \"Request is not supported.\"")
+        assertFalse(isInsufficientAuthError(otherCode))
+    }
+
     // ---- ClockSync (#120) ----------------------------------------------------------------------
 
     @Test

@@ -246,6 +246,34 @@ class BondRefusalGiveUp(
 }
 
 /**
+ * Minimum seconds since the bond-loop pause tripped (or since the last probe re-stamped it)
+ * before another salvage probe may fire. Port of `BLEManager.bondLoopSalvageFloorSeconds`
+ * (BLEManager.swift:919, #78 hole-4). 10 minutes: long enough that a still-held strap sees a
+ * handful of bounded attempts per day, short enough that a strap the user freed reconnects on
+ * the next natural app open.
+ */
+const val BOND_LOOP_SALVAGE_FLOOR_SECONDS: Long = 10 * 60
+
+/**
+ * Pure gate for the one-shot bond-loop salvage probe (Swift `shouldSalvageProbe`,
+ * BLEManager.swift:925-932, #78 hole-4): probe ONLY while the pause is latched, with no live
+ * link, no user teardown in force, and at least [BOND_LOOP_SALVAGE_FLOOR_SECONDS] since the
+ * pause tripped (or since the previous probe re-stamped it). Null seconds = no trip timestamp
+ * = never probe. Pure so the never-hammer contract is pinned by unit tests without a
+ * CoreBluetooth seam.
+ */
+fun shouldSalvageProbe(
+    pausedForBondLoop: Boolean,
+    connected: Boolean,
+    intentionalDisconnect: Boolean,
+    secondsSincePauseTripped: Long?,
+): Boolean {
+    if (!pausedForBondLoop || connected || intentionalDisconnect) return false
+    val s = secondsSincePauseTripped ?: return false
+    return s >= BOND_LOOP_SALVAGE_FLOOR_SECONDS
+}
+
+/**
  * SET_CLOCK / GET_CLOCK payload forms (issue #120). Port of `BLEManager.setClockPayload` /
  * `setClockPayloadLegacy` / `sendSetClockBothForms` (BLEManager.swift:3322-3356).
  *
