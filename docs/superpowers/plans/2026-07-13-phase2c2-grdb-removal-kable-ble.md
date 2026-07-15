@@ -353,26 +353,37 @@ decode work belongs in flow 3.
 
 **Commit:** `Phase 2c-2 Task 11: realtime streams over Kable (flow 3)`
 
-### Task 12: Kotlin v20/21 historical decode (mandatory pre-flow-4)
+### Task 12: Kotlin historical decode gaps + outbox codec (mandatory pre-flow-4)
+
+**Rescoped during execution:** original scope said "v20/v21 layouts", but no v20/21
+layout exists anywhere (not in schema, not in Swift). Actual gaps were the hard-coded
+v25 path (issue #30, `PostHooks.swift`) and the unmapped-version fallback that decodes
+unknown hist_versions with the v24 layout behind a gravity physical-validation gate
+(magnitude 0.5..1.5); rejected records stay raw instead of being dropped.
 
 **Files:**
-- `shared/src/commonMain/kotlin/com/noop/protocol/HistoricalStreams.kt` (modify)
-- `shared/src/commonTest/` decode-parity tests + capture fixtures
-- Kotlin outbox codec: `shared/src/commonMain/kotlin/com/noop/ble/OutboxCodec.kt` (new — pack + zlib, byte-identical to Swift `packFrames`/`zlibCompressWithLength`)
+- `shared/src/commonMain/kotlin/com/noop/protocol/Framing.kt` (modified — v25 path +
+  v24-fallback landed here, not `HistoricalStreams.kt`)
+- `shared/src/commonTest/` decode-parity tests + fixtures (`historical_golden.json`,
+  `historical_frames.json`, synthetic v25 / unmapped-version cases)
+- Kotlin outbox codec: `shared/src/commonMain/kotlin/com/noop/ble/OutboxCodec.kt`
+  (commonMain expect + android/apple actuals; apple actual uses `platform.zlib` raw
+  DEFLATE, windowBits -15)
 
 **Steps:**
-- [ ] Capture v20/v21 fixtures from a real WHOOP 5 (hist_version byte `frame[5]`/`frame[9]`;
-  the `RawHistoryArchive` `rejected_history.jsonl` corpus is the intended source — pull
-  archived frames from a test device).
-- [ ] Port v20/21 layout decode into `HistoricalStreams.kt`; parity tests: Kotlin decode of
-  fixtures == Swift decoder output for the same bytes (generate expected-output JSON
-  from the Swift decoder before it's deleted).
-- [ ] `OutboxCodec` + cross-impl fixture test (blob written by Swift helpers decodes in
-  Kotlin and vice versa) — required because the Kotlin Backfiller (Task 13) becomes an
-  outbox writer.
+- [x] Port v25 decode (unix u32 LE @11, gravity 3x i16/16384 @73/75/77, PPG bytes
+  23-73, empty rr_intervals) + unmapped-version v24-layout fallback gated by gravity
+  validation.
+- [x] Parity tests: Kotlin decode of Swift golden fixtures == Swift decoder output
+  (`HistoricalGoldenParityTest`, `HistoricalFallbackTest`, `Whoop4HistoricalV25Test`,
+  `Whoop4HistoricalV25PpgTest`, `RejectedHistoricalRecordsTest`).
+- [x] `OutboxCodec` + cross-impl fixture test (Swift `RawOutboxCrossImplTests` decodes
+  a Kotlin-produced blob; `OutboxCodecTest` covers the reverse) — required because the
+  Kotlin Backfiller (Task 13) becomes an outbox writer.
 
-**Verify:** parity + codec tests green. **This task gates Task 13.**
-**Commit:** `Phase 2c-2 Task 12: v20/21 historical decode + outbox codec parity`
+**Verify:** done — JVM commonTest 62/62, iosSimulatorArm64 24/24, Swift
+RawOutboxCrossImplTests 2/2. **This task gates Task 13 — gate satisfied.**
+**Commit:** `037e4b3c` — `Phase 2c-2 Task 12: port historical v25 decode + unmapped-version v24 fallback to Kotlin; shared outbox codec`
 
 ### Task 13: Kotlin `Backfiller` (flow 4: historical backfill — persist-before-ack gates this)
 
