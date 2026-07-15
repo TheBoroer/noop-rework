@@ -404,10 +404,19 @@ RawOutboxCrossImplTests 2/2. **This task gates Task 13 — gate satisfied.**
 - [x] `BackfillerAckOrderTest` (mock transport, commonTest): the Kotlin twin of Task 5 —
   no ack before outbox commit; failure branches (archive fail, enqueue fail, cursor
   fail) each hold the ack; stalled session never acks a later END.
-- [ ] **MANUAL GATE (hardware):** full historical offload on a real strap (ideally one
-  holding v20/v21 data); verify decoded rows + trim advance across reconnects; Task 5's
-  Swift test retired with the Swift Backfiller. `BackfillHarness.kt` (`backfill` subcommand
-  on `scan-harness.kexe`) is built and links; the controller runs the actual gate.
+- [x] **MANUAL GATE (hardware): PASSED** — full historical offload against Boro's WHOOP4
+  (`86a00f80-…a914b2`): frames=4427, chunksAcked=84, rowsDecoded=18069,
+  rejectedArchived=0, trim advanced 28148 → 30145, HISTORY_COMPLETE, clean exit 0.
+  Persist-before-ack held on-device (every `[outbox] batch=hist-…` preceded its `[ack]`).
+  First gate attempt exposed a production bug: Kable observe flows THROW
+  `NotConnectedException` on link close (they never complete normally), and
+  `stopObserving()`'s async `cancel()` can lose the race with the link drop — the
+  rethrow in `startObserving`'s collector failed the job and aborted the process
+  (Kotlin/Native, no CoroutineExceptionHandler in session scope). Same path would have
+  crashed the app on any unexpected disconnect. Fixed in `BleSession.kt`: link-closed is
+  normal collector termination (Swift parity: CoreBluetooth just stops delivering
+  `didUpdateValueFor`); reconnect handling stays with the state flow /
+  `noteConnectionEnded`. Gate rerun after fix produced the clean run above.
 
 **Commit:** `Phase 2c-2 Task 13: Kotlin Backfiller cutover (flow 4)`
 

@@ -3,6 +3,7 @@
 package com.noop.ble
 
 import com.juul.kable.Characteristic
+import com.juul.kable.NotConnectedException
 import com.juul.kable.Peripheral
 import com.juul.kable.State
 import com.juul.kable.WriteType
@@ -752,6 +753,18 @@ class BleSession(
                         break // flow completed (link closed)
                     } catch (e: CancellationException) {
                         throw e
+                    } catch (e: NotConnectedException) {
+                        // Kable observe flows THROW NotConnectedException when the link closes —
+                        // they do not complete normally. This fires on BOTH intentional
+                        // disconnects (stopObserving()'s cancel() is async and can lose the race
+                        // with the actual link drop) and unexpected drops. Either way it is
+                        // normal collector termination, not a failure: Swift parity is
+                        // CoreBluetooth simply ceasing didUpdateValueFor callbacks. Reconnect
+                        // handling is driven by the state flow / noteConnectionEnded, not here.
+                        // Rethrowing would fail the job and abort the process on Kotlin/Native
+                        // (no CoroutineExceptionHandler in the session scope).
+                        log("notify collector $uuid ended — link closed")
+                        break
                     } catch (t: Throwable) {
                         if (!isInsufficientAuthError(t)) throw t
                         reconnectPolicy.bondGiveUp.recordRefusal()
