@@ -90,6 +90,12 @@ enum class CommandNumber(val rawValue: Int) {
     // a.b.c.d. Older 4.0 firmware replies "unsupported" (0a03) and is ignored. Mirrors Swift
     // `WhoopCommand.getHello`.
     GET_HELLO(145),
+    // GET_ADVERTISING_NAME_HARVARD (76) — read the WHOOP 4.0's BLE advertising name from the strap
+    // firmware. Read-only twin of SET_ADVERTISING_NAME(77) below; sent once per connect in the
+    // WHOOP-faithful handshake (BLEManager.swift:3258) and by the Devices card refresh. Safe: a
+    // pure read, replied with a COMMAND_RESPONSE carrying the name string. Port of Swift
+    // `WhoopCommand.getAdvertisingNameHarvard` (Commands.swift:24).
+    GET_ADVERTISING_NAME(76),
     SEND_R10_R11_REALTIME(63),
     // WHOOP 5.0/MG (device family GOOSE/MAVERICK) one-shot buzz. Gen-4 straps use the legacy
     // RUN_HAPTICS_PATTERN(79) below; a 5/MG strap only honors this command.

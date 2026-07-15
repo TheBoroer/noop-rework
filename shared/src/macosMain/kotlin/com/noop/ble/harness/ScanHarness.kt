@@ -53,6 +53,22 @@ private fun printCentralState(seconds: Long) {
 
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 fun main(args: Array<String>) {
+    // One binary, one entrypoint (gradle pins com.noop.ble.harness.main): argv dispatch.
+    // `scan-harness.kexe session …` runs the Task 10 connect/session harness (SessionHarness.kt);
+    // everything else falls through to the Task 9 scan harness below. `scan` is accepted as an
+    // explicit alias for the default.
+    when (args.firstOrNull()) {
+        "session" -> {
+            runSessionHarness(args.drop(1).toTypedArray())
+            return
+        }
+        "scan" -> return mainScan(args.drop(1).toTypedArray())
+    }
+    mainScan(args)
+}
+
+@OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+private fun mainScan(args: Array<String>) {
     if (args.contains("--state")) {
         println("scan-harness: CBCentralManager state probe …")
         printCentralState(5)

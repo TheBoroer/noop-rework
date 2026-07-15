@@ -319,11 +319,13 @@ opcodes (reboot, firmware load, force-trim, ship-mode) are excluded throughout.
 - `Strand/BLE/BLEManager.swift` — delete connect/hello path at cutover
 
 **Steps:**
-- [ ] Connection lifecycle, GATT characteristic setup, reconnect policy; hello/version/clock
+- [x] Connection lifecycle, GATT characteristic setup, reconnect policy; hello/version/clock
   exchange via shared `Framing.kt` (already shared). Port BLEManager's reconnect
   backoff/queue semantics; keep behavior parity notes in KDoc with `#issue` refs.
-- [ ] **MANUAL GATE (hardware):** connect, hello/version/clock round-trip, reconnect after
-  out-of-range on a real strap.
+- [x] **MANUAL GATE (hardware):** connect, hello/version/clock round-trip, reconnect after
+  out-of-range on a real strap. Verified on Boro's WHOOP 4.0: full hello/version/clock
+  round-trip (`session` harness), walk-away disconnect → auto-reconnect gen=2 → handshake
+  re-sent → frames flowing (`session-walkaway` harness).
 
 **Commit:** `Phase 2c-2 Task 10: BleSession cutover (flow 2)`
 
