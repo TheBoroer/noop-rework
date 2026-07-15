@@ -393,20 +393,21 @@ RawOutboxCrossImplTests 2/2. **This task gates Task 13 — gate satisfied.**
 - Delete Swift `Strand/Collect/Backfiller.swift` + BLEManager backfill path at cutover
 
 **Steps:**
-- [ ] Port the full state machine including: `persistStalled` (#57) session-wide ack hold,
+- [x] Port the full state machine including: `persistStalled` (#57) session-wide ack hold,
   `trim == 0xFFFFFFFF` sentinel handling (#150/#783/#1), auto-continuation spin guard
   (#364, `lastTrimAdvanced`), rejected-frame archive hold, watchdog timeout (no ack on
   timeout). Rejected-frame archive: keep writing the same `rejected_history.jsonl`
   record shape (`{"capturedAtMs","trim","family","frameHex"}`) — Android side already
   shares it.
-- [ ] Ordering: decoded insert → rejected archive → outbox `enqueue` commit →
+- [x] Ordering: decoded insert → rejected archive → outbox `enqueue` commit →
   `setCursor("strap_trim")` → trim ack. All failure branches hold the ack.
-- [ ] `BackfillerAckOrderTest` (mock transport, commonTest): the Kotlin twin of Task 5 —
+- [x] `BackfillerAckOrderTest` (mock transport, commonTest): the Kotlin twin of Task 5 —
   no ack before outbox commit; failure branches (archive fail, enqueue fail, cursor
   fail) each hold the ack; stalled session never acks a later END.
 - [ ] **MANUAL GATE (hardware):** full historical offload on a real strap (ideally one
   holding v20/v21 data); verify decoded rows + trim advance across reconnects; Task 5's
-  Swift test retired with the Swift Backfiller.
+  Swift test retired with the Swift Backfiller. `BackfillHarness.kt` (`backfill` subcommand
+  on `scan-harness.kexe`) is built and links; the controller runs the actual gate.
 
 **Commit:** `Phase 2c-2 Task 13: Kotlin Backfiller cutover (flow 4)`
 
