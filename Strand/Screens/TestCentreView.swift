@@ -248,8 +248,7 @@ struct TestCentreView: View {
                 }
                 .toggleStyle(.switch).tint(StrandPalette.accent)
                 .onChangeCompat(of: continuousHrvEnabled) { on in
-                    model.ble.setKeepRealtimeForData(on)
-                    model.shim.setKeepRealtimeForData(on)  // T15c dual-drive; sole driver after T15d
+                    model.shim.setKeepRealtimeForData(on)
                 }
 
                 // 5/MG-only probes, hidden off a 4.0 strap (the #22 gate, same as SettingsView).
@@ -276,8 +275,7 @@ struct TestCentreView: View {
                     }
                     .toggleStyle(.switch).tint(StrandPalette.accent)
                     .onChangeCompat(of: broadcastHrEnabled) { on in
-                        model.ble.setBroadcastHr(on)
-                        model.shim.setBroadcastHr(on)  // T15c dual-drive; sole driver after T15d
+                        model.shim.setBroadcastHr(on)
                     }
 
                     Toggle(isOn: $puffinCapture) {
@@ -327,8 +325,7 @@ struct TestCentreView: View {
     }
 
     private func runScheduledExportNow() {
-        model.ble.flushPuffinCaptures()
-        model.shim.flushPuffinCaptures()  // T15c dual-drive
+        model.shim.flushPuffinCaptures()
         let url = ScheduledDebugExport.runNow(captureURL: live.puffinCaptureURL)
         if let url {
             infoTitle = String(localized: "Strap log exported")

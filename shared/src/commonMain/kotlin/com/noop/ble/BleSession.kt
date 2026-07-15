@@ -184,6 +184,8 @@ class BondRefusalGiveUp(
      * reconnect cycles to do it before we stop hammering.
      */
     val giveUpThreshold: Int = 5,
+    /** Clock seam for [pausedAtEpochSeconds], overridable in tests. */
+    private val nowUnixSeconds: () -> Long = { Clock.System.now().epochSeconds },
 ) {
     var refusals: Int = 0
         private set
@@ -196,6 +198,15 @@ class BondRefusalGiveUp(
         private set
 
     /**
+     * Epoch seconds [gaveUp] last flipped true, or was last re-stamped by [restampPause]. Null
+     * until the first give-up. Swift twin: `BLEManager.bondLoopPausedAt` (#78 hole-4). This is the
+     * timestamp the salvage-probe gate ([shouldSalvageProbe]) measures `secondsSincePauseTripped`
+     * against.
+     */
+    var pausedAtEpochSeconds: Long? = null
+        private set
+
+    /**
      * Record one bond refusal. Returns true if THIS refusal freshly crossed the give-up threshold
      * (so the caller pauses the reconnect + writes the epitaph exactly once).
      */
@@ -203,15 +214,27 @@ class BondRefusalGiveUp(
         refusals += 1
         if (!gaveUp && refusals >= giveUpThreshold) {
             gaveUp = true
+            pausedAtEpochSeconds = nowUnixSeconds()
             return true
         }
         return false
+    }
+
+    /**
+     * Re-stamp [pausedAtEpochSeconds] to now. Callers use this immediately BEFORE a salvage-probe
+     * connect attempt (#78 hole-4), so a probe that does not land a genuine bond still floors the
+     * next probe another [BOND_LOOP_SALVAGE_FLOOR_SECONDS] out, no matter how soon the app is next
+     * foregrounded. No-op while not [gaveUp] (nothing to re-stamp).
+     */
+    fun restampPause() {
+        if (gaveUp) pausedAtEpochSeconds = nowUnixSeconds()
     }
 
     /** Clear the streak: a genuine bond landed, or the user explicitly reconnected. */
     fun reset() {
         refusals = 0
         gaveUp = false
+        pausedAtEpochSeconds = null
     }
 
     companion object {

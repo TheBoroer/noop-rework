@@ -134,7 +134,7 @@ private struct SyncStatusSection: View {
     @EnvironmentObject var live: LiveState
     @EnvironmentObject var model: AppModel
 
-    /// The strap link is usable for a manual offload kick (matches BLEManager.syncNow's own gate).
+    /// The strap link is usable for a manual offload kick (matches WhoopBleShim.syncNow's own gate).
     private var canSync: Bool { live.connected && live.bonded && !live.backfilling }
 
     var body: some View {
@@ -149,12 +149,12 @@ private struct SyncStatusSection: View {
                     // Route the manual offload kick through the unified NOOP button system so the
                     // label sits centred at controlHeight like every other primary control. Reaches
                     // the BLE engine's gated entry point directly (same idiom as SettingsView's
-                    // `model.ble.enableWhoop5DeepData()`); BLEManager.syncNow() is the honest gate —
+                    // `model.shim.enableWhoop5DeepData()`); WhoopBleShim.syncNow() is the honest gate,
                     // a no-op when no strap is connected or a sync is already running.
                     NoopButton(live.backfilling ? "Syncing…" : "Sync now",
                                systemImage: "arrow.triangle.2.circlepath",
                                kind: .secondary, fullWidth: true) {
-                        model.ble.syncNow()
+                        model.shim.syncNow()
                     }
                     .disabled(!canSync)
                     .accessibilityLabel("Sync now")

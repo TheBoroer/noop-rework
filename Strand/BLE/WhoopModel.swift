@@ -1,5 +1,6 @@
 import CoreBluetooth
 import WhoopProtocol
+import Shared
 
 /// Which strap the user is pairing. The user pick remains the preferred scan target so we look for
 /// exactly one device family instead of guessing — a WHOOP 4.0 scan finds a WHOOP 4 fast — but a scan
@@ -25,7 +26,19 @@ public enum WhoopModel: String, CaseIterable, Identifiable, Hashable {
 
     /// The protocol-layer device family this model maps to — drives framing (CRC8 vs CRC16),
     /// characteristic UUIDs, and the CLIENT_HELLO handshake.
-    public var deviceFamily: DeviceFamily {
+    public var deviceFamily: WhoopProtocol.DeviceFamily {
+        switch self {
+        case .whoop4:   return .whoop4
+        case .whoop5mg: return .whoop5
+        }
+    }
+
+    /// T15c-3b: the Kotlin-side twin of `deviceFamily`, for shim calls that take `Shared.DeviceFamily`
+    /// directly (`WhoopBleShim.prepareForPresentScan`). Same two cases; the Swift-only WhoopProtocol
+    /// package can't name the Kotlin enum on every simulator slice it builds for (see
+    /// `WhoopProtocol/SharedBridge.swift`'s note on `DeviceFamily`), so this app-layer type, which
+    /// isn't slice-constrained the same way, does the one explicit switch instead of a bridge type.
+    public var kotlinDeviceFamily: Shared.DeviceFamily {
         switch self {
         case .whoop4:   return .whoop4
         case .whoop5mg: return .whoop5

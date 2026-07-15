@@ -49,12 +49,9 @@ final class AppModel: ObservableObject {
     let appleDeviceId = "apple-health"
     /// Observable snapshot driven by the BLE engine (connection, HR, battery, log).
     let live: LiveState
-    /// CoreBluetooth engine , scans, connects, bonds, streams.
-    let ble: BLEManager
-    /// T15c: the Kotlin-backed BLE engine (Kable `WhoopBleClient` behind the thin Swift shim,
-    /// feeding the SAME `LiveState`). Inert until a caller drives it — it never auto-scans or
-    /// auto-connects on its own — so it can safely coexist with `ble` while callers migrate;
-    /// `ble` is deleted in T15d.
+    /// T15c-3b: the Kotlin-backed BLE engine (Kable `WhoopBleClient` behind the thin Swift shim),
+    /// scans, connects, bonds, streams. Replaces the legacy CoreBluetooth `BLEManager`, which every
+    /// caller has now been rewired off (BLEManager.swift itself is deleted in T15d).
     let shim: WhoopBleShim
     /// Read model over the on-device store (dashboard + detail screens).
     let repo: Repository
@@ -214,10 +211,9 @@ final class AppModel: ObservableObject {
         // aren't open yet here, so the registry's active id can't be read synchronously; `bootstrapStore`
         // (write side) and `wireSourceCoordinator → adoptActiveDevice` (read spine, #814) re-point them to
         // the registry active id once the store opens. Single-device install keeps "my-whoop" throughout.
-        self.ble = BLEManager(state: live, deviceId: deviceId)
-        // T15c: Kotlin engine beside the legacy one. Initial experimental flags mirror what
-        // BLEManager reads from PuffinExperiment at its own call sites; the Settings toggles
-        // keep the LIVE channel in step via shim.setBroadcastHr / enableWhoop5DeepData.
+        // T15c-3b: initial experimental flags mirror what the legacy BLEManager used to read from
+        // PuffinExperiment at its own call sites; the Settings toggles keep the LIVE channel in step
+        // via shim.setBroadcastHr / enableWhoop5DeepData.
         self.shim = WhoopBleShim(
             state: live,
             client: WhoopBleClient(
@@ -303,8 +299,7 @@ final class AppModel: ObservableObject {
         // here (and at the init tail) covers a fresh launch and every reconnect. (See PuffinExperiment.)
         live.$bonded.removeDuplicates().sink { [weak self] _ in
             guard let self else { return }
-            self.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
-            self.shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)  // T15c dual-drive
+            self.shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
         }.store(in: &hrCancellables)
         // A completed backfill has just written strap history. Refresh the dashboard cache,
         // but leave heavyweight analysis to its own guarded/background-friendly path.
@@ -343,8 +338,7 @@ final class AppModel: ObservableObject {
         // Seed the BLE client with the persisted "Continuous HRV capture" intent so `wantsRealtime`
         // reflects it from launch , the reconciler then arms the dense stream as soon as the strap bonds
         // (and the bond sink above re-applies it on every reconnect).
-        ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
-        shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)  // T15c dual-drive
+        shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
 
         // Turn the strap's offloaded raw data into dashboard scores on launch and every 15
         // minutes, so recovery / strain / sleep populate from the strap itself with no import.
@@ -424,8 +418,8 @@ final class AppModel: ObservableObject {
     /// Tiny and guarded: with no generic strap paired the active id is "my-whoop", so the coordinator
     /// observes WHOOP-active and stays a NO-OP , the existing `scan()`/`disconnect()` WHOOP flow is
     /// untouched. The coordinator only acts if/when a non-WHOOP strap becomes the active device.
-    /// `startWhoop`/`stopWhoop` are thin closures over BLEManager's EXISTING public methods (via the
-    /// model's `scan()` / `disconnect()`), so the coordinator never references BLEManager directly.
+    /// `startWhoop`/`stopWhoop` are thin closures over the shim's EXISTING public surface (via the
+    /// model's `scan()` / `disconnect()`), so the coordinator never references the BLE shim directly.
     private func wireSourceCoordinator() async {
         guard sourceCoordinator == nil, let store = await repo.storeHandle() else { return }
         let registry = DeviceRegistry(store: DeviceRegistryStore(store: store))
@@ -436,17 +430,25 @@ final class AppModel: ObservableObject {
             storeHandle: { [weak self] in await self?.repo.storeHandle() },
             startWhoop: { [weak self] in self?.scan() },
             stopWhoop: { [weak self] in self?.disconnect() },
-            // WHOOP targeting hooks , thin wrappers over BLEManager's existing additive setters, so the
-            // coordinator never references BLEManager directly (mirrors the start/stop injection). On the
-            // single-WHOOP path these are setPreferredPeripheral(nil) and (no setActiveDeviceId call),
+            // WHOOP targeting hooks , thin wrappers over the shim's existing additive setters, so the
+            // coordinator never references the BLE shim directly (mirrors the start/stop injection). On
+            // the single-WHOOP path these are setPreferredPeripheral(nil) and (no setActiveDeviceId call),
             // i.e. the BLE engine's defaults , no behaviour change.
-            setWhoopPreferredPeripheral: { [weak self] uuid in self?.ble.setPreferredPeripheral(uuid) },
-            setWhoopActiveDeviceId: { [weak self] id in self?.ble.setActiveDeviceId(id) },
-            // The engine's last-connected WHOOP uuid drives first-connect identity adoption.
-            connectedPeripheralUUID: ble.$connectedPeripheralUUID.eraseToAnyPublisher(),
-            // Generic-HR connect lifecycle → the SAME strap log BLEManager writes to (`live.append(log:)`),
+            setWhoopPreferredPeripheral: { [weak self] uuid in self?.shim.setPreferredPeripheral(uuid) },
+            setWhoopActiveDeviceId: { [weak self] id in self?.shim.setActiveDeviceId(id) },
+            // The engine's last-connected WHOOP uuid drives first-connect identity adoption. The shim's
+            // `connect()` only resolves once the hello/SET_CLOCK handshake lands (WhoopBleShim.apply's
+            // doc comment), so reaching `.connected` already IS the legacy "genuine bond" milestone , no
+            // separate encrypted-bond gate is needed on this projection the way BLEManager needed one.
+            connectedPeripheralUUID: shim.$phase
+                .map { phase -> String? in
+                    if case let .connected(identifier, _) = phase { return identifier }
+                    return nil
+                }
+                .eraseToAnyPublisher(),
+            // Generic-HR connect lifecycle → the SAME strap log the shim writes to (`live.append(log:)`),
             // so a "connected but no data" report (issue #421) is no longer blind to the Polar/Wahoo/etc
-            // path. Timestamp matches BLEManager.log()'s "HH:mm:ss" so the lines read consistently.
+            // path. Timestamp matches the shim's "HH:mm:ss" log lines so they read consistently.
             straplog: { [weak self] line in
                 self?.live.append(log: "[\(AppModel.logTimeFormatter.string(from: Date()))] \(line)")
             })
@@ -811,48 +813,97 @@ final class AppModel: ObservableObject {
         let chosen = model
             ?? UserDefaults.standard.string(forKey: "selectedWhoopModel").flatMap(WhoopModel.init(rawValue:))
             ?? .whoop4
-        ble.connect(model: chosen)
+        connectToFamily(chosen)
     }
-    func disconnect() { ble.disconnect() }
+    func disconnect() { Task { await shim.disconnect() } }
+
+    /// Bridges the legacy family-based `BLEManager.connect(model:)` onto the shim's identifier-based
+    /// `connect(identifier:)` (T15c-3b deviation , flagged in the report: the Kotlin/Kable facade has
+    /// no CoreBluetooth-style "connect to whichever strap of this family shows up" call, so this closes
+    /// that gap here rather than growing the shim). Scans for the chosen family, waits for a matching
+    /// strap to resurface (the pinned identifier if one is set, else the first-of-family), then
+    /// connects , modelled directly on `WhoopBleShim+SalvageProbe.swift`'s `attemptOneSalvageConnect()`
+    /// (the Requirement 3 precedent for this exact scan-wait-connect shape).
+    private var connectTask: Task<Void, Never>?
+    private func connectToFamily(_ model: WhoopModel, timeout: TimeInterval = 10) {
+        connectTask?.cancel()
+        let wantWhoop5 = model.deviceFamily == .whoop5
+        connectTask = Task { [weak self] in
+            guard let self else { return }
+            self.shim.startScan(preferredIdentifier: self.shim.preferredIdentifier)
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline, !Task.isCancelled {
+                if let match = self.matchingDiscoveredWhoop(wantWhoop5: wantWhoop5) {
+                    self.shim.stopScan()
+                    try? await self.shim.connect(identifier: match.id)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            guard !Task.isCancelled else { return }
+            self.shim.stopScan()
+            self.live.append(log: "Scan: no \(wantWhoop5 ? "WHOOP 5/MG" : "WHOOP 4.0") strap found within \(Int(timeout))s.")
+        }
+    }
+
+    /// Straps currently discovered that belong to the given family (T15c-3b: the shim's `startScan`
+    /// always scans BOTH WHOOP families at once, unlike the legacy family-scoped `scanForWhoops`, so
+    /// callers that need one family filter here instead of at the scan itself).
+    private func discovered(forWhoop5 wantWhoop5: Bool) -> [WhoopBleShim.DiscoveredStrap] {
+        shim.discovered.filter { $0.isWhoop5 == wantWhoop5 }
+    }
+
+    /// First discovered strap of the wanted family, preferring the pinned identifier when it's among
+    /// the results (mirrors the legacy pinned-peripheral-reuse preference in `connectCore`).
+    private func matchingDiscoveredWhoop(wantWhoop5: Bool) -> WhoopBleShim.DiscoveredStrap? {
+        let candidates = discovered(forWhoop5: wantWhoop5)
+        if let pinned = shim.preferredIdentifier, let match = candidates.first(where: { $0.id == pinned }) {
+            return match
+        }
+        return candidates.first
+    }
 
     /// Drop the current strap and clear bond state so a newly-picked strap model connects fresh
     /// (lets a user with both a WHOOP 4 and a 5/MG switch between them).
-    func prepareStrapSwitch() { ble.prepareForModelSwitch() }
+    func prepareStrapSwitch() { Task { await shim.prepareForModelSwitch() } }
 
     // MARK: - Add-a-device wizard (WHOOP present-scan + register/activate)
     //
-    // Thin pass-throughs over BLEManager's EXISTING public present-scan surface so the wizard never
-    // references BLEManager directly (mirrors `scan()` / `disconnect()`). The wizard observes
-    // `ble.discoveredWhoops` for the WHOOP families and runs its own `StandardHRSource` for generic
-    // straps , see AddDeviceWizard.
+    // Thin pass-throughs over the shim's public present-scan surface so the wizard never references
+    // BLEManager (mirrors `scan()` / `disconnect()`). The wizard observes `shim.discovered` directly
+    // (filtered to the wanted family) for the WHOOP families and runs its own `StandardHRSource` for
+    // generic straps , see AddDeviceWizard.
 
-    /// The straps surfaced by the WHOOP present-scan (`scanForWhoops`), for the wizard's live list.
-    /// Empty until a present-scan has discovered something; refreshed in place as RSSI updates.
-    var discoveredWhoops: [(uuid: String, name: String, rssi: Int)] { ble.discoveredWhoops }
+    /// The straps surfaced by the WHOOP present-scan, filtered to the persisted family, for any
+    /// caller that wants the wizard's live list without observing the shim directly. Empty until a
+    /// present-scan has discovered something; refreshed in place as RSSI updates.
+    var discoveredWhoops: [(uuid: String, name: String, rssi: Int)] {
+        discovered(forWhoop5: WhoopModel.persisted.deviceFamily == .whoop5)
+            .map { (uuid: $0.id, name: $0.name, rssi: $0.rssi) }
+    }
 
-    /// True when the selected/connected strap is a WHOOP 5/MG. A thin window onto `BLEManager.isWhoop5`
-    /// (its `selectedModel` is private) so a view can branch on the strap generation without reaching into
-    /// the BLE layer. #864: the Smart-alarm card uses this to give a 5/MG owner the honest "saved but NOT
-    /// armed until Experimental is on" copy, instead of hardcoding WHOOP 4.0. Mirrors the Android
-    /// `LiveState.whoop5Detected` field the equivalent screen reads.
-    var whoop5Detected: Bool { ble.isWhoop5 }
+    /// True when the selected strap is a WHOOP 5/MG (the persisted pick , T15c-3b: the shim's `isWhoop5`
+    /// only exists while `.connected`, so this reads the sticky user selection instead, matching the
+    /// legacy field's "selected/connected" framing). #864: the Smart-alarm card uses this to give a
+    /// 5/MG owner the honest "saved but NOT armed until Experimental is on" copy, instead of hardcoding
+    /// WHOOP 4.0. Mirrors the Android `LiveState.whoop5Detected` field the equivalent screen reads.
+    var whoop5Detected: Bool { WhoopModel.persisted.deviceFamily == .whoop5 }
 
     /// Point the WHOOP scan at a specific family, then present nearby straps WITHOUT auto-connecting.
-    /// `prepareForModelSwitch()` first clears any sticky bond/connection so the engine is idle, then
-    /// `connect(model:)` selects the family + installs its framing (it sets the engine's private
-    /// `selectedModel`, which `scanForWhoops()` scans for), and the immediate `scanForWhoops()` takes
-    /// over the central in present-mode (it `stopScan()`s the connect's scan and re-arms a duplicate-
-    /// allowing present scan). The persisted `selectedWhoopModel` is updated too, so a later real
-    /// connect to the chosen strap targets the right family. All via existing public methods.
+    /// `prepareForPresentScan(family:)` idles for a family switch but keeps a live same-family bond
+    /// (#74), and `startScan()` takes over the central in present-mode. The persisted
+    /// `selectedWhoopModel` is updated too, so a later real connect to the chosen strap targets the
+    /// right family. All via existing shim public methods.
     func presentWhoopScan(model: WhoopModel) {
         UserDefaults.standard.set(model.rawValue, forKey: "selectedWhoopModel")
-        ble.prepareForPresentScan(model: model) // idle for a family switch, but KEEP a live same-family bond (#74)
-        ble.connect(model: model)             // select the family (sets engine selectedModel + framing)
-        ble.scanForWhoops()                   // take over the central, present nearby straps only
+        Task {
+            await shim.prepareForPresentScan(family: model.kotlinDeviceFamily)
+            shim.startScan()
+        }
     }
 
     /// End the WHOOP present-scan (idempotent). Call on leaving the wizard's pick step / on dismiss.
-    func stopWhoopScan() { ble.stopWhoopScan() }
+    func stopWhoopScan() { shim.stopScan() }
 
     /// Register a paired device and (optionally) make it the active one. The Add-a-device wizard's
     /// single write path: `add` upserts the row, and when `makeActive` is true `setActive` promotes it
@@ -936,12 +987,12 @@ final class AppModel: ObservableObject {
     /// A surface that shows live HR appeared. Arms the realtime stream on the 0→1 edge , and ONLY on
     /// that edge blanks the stale smoothing window (#46) so a resume shows "," until a fresh sample
     /// lands, never re-clearing an already-live window when a second concurrent HR surface opens. The
-    /// keep-alive re-arm goes through `ble.startRealtime()` directly, NOT here, so steady-state is
+    /// keep-alive re-arm goes through `shim.startRealtime()` directly, NOT here, so steady-state is
     /// untouched. Each surface must balance this with exactly one `stopRealtimeHR()` on disappear.
     func startRealtimeHR() {
         if realtimeWanters == 0 {
             resetSmoothing()
-            ble.startRealtime()
+            Task { try? await shim.startRealtime() }
         }
         realtimeWanters += 1
     }
@@ -950,28 +1001,27 @@ final class AppModel: ObservableObject {
     /// can't drive the count negative and wedge the stream off.
     func stopRealtimeHR() {
         realtimeWanters = max(0, realtimeWanters - 1)
-        if realtimeWanters == 0 { ble.stopRealtime() }
+        if realtimeWanters == 0 { Task { try? await shim.stopRealtime() } }
     }
 
     /// Re-issue the BLE realtime arm WITHOUT touching the ref-count , used when a fresh
-    /// connection/bond lands while a surface is already showing live HR (Apple's `ble.startRealtime()`
+    /// connection/bond lands while a surface is already showing live HR (Apple's `shim.startRealtime()`
     /// must be re-sent on a new connection). A no-op when nothing wants the stream, so a stray
     /// connection event can't arm it behind a closed Live tab. Mirrors that Android re-arms via its
     /// own keep-alive rather than re-calling `requestRealtimeHr` on reconnect.
     func rearmRealtimeIfWanted() {
         guard realtimeWanters > 0 else { return }
-        ble.startRealtime()
+        Task { try? await shim.startRealtime() }
     }
     /// Ask the strap for a fresh battery reading.
-    func getBattery() { ble.refreshBattery() }
+    func getBattery() { Task { try? await shim.refreshBattery() } }
 
     /// Fire a haptic buzz on the strap. patternId=2 is the graduated buzz confirmed on-device;
     /// `loops` sets the length. Used by scheduled cues (coach zones, moment marks, biofeedback).
     /// Requires a bonded connection , no-op otherwise (the command characteristic is gated on bond).
     /// For a user-facing "buzz the strap now" action use `buzzStrapOnce()` instead (#921).
     func buzz(loops: UInt8 = 2) {
-        ble.send(.runHapticsPattern, payload: [2, loops, 0, 0, 0])
-        shim.runHapticPattern(patternId: 2, loops: Int(loops))  // T15c dual-drive
+        shim.runHapticPattern(patternId: 2, loops: Int(loops))
     }
 
     /// One-shot user buzz (#921): the on-device-confirmed pattern (patternId=2, 3 loops) followed by
@@ -979,15 +1029,13 @@ final class AppModel: ObservableObject {
     /// (WHOOP 4.0 via the Siri shortcut) or dropped unacked on a busy link, so the Live "Buzz strap"
     /// button and the Buzz Strap App Intent both route through this single sequence.
     func buzzStrapOnce() {
-        ble.buzzStrapOnce()
-        Task { try? await shim.buzzStrapOnce() }  // T15c dual-drive
+        Task { try? await shim.buzzStrapOnce() }
     }
 
     /// Fire a specific preset haptic pattern (patternId 0–6 on Harvard; loops sets length).
     /// Used by the notification-pattern picker and coaching features.
     func buzz(pattern: UInt8, loops: UInt8 = 1) {
-        ble.send(.runHapticsPattern, payload: [pattern, loops, 0, 0, 0])
-        shim.runHapticPattern(patternId: Int(pattern), loops: Int(loops))  // T15c dual-drive
+        shim.runHapticPattern(patternId: Int(pattern), loops: Int(loops))
     }
 
     /// Tell the strap to STOP an in-progress haptic pattern (#769). The biofeedback layers (Breathe /
@@ -1004,8 +1052,7 @@ final class AppModel: ObservableObject {
     /// wedge, and we deliberately do not invent an unverified stop opcode. Safe to call always (no-op when
     /// unbonded or when the family doesn't accept it).
     func stopHaptics() {
-        ble.send(.stopHaptics, payload: [0x00])
-        shim.stopHaptics()  // T15c dual-drive
+        shim.stopHaptics()
     }
 
     // MARK: - Wrist-buzz mirror notifications (PR #577 , iOS only)
@@ -1168,7 +1215,7 @@ final class AppModel: ObservableObject {
     /// an OS-level wake. macOS keeps just the firmware alarm (the static helpers are no-ops there).
     func applySmartAlarm() {
         guard behavior.smartAlarmEnabled else {
-            ble.disableStrapAlarm()
+            Task { try? await shim.disableStrapAlarm() }
             Self.cancelSmartAlarmBackupNotification()
             return
         }
@@ -1176,11 +1223,11 @@ final class AppModel: ObservableObject {
                                                  weekdays: behavior.smartAlarmWeekdays) else {
             // No enabled weekday in the next week (only possible from a corrupted set) , disarm rather
             // than arm a misleading time the user never asked for.
-            ble.disableStrapAlarm()
+            Task { try? await shim.disableStrapAlarm() }
             Self.cancelSmartAlarmBackupNotification()
             return
         }
-        ble.armStrapAlarm(at: next)
+        Task { try? await shim.armStrapAlarm(at: next) }
         // Replace (remove + re-add by stable identifier) on every re-arm so the backup never stacks.
         // The log sink hops to the main actor because the auth check completes off-main and LiveState is
         // @MainActor - the same Task hop the importTraceSink uses.
@@ -1265,7 +1312,7 @@ final class AppModel: ObservableObject {
         case .buzzBack: buzz(loops: 1)
         case .markMoment: markMoment()
         case .sleepMark: markSleep()
-        case .hapticClock: ble.buzzTimeNow(is24h: Self.localeUses24HourClock)
+        case .hapticClock: shim.buzzTimeNow(is24h: Self.localeUses24HourClock)
         case .runShortcut: MacActions.runShortcut(shortcut)
         }
     }

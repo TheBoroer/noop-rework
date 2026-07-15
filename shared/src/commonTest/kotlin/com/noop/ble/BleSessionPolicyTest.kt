@@ -118,6 +118,56 @@ class BleSessionPolicyTest {
         assertFalse(BondRefusalGiveUp.pausedHint().contains("—"))
     }
 
+    @Test
+    fun bondGiveUp_pausedAtStampsOnFreshGiveUpAndRestampMovesItForward() {
+        var clock = 1_000_000L
+        val g = BondRefusalGiveUp(nowUnixSeconds = { clock })
+        repeat(4) { g.recordRefusal() }
+        assertEquals(null, g.pausedAtEpochSeconds) // not given up yet: no stamp
+        assertTrue(g.recordRefusal()) // 5th freshly crosses
+        assertEquals(1_000_000L, g.pausedAtEpochSeconds)
+
+        // Advance past the salvage floor: the gate would now fire for a foreground probe.
+        clock += BOND_LOOP_SALVAGE_FLOOR_SECONDS + 60
+        val secondsSince = clock - g.pausedAtEpochSeconds!!
+        assertTrue(
+            shouldSalvageProbe(
+                pausedForBondLoop = g.gaveUp, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = secondsSince,
+            ),
+        )
+
+        // Re-stamp BEFORE the connect attempt (mirrors the shim: pausedAt = now, then connect).
+        g.restampPause()
+        assertEquals(clock, g.pausedAtEpochSeconds)
+
+        // Immediately after the re-stamp, back-to-back foregrounds cannot chain another probe:
+        // the gate is blocked again until another full floor elapses.
+        val secondsSinceRestamp = clock - g.pausedAtEpochSeconds!!
+        assertFalse(
+            shouldSalvageProbe(
+                pausedForBondLoop = g.gaveUp, connected = false,
+                intentionalDisconnect = false, secondsSincePauseTripped = secondsSinceRestamp,
+            ),
+        )
+    }
+
+    @Test
+    fun bondGiveUp_restampIsNoOpUnlessGivenUp() {
+        val g = BondRefusalGiveUp(nowUnixSeconds = { 500L })
+        g.restampPause()
+        assertEquals(null, g.pausedAtEpochSeconds)
+    }
+
+    @Test
+    fun bondGiveUp_resetClearsPausedAt() {
+        val g = BondRefusalGiveUp(nowUnixSeconds = { 42L })
+        repeat(5) { g.recordRefusal() }
+        assertEquals(42L, g.pausedAtEpochSeconds)
+        g.reset()
+        assertEquals(null, g.pausedAtEpochSeconds)
+    }
+
     // ---- ReconnectPolicy facade ----------------------------------------------------------------
 
     @Test

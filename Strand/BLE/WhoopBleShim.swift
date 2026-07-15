@@ -95,11 +95,31 @@ public final class WhoopBleShim: ObservableObject {
     /// ended. A frozen cursor across sessions means "don't re-kick, it would spin forever".
     var lastSessionEndTrim: UInt32?
 
+    // MARK: Bond-loop salvage probe (T15c-3b, #78 hole-4; logic in WhoopBleShim+SalvageProbe.swift)
+    // Deliberately `internal`, not `private`, for the same file-scoping reason as the store-ownership
+    // fields above: the moved wiring lives in the +SalvageProbe extension file.
+
+    /// #78 hole-4 pause latch mirror of legacy `BLEManager.autoReconnectPausedForBondLoop`. Nothing
+    /// in production trips this yet: see the +SalvageProbe file doc comment for why (no persistent
+    /// Kotlin-side reconnect coordinator has been ported). `tripBondLoopPause` / `clearBondLoopPause`
+    /// are the hooks a future coordinator would call.
+    var pausedForBondLoop = false
+    /// Mirror of legacy `BLEManager.bondLoopPausedAt`: when the pause last tripped, or was last
+    /// re-stamped by a salvage probe. Nil until the first trip.
+    var bondLoopPausedAt: Date?
+    /// Mirror of legacy `BLEManager.intentionalDisconnect`: true only while the most recent
+    /// disconnect was user-initiated (forget device / model switch), so the salvage probe never
+    /// fires for a strap the user deliberately let go of. Reset at the top of every fresh connect.
+    var intentionalDisconnect = false
+    /// `internal`, not `private`: installed/removed from the +SalvageProbe extension file.
+    var foregroundSalvageObserver: NSObjectProtocol?
+
     public init(state: LiveState, client: WhoopBleClient, deviceId: String = "my-whoop") {
         self.state = state
         self.client = client
         self.deviceId = deviceId
         startPumps()
+        installForegroundSalvageProbe()
     }
 
     /// One pump per Kotlin flow. Each is a plain `for await`; SKIE ends the sequence when the
@@ -193,6 +213,9 @@ public final class WhoopBleShim: ObservableObject {
     public func stopScan() { client.stopScan() }
 
     public func connect(identifier: String) async throws {
+        // Legacy `connectCore` clears `intentionalDisconnect` at the top of every fresh connect
+        // attempt (BLEManager.swift:749): a new attempt is never itself intentional-disconnect.
+        intentionalDisconnect = false
         try await client.connect(identifier: identifier)
     }
 
@@ -286,6 +309,9 @@ public final class WhoopBleShim: ObservableObject {
         preferredIdentifier = identifier
     }
 
+    // `setActiveDeviceId(_:)` (WHOOP↔WHOOP active-strap switch) already lives in
+    // WhoopBleShim+Backfill.swift, next to the `deviceId`/`collector`/`backfiller` it re-points.
+
     /// Release a strap so it can enter pairing mode elsewhere (#78): drop targeting, stop scanning,
     /// and — when the removed strap is the live/connecting one — drop the link and the sticky bond
     /// flags. The legacy give-up/pause reset has no shim equivalent (bond pacing lives in Kotlin).
@@ -300,6 +326,7 @@ public final class WhoopBleShim: ObservableObject {
         if identifier == nil || preferredIdentifier == identifier { preferredIdentifier = nil }
         stopScan()
         if isCurrent {
+            intentionalDisconnect = true
             await disconnect()
             state.bonded = false
             state.encryptedBond = false
@@ -311,6 +338,7 @@ public final class WhoopBleShim: ObservableObject {
     /// User picked a different strap model: drop the link and clear the **sticky** bond state so the
     /// newly-picked model bonds fresh (the WHOOP-4→5 switch bug — `bonded` outliving its strap).
     public func prepareForModelSwitch() async {
+        intentionalDisconnect = true
         await disconnect()
         state.bonded = false
         state.encryptedBond = false
@@ -381,6 +409,10 @@ public final class WhoopBleShim: ObservableObject {
         Task { [collector] in await collector?.flush() }
         pumps.forEach { $0.cancel() }
         pumps.removeAll()
+        if let foregroundSalvageObserver {
+            NotificationCenter.default.removeObserver(foregroundSalvageObserver)
+            self.foregroundSalvageObserver = nil
+        }
         client.close()
     }
 }

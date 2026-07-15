@@ -8,17 +8,18 @@ import OuraProtocol
 // Different bands pair COMPLETELY differently, so this wizard asks the device TYPE first, then gives
 // type-specific prep guidance and runs the RIGHT scan/connect for that type:
 //
-//   • WHOOP 4.0 / WHOOP 5.0 (MG)  → BLEManager's present-scan (`scanForWhoops`), targeted at the
-//     chosen WHOOP family via `model.presentWhoopScan(model:)`. Lists nearby straps from
-//     `ble.discoveredWhoops` (a present-only mode that never auto-connects).
+//   • WHOOP 4.0 / WHOOP 5.0 (MG)  → the shim's present-scan (`WhoopBleShim.startScan`), targeted at
+//     the chosen WHOOP family via `model.presentWhoopScan(model:)`. Lists nearby straps from
+//     `shim.discovered` (a present-only mode that never auto-connects).
 //   • Heart-rate strap (Polar / Wahoo / Coospo / Garmin HRM / Amazfit Helio broadcast) → its OWN
 //     isolated `StandardHRSource` scanning the standard 0x180D HR service. Lists from `discovered`.
 //
 // Registration goes through `model.registerDevice(_:makeActive:)` → DeviceRegistry; the
 // SourceCoordinator reacts to the active-device change and connects. The wizard never touches
-// BLEManager directly — only the AppModel pass-throughs. WHOOP-FIRST: WHOOP is the primary band; the
-// type list shows it first and a footer reiterates it. Renders cleanly with nothing nearby (the type
-// picker, every prep step, and the searching/empty pick state all need no hardware).
+// BLEManager (retired, T15c-3b) directly, only the AppModel pass-throughs and the shim.
+// WHOOP-FIRST: WHOOP is the primary band; the type list shows it first and a footer reiterates it.
+// Renders cleanly with nothing nearby (the type picker, every prep step, and the searching/empty
+// pick state all need no hardware).
 
 struct AddDeviceWizard: View {
     @EnvironmentObject var model: AppModel
@@ -1030,9 +1031,11 @@ struct AddDeviceWizard: View {
     @ViewBuilder private var pickStep: some View {
         if let type {
             if type.isWhoop {
-                // Observe BLEManager directly so the list updates as `discoveredWhoops` grows. The
-                // subview holds the @ObservedObject; the wizard owns selection + scan lifecycle.
-                WhoopPickList(ble: model.ble) { strap in
+                // Observe the shim directly so the list updates as `discovered` grows (T15c-3b: a
+                // computed AppModel pass-through wouldn't re-publish on its own, see AppModel's
+                // `discoveredWhoops` doc comment). The subview holds the @ObservedObject; the wizard
+                // owns selection + scan lifecycle.
+                WhoopPickList(shim: model.shim) { strap in
                     pickedWhoop = strap
                     pickedStrap = nil
                     pickedMachine = nil
@@ -1474,19 +1477,26 @@ struct AddDeviceWizard: View {
     }
 }
 
-// MARK: - WHOOP pick list (observes BLEManager's present-scan)
+// MARK: - WHOOP pick list (observes the shim's present-scan)
 
-/// The WHOOP family pick step. Holds `@ObservedObject ble` so the list re-renders as the present-scan
-/// surfaces straps in `discoveredWhoops`. Pure UI — selection + scan lifecycle live in the wizard.
+/// The WHOOP family pick step. Holds `@ObservedObject shim` so the list re-renders as the present-scan
+/// surfaces straps in `discovered`. Filters to the wanted family and maps to the legacy tuple shape
+/// itself (mirrors `AppModel.discoveredWhoops`, but as a live Combine-observed property instead of a
+/// computed one, so SwiftUI actually re-renders when new straps show up). Pure UI: selection and scan
+/// lifecycle live in the wizard.
 private struct WhoopPickList: View {
-    @ObservedObject var ble: BLEManager
+    @ObservedObject var shim: WhoopBleShim
     let onSelect: ((uuid: String, name: String, rssi: Int)) -> Void
     let onRescan: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: NoopMetrics.gap) {
             ScanStatusBar(searching: true, onRescan: onRescan)
-            let found = ble.discoveredWhoops.sorted { $0.rssi > $1.rssi }
+            let wantWhoop5 = WhoopModel.persisted.deviceFamily == .whoop5
+            let found = shim.discovered
+                .filter { $0.isWhoop5 == wantWhoop5 }
+                .map { (uuid: $0.id, name: $0.name, rssi: $0.rssi) }
+                .sorted { $0.rssi > $1.rssi }
             if found.isEmpty {
                 SearchingCard(whoopHint: true)
             } else {

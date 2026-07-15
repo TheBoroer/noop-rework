@@ -76,7 +76,7 @@ struct LiveSessionView: View {
         .frame(minWidth: 480, minHeight: 640)
         #endif
         .onAppear {
-            runner.start(model: model, repo: repo, ble: model.ble, profile: profile)
+            runner.start(model: model, repo: repo, shim: model.shim, profile: profile)
         }
         // Left without ending (a dismissed sheet on macOS, a shell teardown): end cleanly so the
         // realtime-HR arm is balanced and the row's totals are banked. Guarded — a normal End already set

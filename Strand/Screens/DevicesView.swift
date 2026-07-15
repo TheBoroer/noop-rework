@@ -263,7 +263,7 @@ private struct DevicesContent: View {
         // #78: actually RELEASE the BLE link, not just archive the registry row — otherwise NOOP keeps
         // re-grabbing the strap (reconnect timer + targeted-connect pin + iOS state restoration), holding
         // it connected so it can never enter pairing mode to be re-paired.
-        model.ble.forgetDevice(device.peripheralId)
+        await model.shim.forgetDevice(device.peripheralId)
         await registry.archive(device.id)
         removeTarget = nil
         if wasActive {

@@ -65,7 +65,7 @@ final class LiveSessionRunner: ObservableObject {
     private var hrSink: AnyCancellable?
     private var model: AppModel?
     private var repo: Repository?
-    private var ble: BLEManager?
+    private var shim: WhoopBleShim?
 
     /// Out-of-band accrual, mirroring exactly how the engine accrues `inBandSeconds`: per-tick dt
     /// clamped to `maxAccrualDtSec` so one long stall can't inflate a bucket, nothing accrues while stale.
@@ -87,11 +87,11 @@ final class LiveSessionRunner: ObservableObject {
     /// the most recent night that recorded one; Charge may honestly be nil), arms the realtime HR
     /// stream (ref-counted in AppModel, balanced by `end()`), banks the in-progress row, and starts
     /// the 1 Hz tick. No-op if already running or already ended.
-    func start(model: AppModel, repo: Repository, ble: BLEManager, profile: ProfileStore) {
+    func start(model: AppModel, repo: Repository, shim: WhoopBleShim, profile: ProfileStore) {
         guard timer == nil, finalRow == nil else { return }
         self.model = model
         self.repo = repo
-        self.ble = ble
+        self.shim = shim
 
         // Resting HR: today's own, else the most recent banked night's. The engine needs *a* baseline
         // to place the band, so a never-slept-yet install gets a deliberately ordinary 60 — the band it
@@ -154,7 +154,7 @@ final class LiveSessionRunner: ObservableObject {
 
         engine = nil
         model = nil
-        ble = nil
+        shim = nil
         repo = nil
         return final
     }
@@ -206,7 +206,7 @@ final class LiveSessionRunner: ObservableObject {
     /// guard covers the push-after-ease edge.) Only a delivered cue is counted.
     private func fire(_ cue: LiveSessionEngine.Cue) {
         let nowDate = Date()
-        guard nowDate >= hapticWalkUntil, let ble else { return }
+        guard nowDate >= hapticWalkUntil, let shim else { return }
 
         let signal: LiveSessionHaptics.Signal = (cue == .pushNudge) ? .push : .easeOff
         let pulses = LiveSessionHaptics.pulses(for: signal)
@@ -215,8 +215,8 @@ final class LiveSessionRunner: ObservableObject {
         var offsetMs = 0
         for pulse in pulses {
             let loops = pulse.isLong ? 2 : 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(offsetMs)) { [weak ble] in
-                ble?.send(.runHapticsPattern, payload: [2, UInt8(clamping: loops), 0, 0, 0])
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(offsetMs)) { [weak shim] in
+                shim?.runHapticPattern(patternId: 2, loops: loops)
             }
             offsetMs += pulse.durationMs + pulse.gapMs
         }

@@ -853,8 +853,7 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
                 .tint(StrandPalette.accent)
                 .onChangeCompat(of: continuousHrvEnabled) { on in
-                    model.ble.setKeepRealtimeForData(on)
-                    model.shim.setKeepRealtimeForData(on)  // T15c dual-drive; sole driver after T15d
+                    model.shim.setKeepRealtimeForData(on)
                 }
                 Text("Keeps the detailed beat-to-beat heart-rate stream running all day and night, not just while a live screen is open, so NOOP captures much more for overnight HRV, recovery and sleep. Uses more battery: your strap streams heart rate continuously while connected.")
                     .font(StrandFont.caption)
@@ -873,8 +872,7 @@ struct SettingsView: View {
                     .toggleStyle(.switch)
                     .tint(StrandPalette.accent)
                     .onChangeCompat(of: continuousHrvOvernightOnly) { _ in
-                        model.ble.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
-                        model.shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)  // T15c dual-drive
+                        model.shim.setKeepRealtimeForData(PuffinExperiment.keepRealtimeForDataEnabled)
                     }
                     Text("Runs the continuous HRV stream only during your quiet hours window (22:00–07:00 by default), roughly halving the battery cost. Daytime Stress readings will be sparser. Note: continuous background HRV capture (including daytime naps) is paused outside this window. For on-demand daytime HRV readings (including naps), use the \"Take an HRV reading\" button on the Live screen.")
                         .font(StrandFont.caption)
@@ -957,7 +955,7 @@ struct SettingsView: View {
                     .disableAutocorrection(true)
                     .accessibilityLabel("New strap name")
                 NoopButton("Rename", systemImage: "pencil", kind: .primary) {
-                    model.ble.renameStrap(strapNameDraft)
+                    Task { try? await model.shim.renameStrap(strapNameDraft) }
                 }
                 .disabled(strapNameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -1282,8 +1280,7 @@ struct SettingsView: View {
 
                 if deepDataEnabled {
                     NoopButton("Send enable sequence to strap", systemImage: "bolt.badge.automatic", kind: .primary) {
-                        model.ble.enableWhoop5DeepData()
-                        model.shim.enableWhoop5DeepData()  // T15c dual-drive; sole driver after T15d
+                        model.shim.enableWhoop5DeepData()
                     }
                     .disabled(deepDataButtonDisabled)
                     Text(deepDataButtonReason)
@@ -1324,8 +1321,7 @@ struct SettingsView: View {
                 .toggleStyle(.switch)
                 .tint(StrandPalette.accent)
                 .onChangeCompat(of: broadcastHrEnabled) { on in
-                    model.ble.setBroadcastHr(on)
-                    model.shim.setBroadcastHr(on)  // T15c dual-drive; sole driver after T15d
+                    model.shim.setBroadcastHr(on)
                 }
                 Text("Makes your WHOOP 5.0/MG advertise its heart rate as a standard Bluetooth HR sensor, so a Garmin (Edge/watch), Zwift or gym equipment can use it during a workout. Applied on the next connection (and immediately if connected); writes the strap's whoop_live_hr_in_adv_ind_pkt flag. Reversible. iPhone-side only. A Mac can't write to a 5/MG.")
                     .font(StrandFont.caption)
@@ -1511,8 +1507,7 @@ struct SettingsView: View {
     /// "Run now": write an immediate timestamped strap-log drop (with the raw capture beside it, if a
     /// session has recorded one) and tell the user where it landed.
     private func runScheduledExportNow() {
-        model.ble.flushPuffinCaptures()
-        model.shim.flushPuffinCaptures()  // T15c dual-drive
+        model.shim.flushPuffinCaptures()
         let url = ScheduledDebugExport.runNow(captureURL: live.puffinCaptureURL)
         if let url {
             backupAlertTitle = String(localized: "Strap log exported")
@@ -1582,8 +1577,7 @@ struct SettingsView: View {
     /// Flush the in-flight capture, then copy it to a user-chosen location (save panel on macOS) or
     /// hand it to the system share sheet (iOS).
     private func exportPuffinCaptures() {
-        model.ble.flushPuffinCaptures()
-        model.shim.flushPuffinCaptures()  // T15c dual-drive
+        model.shim.flushPuffinCaptures()
         guard let src = live.puffinCaptureURL else { return }
         // Suggest a friendly, timestamped name so a reporter saving several captures gets sortable,
         // non-colliding files (#510) — e.g. noop-raw-capture-260617-1042.json.
@@ -1613,8 +1607,7 @@ struct SettingsView: View {
     /// export utilities — `FileExport.exportPair` shares both files in one iOS share sheet, and saves
     /// each via its own NSSavePanel on macOS (no new file plumbing).
     private func exportRawAndLog() {
-        model.ble.flushPuffinCaptures()
-        model.shim.flushPuffinCaptures()  // T15c dual-drive
+        model.shim.flushPuffinCaptures()
         guard let capture = live.puffinCaptureURL else {
             backupAlertTitle = String(localized: "Nothing to export")
             backupAlertMessage = String(localized: "No raw capture has been recorded yet this session.")
@@ -1630,8 +1623,7 @@ struct SettingsView: View {
     #if os(macOS)
     /// Flush, then reveal the capture file in Finder so the user can grab it directly.
     private func revealPuffinCaptures() {
-        model.ble.flushPuffinCaptures()
-        model.shim.flushPuffinCaptures()  // T15c dual-drive
+        model.shim.flushPuffinCaptures()
         guard let url = live.puffinCaptureURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
