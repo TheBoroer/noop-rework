@@ -39,6 +39,16 @@ kotlin {
         }
     }
 
+    // Phase 2c-2 Task 9 harness: a bare macOS executable that runs a live Kable scan from the
+    // terminal, so the WHOOP advertisement filter can be verified against real hardware without
+    // going through Xcode/iPhone. Manual-gate tooling only; not shipped in the XCFramework.
+    macosArm64 {
+        binaries.executable {
+            entryPoint = "com.noop.ble.harness.main"
+            baseName = "scan-harness"
+        }
+    }
+
     sourceSets {
         commonMain.dependencies {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
@@ -58,6 +68,10 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
             implementation("org.jetbrains.kotlinx:atomicfu:0.28.0")
             implementation("com.squareup.okio:okio:3.15.0")
+
+            // Phase 2c-2 Task 9: Kable — Kotlin multiplatform BLE (CoreBluetooth on Apple,
+            // android.bluetooth.le on Android). 0.37.1 is the newest stable on Maven Central.
+            implementation("com.juul.kable:kable-core:0.37.1")
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
