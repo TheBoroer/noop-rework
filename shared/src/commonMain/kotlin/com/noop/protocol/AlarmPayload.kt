@@ -79,4 +79,31 @@ object AlarmPayload {
 
     /** DISABLE_ALARM (cmd 69) REVISION_2 body `[0x02, 0xFF]` (the 5/MG form). */
     fun disableRev2(): ByteArray = byteArrayOf(0x02, 0xFF.toByte())
+
+    /**
+     * SET_ALARM_TIME (cmd 66) Rev1 body — the WHOOP 4.0 form, 9 bytes:
+     * `[0x01] + <epoch u32 LE> + [0x00,0x00] (subseconds) + [0x00,0x00] (haptic-mode)`.
+     *
+     * The two trailing zero bytes are REQUIRED: the earlier 7-byte form was ACKed but never
+     * buzzed (#428); @ujix's btsnoop capture of the official app on a real 4.0 (PR #535) shows
+     * 9 bytes, and that frame is confirmed to fire on-device. Callers must send SET_CLOCK first
+     * so the strap RTC is UTC-correct. Port of Swift WhoopCommand.setAlarmPayload
+     * (Commands.swift:120-146), byte layout pinned there by SetAlarmPayloadTests.
+     * [epochSec] is clamped to the u32 range rather than trapping (pre-1970 / post-2106 dates).
+     */
+    fun setAlarmRev1(epochSec: Long): ByteArray {
+        val clamped = epochSec.coerceIn(0L, 0xFFFFFFFFL)
+        return byteArrayOf(
+            0x01,
+            (clamped and 0xFF).toByte(),
+            ((clamped ushr 8) and 0xFF).toByte(),
+            ((clamped ushr 16) and 0xFF).toByte(),
+            ((clamped ushr 24) and 0xFF).toByte(),
+            0x00, 0x00, // subseconds (always 0 — minute precision)
+            0x00, 0x00, // haptic-mode field (from the official-app wire capture, #535)
+        )
+    }
+
+    /** RUN_ALARM (cmd 68) REVISION_2 body `[0x02, alarmId]` (the 5/MG form; BLEManager.swift:2515). */
+    fun runAlarmRev2(alarmId: Int = 1): ByteArray = byteArrayOf(0x02, alarmId.toByte())
 }

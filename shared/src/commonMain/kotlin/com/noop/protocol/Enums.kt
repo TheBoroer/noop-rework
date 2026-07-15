@@ -122,6 +122,20 @@ enum class CommandNumber(val rawValue: Int) {
     SET_DEVICE_CONFIG(119),
     START_RAW_DATA(81),
     STOP_RAW_DATA(82),
+    // High-frequency-sync window around a historical offload (WHOOP 4.0). Verified on a real strap
+    // that plain SEND_HISTORICAL_DATA serves without it (BleSession doc), but the official app
+    // brackets offloads with 96/97, so the safe table carries both. Port of Swift
+    // WhoopCommand.enterHighFreqSync / exitHighFreqSync (Commands.swift:34-38).
+    ENTER_HIGH_FREQ_SYNC(96),
+    EXIT_HIGH_FREQ_SYNC(97),
+    // Extended battery/charger telemetry read (COMMAND_RESPONSE). A pure read, safe.
+    // Port of Swift WhoopCommand.getExtendedBatteryInfo (Commands.swift:39).
+    GET_EXTENDED_BATTERY_INFO(98),
+    // IMU / optical stream toggles used by the raw-data capture tooling. Reversible mode
+    // switches, not destructive. Ports of Swift WhoopCommand.toggleIMUMode / enableOpticalData
+    // (Commands.swift:40-41).
+    TOGGLE_IMU_MODE(106),
+    ENABLE_OPTICAL_DATA(107),
     STOP_HAPTICS(122),
     SELECT_WRIST(123);
 

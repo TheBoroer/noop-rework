@@ -428,11 +428,16 @@ RawOutboxCrossImplTests 2/2. **This task gates Task 13 — gate satisfied.**
 - Delete BLEManager command path at cutover
 
 **Steps:**
-- [ ] Port the `Commands.swift` opcode table (alarms, haptics, config, battery), reusing
+- [x] Port the `Commands.swift` opcode table (alarms, haptics, config, battery), reusing
   `protocol/Enums.kt` where opcodes already exist. **Destructive opcodes excluded** —
   carry over the exclusion doc from `Commands.swift` verbatim.
-- [ ] Encode/decode unit tests against known-good byte fixtures from Swift.
-- [ ] **MANUAL GATE (hardware):** set/clear alarm, trigger haptic, read battery/config on a real strap.
+- [x] Encode/decode unit tests against known-good byte fixtures from Swift.
+- [x] **MANUAL GATE (hardware):** set/clear alarm, trigger haptic, read battery/config on a real strap.
+  Passed on WHOOP 4.0 (`fw_harvard=41.8.0.29`): `GET_BATTERY_LEVEL(26)` → 52.5%,
+  `RUN_HAPTICS_PATTERN`+`RUN_ALARM` buzz physically confirmed, `SET_ALARM_TIME` armed +
+  `GET_ALARM_TIME(67)` readback + `DISABLE_ALARM(69)` cleanup. Harness:
+  `scan-harness.kexe command [--whoop4|--whoop5] [--skip-buzz] [--alarm-minutes N] [--wait-fire] [--keep-alarm] [--rename NAME]`
+  (`shared/src/macosMain/kotlin/com/noop/ble/harness/CommandHarness.kt`).
 
 **Commit:** `Phase 2c-2 Task 14: CommandChannel cutover (flow 5)`
 

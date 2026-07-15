@@ -57,7 +57,8 @@ fun main(args: Array<String>) {
     // `scan-harness.kexe session …` runs the Task 10 connect/session harness (SessionHarness.kt);
     // `scan-harness.kexe realtime …` runs the Task 11 realtime-streams harness (RealtimeHarness.kt);
     // `scan-harness.kexe backfill …` runs the Task 13 historical-offload harness
-    // (BackfillHarness.kt); everything else falls through to the Task 9 scan harness below. `scan`
+    // (BackfillHarness.kt); `scan-harness.kexe command …` runs the Task 14 flow-5 command harness
+    // (CommandHarness.kt); everything else falls through to the Task 9 scan harness below. `scan`
     // is accepted as an explicit alias for the default.
     when (args.firstOrNull()) {
         "session" -> {
@@ -70,6 +71,10 @@ fun main(args: Array<String>) {
         }
         "backfill" -> {
             runBackfillHarness(args.drop(1).toTypedArray())
+            return
+        }
+        "command" -> {
+            runCommandHarness(args.drop(1).toTypedArray())
             return
         }
         "scan" -> return mainScan(args.drop(1).toTypedArray())
