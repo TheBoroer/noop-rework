@@ -214,6 +214,33 @@ object CommandPlanner {
     )
 
     /**
+     * The backfill kick (BLEManager.beginBackfill, 1519-1533): SEND_HISTORICAL_DATA with the
+     * `[0x00]` payload, `.withResponse`. Payload MUST be `[0x00]`, NOT empty — verified on-device
+     * that the strap serves type-47 only with `[0x00]` (empty → 0 frames on a clean stable link
+     * with ~2k records pending); the Mac ground-truth offload (re/sync_openwhoop.py) uses `[0x00]`
+     * too. The connect-handshake / store-ready / family guards stay with the caller (the shim),
+     * exactly like the legacy method.
+     */
+    fun planSendHistorical(): PlannedSend = PlannedSend(
+        CommandNumber.SEND_HISTORICAL_DATA,
+        byteArrayOf(0x00),
+        withResponse = true,
+    )
+
+    /**
+     * Ack one HISTORY_END chunk so the strap may trim it (BLEManager.ackHistoricalChunk,
+     * 1471-1477): HISTORICAL_DATA_RESULT with `[0x01] + endData`, `.withResponse`, where
+     * [endData] is the verbatim 8 bytes of HISTORY_END metadata (trim u32 + next u32) produced
+     * by [Backfiller.endData] — family offset handling lives there, not here. Callers fall back
+     * to 8 zero bytes when the frame was too short, matching legacy.
+     */
+    fun planHistoricalAck(endData: ByteArray): PlannedSend = PlannedSend(
+        CommandNumber.HISTORICAL_DATA_RESULT,
+        byteArrayOf(0x01) + endData,
+        withResponse = true,
+    )
+
+    /**
      * The Broadcast-HR device-config write (BLEManager.setBroadcastHr, 2106-2118, #181):
      * SET_DEVICE_CONFIG carrying `whoop_live_hr_in_adv_ind_pkt` = ASCII '1'/'0', with the b3
      * byte 0x01 ahead of the 33-byte body, `.withResponse`. The family/connect/bond guards (and

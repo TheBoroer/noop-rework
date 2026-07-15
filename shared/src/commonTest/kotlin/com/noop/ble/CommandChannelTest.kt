@@ -309,6 +309,33 @@ class CommandChannelTest {
         assertFalse(CommandPlanner.whoop5Allows(CommandNumber.STOP_HAPTICS))
     }
 
+    // ---- historical offload kick / ack (T15c-2: shim-owned backfill) ---------------------------
+
+    @Test
+    fun planSendHistorical_matchesLegacyKick_andAllowedOnWhoop5() {
+        // BLEManager.beginBackfill (1519-1533): SEND_HISTORICAL_DATA, payload MUST be [0x00]
+        // (NOT empty — on-device verified), .withResponse. The legacy 5/MG allowlist carried it.
+        val send = CommandPlanner.planSendHistorical()
+        assertEquals(CommandNumber.SEND_HISTORICAL_DATA, send.cmd)
+        assertContentEquals(byteArrayOf(0x00), send.payload)
+        assertTrue(send.withResponse)
+        assertTrue(CommandPlanner.whoop5Allows(CommandNumber.SEND_HISTORICAL_DATA))
+    }
+
+    @Test
+    fun planHistoricalAck_isMarkerPlusVerbatimEndData_acked() {
+        // BLEManager.ackHistoricalChunk (1471-1477): HISTORICAL_DATA_RESULT, [0x01] + the verbatim
+        // 8 HISTORY_END bytes, .withResponse. Byte extraction (family offset 17/21) is
+        // Backfiller.endData's job — the planner must pass endData through untouched.
+        val endData = byteArrayOf(0x2A, 0x00, 0x00, 0x00, 0x3B, 0x00, 0x00, 0x00)
+        val send = CommandPlanner.planHistoricalAck(endData)
+        assertEquals(CommandNumber.HISTORICAL_DATA_RESULT, send.cmd)
+        assertContentEquals(byteArrayOf(0x01) + endData, send.payload)
+        assertEquals(9, send.payload.size, "marker byte + 8 endData bytes")
+        assertTrue(send.withResponse)
+        assertTrue(CommandPlanner.whoop5Allows(CommandNumber.HISTORICAL_DATA_RESULT))
+    }
+
     // ---- broadcast HR / deep data (T15c: Settings experimental sends) --------------------------
 
     @Test

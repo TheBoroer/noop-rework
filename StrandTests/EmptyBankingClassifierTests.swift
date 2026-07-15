@@ -1,7 +1,7 @@
 import XCTest
 @testable import Strand
 
-/// Pins `BLEManager.classifyCompletedOffload` — the pure classification exitBackfilling runs on a
+/// Pins `BackfillHeuristics.classifyCompletedOffload` — the pure classification exitBackfilling runs on a
 /// COMPLETED (HISTORY_COMPLETE) offload. The #214 fix is the `rowsPersisted == 0` arm: before it, the
 /// empty-banking signal had ONE shape (console-only across ≥3 diagnostic chunks), so a NEAR-EMPTY
 /// metadata-only completion (zero rows persisted, fewer than 3 console frames) slipped through to the
@@ -12,7 +12,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
 
     // A normal banking cycle (decoded chunks) → banked records, not "nothing".
     func testDecodedChunksAreBanking() {
-        let r = BLEManager.classifyCompletedOffload(
+        let r = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 5, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 120)
         XCTAssertTrue(r.bankedSensorRecords)
         XCTAssertFalse(r.bankedNothing)
@@ -20,7 +20,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
 
     // Undecodable-but-archived records still prove the clock is banking to flash.
     func testArchivedFramesAreBanking() {
-        let r = BLEManager.classifyCompletedOffload(
+        let r = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 0, archivedFrames: 8, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 0)
         XCTAssertTrue(r.bankedSensorRecords)
         XCTAssertFalse(r.bankedNothing, "archived frames mean the strap handed over real records")
@@ -28,7 +28,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
 
     // The ORIGINAL #77 shape: console-only across ≥3 diagnostic chunks ⇒ banked nothing.
     func testConsoleOnlyAcrossManyChunksIsBankedNothing() {
-        let r = BLEManager.classifyCompletedOffload(
+        let r = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 0, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 4, rowsPersisted: 0)
         XCTAssertFalse(r.bankedSensorRecords)
         XCTAssertTrue(r.bankedNothing)
@@ -37,7 +37,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
     // The #214 REGRESSION CASE: metadata-only completion — zero rows persisted, FEWER than 3 console
     // frames. Before the broadening this was classified as "banked nothing = false" and stayed silent.
     func testMetadataOnlyZeroRowsIsBankedNothing() {
-        let r = BLEManager.classifyCompletedOffload(
+        let r = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 0, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 0)
         XCTAssertFalse(r.bankedSensorRecords)
         XCTAssertTrue(r.bankedNothing, "#214: a metadata-only completion that persisted 0 rows banks nothing")
@@ -45,7 +45,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
 
     // A near-empty completion with one or two console frames (still < 3) but zero rows → banked nothing.
     func testFewConsoleFramesZeroRowsIsBankedNothing() {
-        let r = BLEManager.classifyCompletedOffload(
+        let r = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 0, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 2, rowsPersisted: 0)
         XCTAssertTrue(r.bankedNothing, "#214: < 3 console frames no longer hides a zero-row completion")
     }
@@ -53,7 +53,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
     // A cycle that persisted rows but happened to decode nothing this pass (rows landed via archive/earlier
     // pass) is NOT "banked nothing" — rowsPersisted > 0 keeps it banking.
     func testRowsPersistedIsNotBankedNothing() {
-        let r = BLEManager.classifyCompletedOffload(
+        let r = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 0, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 40)
         XCTAssertFalse(r.bankedNothing, "rows were persisted — the strap is banking")
     }
@@ -63,7 +63,7 @@ final class EmptyBankingClassifierTests: XCTestCase {
     func testMetadataOnlyTripsBannerOnlyWhenSustained() {
         var tracker = EmptySyncTracker()   // default threshold 3
         func classifyMetadataOnly() -> (Bool, Bool) {
-            let c = BLEManager.classifyCompletedOffload(
+            let c = BackfillHeuristics.classifyCompletedOffload(
                 decodedChunks: 0, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 0)
             return (c.bankedSensorRecords, c.bankedNothing)
         }
@@ -80,9 +80,9 @@ final class EmptyBankingClassifierTests: XCTestCase {
     // that's genuinely caught up after banking earlier.
     func testBankingCycleResetsTheMetadataOnlyStreak() {
         var tracker = EmptySyncTracker()
-        let empty = BLEManager.classifyCompletedOffload(
+        let empty = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 0, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 0)
-        let banking = BLEManager.classifyCompletedOffload(
+        let banking = BackfillHeuristics.classifyCompletedOffload(
             decodedChunks: 3, archivedFrames: 0, unarchivedFrames: 0, consoleChunks: 0, rowsPersisted: 90)
         XCTAssertFalse(tracker.recordCompletedSync(bankedSensorRecords: empty.bankedSensorRecords, consoleOnly: empty.bankedNothing))
         XCTAssertFalse(tracker.recordCompletedSync(bankedSensorRecords: empty.bankedSensorRecords, consoleOnly: empty.bankedNothing))

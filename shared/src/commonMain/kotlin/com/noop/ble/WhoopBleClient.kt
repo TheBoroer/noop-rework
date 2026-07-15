@@ -277,6 +277,22 @@ class WhoopBleClient(
     suspend fun setBroadcastHr(on: Boolean) =
         sendCommands(listOf(CommandPlanner.planBroadcastHr(on)))
 
+    /**
+     * Kick a historical offload (legacy `BLEManager.beginBackfill` send, T15c-2). The
+     * handshake/store/family guards, watchdog, and session-state resets stay with the Swift
+     * shim, which owns the [Backfiller] lifecycle; this is just the on-air write.
+     */
+    suspend fun sendHistoricalKick() =
+        sendCommands(listOf(CommandPlanner.planSendHistorical()))
+
+    /**
+     * Ack one HISTORY_END chunk (legacy `BLEManager.ackHistoricalChunk`, T15c-2). [endData] is
+     * the verbatim 8 HISTORY_END metadata bytes the Swift Backfiller's ackTrim callback carries;
+     * the persist-before-ack ordering is the Backfiller's invariant, not enforced here.
+     */
+    suspend fun ackHistoricalChunk(endData: ByteArray) =
+        sendCommands(listOf(CommandPlanner.planHistoricalAck(endData)))
+
     // ---- Escape hatch --------------------------------------------------------------------
 
     /**

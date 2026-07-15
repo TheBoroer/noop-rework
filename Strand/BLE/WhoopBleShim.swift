@@ -49,15 +49,56 @@ public final class WhoopBleShim: ObservableObject {
     // MARK: Wiring
 
     public let state: LiveState
-    private let client: WhoopBleClient
+    /// Kotlin facade. `internal` (not `private`): the +Backfill extension file drives the
+    /// SEND_HISTORICAL kick + HISTORY_END acks through it (Swift `private` is file-scoped).
+    let client: WhoopBleClient
     private var pumps: [Task<Void, Never>] = []
     /// Opt-in WHOOP 5/MG raw-frame capture (legacy `BLEManager.puffinRecorder`), fed by the
     /// frame pump off `SessionFrame.raw`.
     private lazy var puffinRecorder = PuffinFrameRecorder(state: state)
 
-    public init(state: LiveState, client: WhoopBleClient) {
+    // MARK: Store ownership (T15c-2 — moved from BLEManager; see WhoopBleShim+Backfill.swift)
+    // Deliberately `internal`, not `private`: Swift `private` is file-scoped and the moved
+    // machinery lives in the +Backfill extension file. Nothing outside Strand/BLE touches these.
+
+    /// Device id new samples persist under ("my-whoop" until `bootstrapStore` reads the registry;
+    /// re-pointed by `setActiveDeviceId` on a WHOOP↔WHOOP switch, exactly as the legacy engine).
+    public internal(set) var deviceId: String
+    /// Store-layer pair (Strand/Collect), built once by `bootstrapStore()`. `collector == nil`
+    /// doubles as the "not bootstrapped yet" gate, mirroring `BLEManager.bootstrapStore`.
+    var collector: Collector?
+    var backfiller: Backfiller?
+    /// Durable JSONL archive for undecodable record frames (#152 retro-decode corpus).
+    let rejectedHistoryArchive = RawHistoryArchive()
+    /// Backfill session flags/queue — 1:1 with the legacy manager's fields.
+    var backfilling = false
+    var backfillFrameQueue: [[UInt8]] = []
+    var backfillDraining = false
+    var backfillTimeout: DispatchWorkItem?
+    /// 15-min periodic offload cadence (legacy `backfillTimer`): armed on connect, torn down on
+    /// disconnect/close. The Kotlin connect already ran the hello/SET_CLOCK handshake, so the
+    /// connected phase is the legacy "bonded" precondition.
+    var backfillTimer: DispatchSourceTimer?
+    /// Serialises HISTORY_END acks so they reach the strap in chunk order even though each ack is
+    /// an independent async client write (legacy CoreBluetooth writes were inherently ordered).
+    var ackChain: Task<Void, Never>?
+    /// Auto-continue budget: a WHOOP with a deep backlog banks more than one offload per sync;
+    /// legacy capped chained re-kicks at 6 per connection to bound a decode-loop regression.
+    var consecutiveAutoContinues = 0
+    /// WHOOP 5/MG straps ack a SEND_HISTORICAL kick even when the bank is empty; this tracker
+    /// separates "empty because caught up" from "empty because refusing" (legacy #126 semantics).
+    var whoop5EmptyOffload = Whoop5EmptyOffloadTracker()
+    /// Sustained-empty classifier (#126): escalates the "charge to 100%" banner only once
+    /// emptiness repeats — a single empty cycle on an otherwise-banking strap stays silent.
+    var emptySyncTracker = EmptySyncTracker()
+    /// #364 spin-detector memory: the Backfiller's high-water trim when the previous session
+    /// ended. A frozen cursor across sessions means "don't re-kick, it would spin forever".
+    var lastSessionEndTrim: UInt32?
+
+    public init(state: LiveState, client: WhoopBleClient, deviceId: String = "my-whoop") {
         self.state = state
         self.client = client
+        self.deviceId = deviceId
         startPumps()
     }
 
@@ -97,6 +138,14 @@ public final class WhoopBleShim: ObservableObject {
                     self.puffinRecorder.capture(frame: frame.raw.toUInt8Array(),
                                                 charUuid: frame.characteristicUuid)
                 }
+                // T15c-2: HISTORICAL_DATA frames are queued for the Backfiller (store side)
+                // before the generic hook — same precedence the legacy manager had, where
+                // backfill consumption never depended on an observer being attached. Pre-gated
+                // on `backfilling` so the KotlinByteArray→[UInt8] copy never runs on the live
+                // flood outside an offload session.
+                if self.backfilling {
+                    self.routeBackfillFrame(frame.raw.toUInt8Array())
+                }
                 self.onFrame?(frame)
             }
         })
@@ -109,12 +158,24 @@ public final class WhoopBleShim: ObservableObject {
         case let c as WhoopBleClient.ConnectionStateConnected:
             phase = .connected(identifier: c.identifier, isWhoop5: c.family == .whoop5)
             state.connected = true
+            // Kotlin's connect() returns only after the hello/SET_CLOCK handshake succeeded,
+            // so reaching .connected IS the legacy "bonded" milestone. Deliberately sticky
+            // across disconnects (cleared by removeDevice/prepareForModelSwitch only, #78).
+            state.bonded = true
             state.append(log: "ble: connected \(c.identifier)")
+            // T15c-2: store + backfill ownership (WhoopBleShim+Backfill.swift). Kotlin's
+            // connect already ran the hello/SET_CLOCK handshake, so "connected" here IS the
+            // legacy "bonded" precondition: build the store pair on first use, arm the 15-min
+            // offload cadence, and kick one immediate sync (legacy `didBond` behaviour).
+            bootstrapStoreIfNeeded()
+            armBackfillTimer()
+            syncNow()
         case let c as WhoopBleClient.ConnectionStateDisconnected:
             phase = .disconnected(reason: c.reason)
             state.connected = false
             state.streamingLiveHR = false
             state.append(log: "ble: disconnected\(c.reason.map { " (\($0))" } ?? "")")
+            teardownBackfill(reason: "disconnect")
         default:
             break // sealed in Kotlin; unreachable unless the shared enum grows a case
         }
@@ -150,7 +211,7 @@ public final class WhoopBleShim: ObservableObject {
 
     /// Family of the currently connected strap, or nil when disconnected. Plan builders are
     /// family-specific (WHOOP 4 vs 5 opcodes differ), so every command wrapper gates on this.
-    private var connectedFamily: Shared.DeviceFamily? {
+    var connectedFamily: Shared.DeviceFamily? {
         if case let .connected(_, isWhoop5) = phase { return isWhoop5 ? .whoop5 : .whoop4 }
         return nil
     }
@@ -316,6 +377,8 @@ public final class WhoopBleShim: ObservableObject {
 
     /// Tear down flow pumps and the Kotlin client scope. Idempotent.
     public func close() {
+        teardownBackfill(reason: "close")
+        Task { [collector] in await collector?.flush() }
         pumps.forEach { $0.cancel() }
         pumps.removeAll()
         client.close()
