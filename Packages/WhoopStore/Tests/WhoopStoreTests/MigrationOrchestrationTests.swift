@@ -1,5 +1,4 @@
 import XCTest
-import GRDB
 import Shared
 @testable import WhoopStore
 
@@ -49,12 +48,9 @@ final class MigrationOrchestrationTests: XCTestCase {
     }
 
     /// Row count of `table` in the plain SQLite file at `path` (Room's own file is a standard
-    /// SQLite database, so a fresh read-only GRDB queue can query it without going through Room).
+    /// SQLite database, so a raw SQLite read can query it without going through Room).
     private func rowCount(atPath path: String, table: String) throws -> Int {
-        let queue = try DatabaseQueue(path: path)
-        return try queue.read { db in
-            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM `\(table)`") ?? -1
-        }
+        try TestSQLite.queryInt(atPath: path, "SELECT COUNT(*) FROM `\(table)`") ?? -1
     }
 
     /// `WhoopStore`'s completion-sentinel filename convention (`noop.db.migrated`, private inside
@@ -140,14 +136,10 @@ final class MigrationOrchestrationTests: XCTestCase {
             return XCTFail("precondition: the direct ETL must succeed, got \(first)")
         }
         // Plant a sentinel row that only a re-ETL's truncate-then-copy would wipe.
-        do {
-            let roomQueue = try DatabaseQueue(path: roomPath)
-            try await roomQueue.write { db in
-                try db.execute(
-                    sql: "INSERT INTO device (id, mac, name, firstSeen, lastSeen) VALUES (?, ?, ?, ?, ?)",
-                    arguments: ["sentinel-no-reetl", nil, "sentinel", 0, 0])
-            }
-        }
+        try TestSQLite.exec(atPath: roomPath, """
+            INSERT INTO device (id, mac, name, firstSeen, lastSeen)
+            VALUES ('sentinel-no-reetl', NULL, 'sentinel', 0, 0)
+            """)
         // Fix 1: the both-present branch now ALSO requires the completion sentinel (not just the
         // Room file existing) before it will skip a re-ETL; plant it to keep this test's original
         // "prior launch already finished the cutover" precondition true.
@@ -157,10 +149,8 @@ final class MigrationOrchestrationTests: XCTestCase {
 
         XCTAssertEqual(store.storageBackend, .room)
         XCTAssertNil(store.migrationProgress, "both files present (with the sentinel) must not trigger a re-ETL")
-        let queue = try DatabaseQueue(path: roomPath)
-        let stillThere = try await queue.read { db in
-            try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM device WHERE id = 'sentinel-no-reetl')") ?? false
-        }
+        let stillThere = try TestSQLite.queryInt(atPath: roomPath,
+            "SELECT EXISTS(SELECT 1 FROM device WHERE id = 'sentinel-no-reetl')") == 1
         XCTAssertTrue(stillThere, "a re-ETL would have truncated device and wiped the sentinel row")
     }
 
@@ -185,14 +175,10 @@ final class MigrationOrchestrationTests: XCTestCase {
             return XCTFail("precondition: the direct ETL must succeed, got \(direct)")
         }
         // A bogus row the crash-recovery re-ETL's truncate-then-copy must wipe.
-        do {
-            let roomQueue = try DatabaseQueue(path: roomPath)
-            try await roomQueue.write { db in
-                try db.execute(
-                    sql: "INSERT INTO device (id, mac, name, firstSeen, lastSeen) VALUES (?, ?, ?, ?, ?)",
-                    arguments: ["bogus-partial-etl", nil, "bogus", 0, 0])
-            }
-        }
+        try TestSQLite.exec(atPath: roomPath, """
+            INSERT INTO device (id, mac, name, firstSeen, lastSeen)
+            VALUES ('bogus-partial-etl', NULL, 'bogus', 0, 0)
+            """)
         XCTAssertFalse(FileManager.default.fileExists(atPath: sentinelPath), "precondition: no sentinel yet")
 
         let store = try await WhoopStore(path: legacyPath)
@@ -208,9 +194,8 @@ final class MigrationOrchestrationTests: XCTestCase {
             "a completed re-ETL must (re)write the sentinel")
         XCTAssertEqual(try rowCount(atPath: roomPath, table: "hrSample"), 44_401)
         XCTAssertEqual(try rowCount(atPath: roomPath, table: "device"), 3)
-        let bogusStillThere = try await DatabaseQueue(path: roomPath).read { db in
-            try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM device WHERE id = 'bogus-partial-etl')") ?? false
-        }
+        let bogusStillThere = try TestSQLite.queryInt(atPath: roomPath,
+            "SELECT EXISTS(SELECT 1 FROM device WHERE id = 'bogus-partial-etl')") == 1
         XCTAssertFalse(bogusStillThere, "the re-ETL's truncate-then-copy must have wiped the bogus row")
     }
 
@@ -222,10 +207,7 @@ final class MigrationOrchestrationTests: XCTestCase {
     /// own page-count header check makes ANY truncation (even one page) fail to open at all, which
     /// would break the legacy GRDB handle this task requires to ALWAYS stay open, not just the ETL.
     private func plantNonIntegerBpm(atPath path: String) throws {
-        let queue = try DatabaseQueue(path: path)
-        try queue.write { db in
-            try db.execute(sql: "UPDATE hrSample SET bpm = 65.5 WHERE deviceId = 'whoop-beta'")
-        }
+        try TestSQLite.exec(atPath: path, "UPDATE hrSample SET bpm = 65.5 WHERE deviceId = 'whoop-beta'")
     }
 
     func testEtlFailureFallsBackToLegacyGrdbWithDiagnosticFlag() async throws {

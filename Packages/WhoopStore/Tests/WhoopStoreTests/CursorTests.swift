@@ -1,5 +1,4 @@
 import XCTest
-import GRDB
 @testable import WhoopStore
 
 final class CursorTests: XCTestCase {

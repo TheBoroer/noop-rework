@@ -1,5 +1,4 @@
 import XCTest
-import GRDB
 @testable import WhoopStore
 
 /// #222 self-heal, REWRITTEN for the Phase 2c-1 Task 7 storage flip. A foreign database dropped over
@@ -59,9 +58,8 @@ final class ForeignDatabaseQuarantineTests: XCTestCase {
     /// Build a SQLite file at `path` with the given DDL/DML, releasing the handle before returning so
     /// quarantine can move/probe it freely.
     private func makeSqlite(at path: String, _ statements: [String]) throws {
-        let queue = try DatabaseQueue(path: path)
-        try queue.write { db in for sql in statements { try db.execute(sql: sql) } }
-        // queue drops out of scope here; GRDB closes the connection on deinit.
+        try TestSQLite.exec(atPath: path, statements.joined(separator: ";\n"))
+        // TestSQLite closes the handle before returning, so quarantine can move/probe freely.
     }
 
     private func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: path) }
@@ -136,7 +134,8 @@ final class ForeignDatabaseQuarantineTests: XCTestCase {
 
     func testEmptyFileIsNeverQuarantined() throws {
         let path = dir.appendingPathComponent("noop.db").path
-        _ = try DatabaseQueue(path: path) // creates an empty SQLite file with no user tables
+        // Creates an empty SQLite file with no user tables (a no-op statement forces materialization).
+        try TestSQLite.exec(atPath: path, "PRAGMA user_version = 0")
 
         WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .room)
         WhoopStore.quarantineIncompatibleDatabase(at: path, expecting: .grdb)
@@ -167,11 +166,6 @@ final class ForeignDatabaseQuarantineTests: XCTestCase {
     }
 
     private func tableNames(at path: String) throws -> Set<String> {
-        var config = Configuration()
-        config.readonly = true
-        let queue = try DatabaseQueue(path: path, configuration: config)
-        return try queue.read { db in
-            try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
-        }
+        try TestSQLite.tableNames(atPath: path)
     }
 }

@@ -1,12 +1,13 @@
 import XCTest
-import GRDB
 @testable import WhoopStore
 
 final class ScaffoldTests: XCTestCase {
-    func testGRDBIsLinkedAndUsable() throws {
-        // Proves the GRDB dependency resolved and a DB can be opened.
-        let queue = try DatabaseQueue()
-        let answer = try queue.read { db in try Int.fetchOne(db, sql: "SELECT 42") }
+    func testSQLiteIsLinkedAndUsable() throws {
+        // #65: proves the raw-SQLite test plumbing works (GRDB is gone from this target).
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("scaffold-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let answer = try TestSQLite.queryInt(atPath: path, "SELECT 42")
         XCTAssertEqual(answer, 42)
     }
 

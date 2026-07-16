@@ -1,5 +1,4 @@
 import XCTest
-import GRDB
 @testable import WhoopStore
 
 /// #1014 defence-in-depth: real-file coverage for the `PRAGMA quick_check` integrity gate the
@@ -23,17 +22,18 @@ final class DatabaseIntegrityTests: XCTestCase {
     /// A real multi-page SQLite database (page 1 alone can't prove anything about truncation —
     /// sqlite_master lives there and survives losing the tail, which is the whole point of #1014).
     private func makeMultiPageDatabase(at url: URL) throws {
-        let q = try DatabaseQueue(path: url.path)
-        try q.write { db in
-            try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
-            try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES ('v1')")
-            try db.execute(sql: "CREATE TABLE device (id TEXT NOT NULL PRIMARY KEY, blob TEXT NOT NULL)")
-            let filler = String(repeating: "x", count: 200)
-            for i in 0..<200 {
-                try db.execute(sql: "INSERT INTO device (id, blob) VALUES (?, ?)",
-                               arguments: ["row-\(i)", filler])
-            }
+        let filler = String(repeating: "x", count: 200)
+        var sql = """
+        CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY);
+        INSERT INTO grdb_migrations (identifier) VALUES ('v1');
+        CREATE TABLE device (id TEXT NOT NULL PRIMARY KEY, blob TEXT NOT NULL);
+        BEGIN;
+        """
+        for i in 0..<200 {
+            sql += "\nINSERT INTO device (id, blob) VALUES ('row-\(i)', '\(filler)');"
         }
+        sql += "\nCOMMIT;"
+        try TestSQLite.exec(atPath: url.path, sql)
     }
 
     // MARK: - quickCheckFailure over real files

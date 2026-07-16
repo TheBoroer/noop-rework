@@ -1,5 +1,4 @@
 import XCTest
-import GRDB
 @testable import WhoopStore
 
 /// Phase 2c-1 Task 4: Room-vs-GRDB parity over the REAL ETL fixture (`grdb-mini.sqlite`, ~44k HR
@@ -55,17 +54,15 @@ final class EtlStreamParityTests: XCTestCase {
         -> (hr: Int, rr: Int, events: Int, battery: Int,
             spo2: Int, skinTemp: Int, resp: Int, gravity: Int,
             rawBatches: Int, rawBytes: Int) {
-        let queue = try DatabaseQueue(path: path)
-        return try queue.read { db in
-            func count(_ table: String) throws -> Int {
-                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM `\(table)`") ?? -1
-            }
-            let bytes = try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? -1
-            return (try count("hrSample"), try count("rrInterval"), try count("event"),
-                    try count("battery"), try count("spo2Sample"), try count("skinTempSample"),
-                    try count("respSample"), try count("gravitySample"),
-                    try count("rawBatch"), bytes)
+        func count(_ table: String) throws -> Int {
+            try TestSQLite.queryInt(atPath: path, "SELECT COUNT(*) FROM `\(table)`") ?? -1
         }
+        let bytes = try TestSQLite.queryInt(
+            atPath: path, "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? -1
+        return (try count("hrSample"), try count("rrInterval"), try count("event"),
+                try count("battery"), try count("spo2Sample"), try count("skinTempSample"),
+                try count("respSample"), try count("gravitySample"),
+                try count("rawBatch"), bytes)
     }
 
     func testStorageStatsParityAfterEtlAndReadTimings() async throws {
@@ -110,12 +107,9 @@ final class EtlStreamParityTests: XCTestCase {
         XCTAssertGreaterThan(legacy.hr, 40_000, "fixture must carry the dense HR stream")
 
         // Densest device for the perf sanity pass.
-        let queue = try DatabaseQueue(path: legacyPath)
-        let densest = try await queue.read { db in
-            try String.fetchOne(db, sql: """
-                SELECT deviceId FROM hrSample GROUP BY deviceId ORDER BY COUNT(*) DESC LIMIT 1
-                """)
-        }
+        let densest = try TestSQLite.queryString(atPath: legacyPath, """
+            SELECT deviceId FROM hrSample GROUP BY deviceId ORDER BY COUNT(*) DESC LIMIT 1
+            """)
         let deviceId = try XCTUnwrap(densest)
 
         // Room-backed store reads (through the shared DAO).
@@ -128,36 +122,38 @@ final class EtlStreamParityTests: XCTestCase {
                                                     to: 4_000_000_000, bucketSeconds: 300)
         let roomBucketsMs = Date().timeIntervalSince(t0) * 1000
 
-        // The same SQL straight on GRDB over the legacy file (reference timing, same machine/run).
+        // The same SQL straight over the legacy file via raw sqlite3 (reference timing,
+        // same machine/run). GRDB is gone from the test target; TestSQLite is the reference.
         t0 = Date()
-        let grdbSampleCount = try await queue.read { db in
-            try Row.fetchAll(db, sql: """
+        let grdbSampleCount = try XCTUnwrap(TestSQLite.queryInt(atPath: legacyPath, """
+            SELECT COUNT(*) FROM (
                 SELECT ts, bpm FROM (
                     SELECT ts, bpm FROM hrSample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
+                    WHERE deviceId = '\(deviceId)' AND ts >= 0 AND ts <= 4000000000
                     UNION ALL
                     SELECT p.ts, CAST(ROUND(p.bpm) AS INTEGER) AS bpm FROM ppgHrSample p
-                    WHERE p.deviceId = ? AND p.ts >= ? AND p.ts <= ?
+                    WHERE p.deviceId = '\(deviceId)' AND p.ts >= 0 AND p.ts <= 4000000000
                       AND NOT EXISTS (
                         SELECT 1 FROM hrSample h WHERE h.deviceId = p.deviceId AND h.ts = p.ts)
                 )
-                ORDER BY ts ASC LIMIT ?
-                """, arguments: [deviceId, 0, 4_000_000_000, deviceId, 0, 4_000_000_000, 200_000]).count
-        }
+                ORDER BY ts ASC LIMIT 200000
+            )
+            """))
         let grdbSamplesMs = Date().timeIntervalSince(t0) * 1000
         t0 = Date()
-        let grdbBucketCount = try await queue.read { db in
-            try Row.fetchAll(db, sql: """
+        let grdbBucketCount = try XCTUnwrap(TestSQLite.queryInt(atPath: legacyPath, """
+            SELECT COUNT(*) FROM (
                 SELECT (ts / 300) * 300 AS bucket, AVG(bpm) AS avgBpm FROM (
-                    SELECT ts, bpm FROM hrSample WHERE deviceId = ? AND ts >= ? AND ts <= ?
+                    SELECT ts, bpm FROM hrSample
+                    WHERE deviceId = '\(deviceId)' AND ts >= 0 AND ts <= 4000000000
                     UNION ALL
                     SELECT p.ts, p.bpm FROM ppgHrSample p
-                    WHERE p.deviceId = ? AND p.ts >= ? AND p.ts <= ?
+                    WHERE p.deviceId = '\(deviceId)' AND p.ts >= 0 AND p.ts <= 4000000000
                       AND NOT EXISTS (
                         SELECT 1 FROM hrSample h WHERE h.deviceId = p.deviceId AND h.ts = p.ts)
-                ) GROUP BY ts / 300 ORDER BY bucket ASC
-                """, arguments: [deviceId, 0, 4_000_000_000, deviceId, 0, 4_000_000_000]).count
-        }
+                ) GROUP BY ts / 300
+            )
+            """))
         let grdbBucketsMs = Date().timeIntervalSince(t0) * 1000
 
         // Result parity: the Room read surfaces the same row/bucket counts as the reference SQL.
