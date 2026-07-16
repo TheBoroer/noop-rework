@@ -99,6 +99,14 @@ export.zip
 # (fixed epoch base, recursive CTEs, no real user data); overrides the `*.sqlite` rule above.
 !shared/src/commonTest/fixtures/grdb-mini.sqlite
 
+# Deliberate exception (#65 T1): the frozen legacy-GRDB schema fixture for WhoopStore tests.
+# SYNTHETIC — schema-only dump plus one hand-written "my-whoop" pairedDevice row (no MAC,
+# serial, or biometric data); overrides the `Fixtures/` and `*.sqlite` rules above. CI needs
+# these files to build the WhoopStoreTests resource bundle (Bundle.module).
+!Packages/WhoopStore/Tests/WhoopStoreTests/Fixtures/
+!Packages/WhoopStore/Tests/WhoopStoreTests/Fixtures/*.sql
+!Packages/WhoopStore/Tests/WhoopStoreTests/Fixtures/*.sqlite
+
 # Python bytecode
 __pycache__/
 *.pyc
