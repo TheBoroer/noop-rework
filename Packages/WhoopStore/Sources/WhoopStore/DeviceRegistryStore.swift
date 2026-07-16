@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import Shared
 
 // MARK: - Device registry (pairedDevice / dayOwnership)
@@ -95,10 +94,6 @@ extension WhoopStore {
             let rows = try await roomDb.whoopDao().pairedDevices()
             return rows.map(Self.decodeRoom)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: "SELECT * FROM pairedDevice ORDER BY addedAt ASC").map(Self.decodeGrdb)
-            }
         }
     }
 
@@ -110,10 +105,6 @@ extension WhoopStore {
             #else
             return try await roomDb.whoopDao().activeDeviceId()
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try String.fetchOne(db, sql: "SELECT id FROM pairedDevice WHERE status = 'active' LIMIT 1")
-            }
         }
     }
 
@@ -132,8 +123,6 @@ extension WhoopStore {
                 capabilities: d.capabilities.map(\.rawValue).sorted().joined(separator: ","),
                 status: d.status.rawValue, addedAt: Int64(d.addedAt), lastSeenAt: Int64(d.lastSeenAt))
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in try Self.upsertGrdb(db, d) }
         }
     }
 
@@ -146,12 +135,6 @@ extension WhoopStore {
             #else
             try await roomDb.whoopDao().setActiveAtomic(id: id, now: Int64(Date().timeIntervalSince1970))
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in
-                try db.execute(sql: "UPDATE pairedDevice SET status = 'paired' WHERE status = 'active'")
-                try db.execute(sql: "UPDATE pairedDevice SET status = 'active', lastSeenAt = ? WHERE id = ?",
-                               arguments: [Int(Date().timeIntervalSince1970), id])
-            }
         }
     }
 
@@ -163,10 +146,6 @@ extension WhoopStore {
             #else
             try await roomDb.whoopDao().archiveDevice(id: id)
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in
-                try db.execute(sql: "UPDATE pairedDevice SET status = 'archived' WHERE id = ?", arguments: [id])
-            }
         }
     }
 
@@ -178,10 +157,6 @@ extension WhoopStore {
             #else
             try await roomDb.whoopDao().renameDevice(id: id, nickname: nickname)
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in
-                try db.execute(sql: "UPDATE pairedDevice SET nickname = ? WHERE id = ?", arguments: [nickname, id])
-            }
         }
     }
 
@@ -193,11 +168,6 @@ extension WhoopStore {
             #else
             try await roomDb.whoopDao().setPeripheralId(id: id, peripheralId: peripheralId)
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in
-                try db.execute(sql: "UPDATE pairedDevice SET peripheralId = ? WHERE id = ?",
-                               arguments: [peripheralId, id])
-            }
         }
     }
 
@@ -211,11 +181,6 @@ extension WhoopStore {
             else { return nil }
             return Self.decodeRoom(row)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchOne(db, sql: "SELECT * FROM pairedDevice WHERE peripheralId = ? LIMIT 1",
-                                 arguments: [peripheralId]).map(Self.decodeGrdb)
-            }
         }
     }
 
@@ -237,12 +202,6 @@ extension WhoopStore {
             #else
             try await roomDb.whoopDao().deleteDeviceDataAtomic(deviceId: deviceId)
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in
-                for table in Self.deviceScopedTables {
-                    try db.execute(sql: "DELETE FROM \(table) WHERE deviceId = ?", arguments: [deviceId])
-                }
-            }
         }
     }
 
@@ -257,13 +216,6 @@ extension WhoopStore {
             try await roomDb.whoopDao().setDayOwner(
                 row: Shared.DayOwnershipRow(day: day, deviceId: deviceId, locked: locked))
             #endif
-        case .legacyGrdb:
-            try syncWrite { db in
-                try db.execute(sql: """
-                    INSERT INTO dayOwnership (day, deviceId, locked) VALUES (?, ?, ?)
-                    ON CONFLICT(day) DO UPDATE SET deviceId = excluded.deviceId, locked = excluded.locked
-                """, arguments: [day, deviceId, locked ? 1 : 0])
-            }
         }
     }
 
@@ -276,38 +228,11 @@ extension WhoopStore {
             guard let row = try await roomDb.whoopDao().dayOwner(day: day) else { return nil }
             return DeviceRegistryStore.DayOwner(deviceId: row.deviceId, locked: row.locked)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                guard let row = try Row.fetchOne(db, sql: "SELECT deviceId, locked FROM dayOwnership WHERE day = ?",
-                                                  arguments: [day])
-                else { return nil }
-                return DeviceRegistryStore.DayOwner(deviceId: row["deviceId"], locked: (row["locked"] as Int) == 1)
-            }
         }
     }
 
     // MARK: mapping
 
-    fileprivate static func upsertGrdb(_ db: Database, _ d: PairedDevice) throws {
-        try db.execute(sql: """
-            INSERT INTO pairedDevice (id, brand, model, nickname, peripheralId, sourceKind, capabilities, status, addedAt, lastSeenAt)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET brand=excluded.brand, model=excluded.model, nickname=excluded.nickname,
-                peripheralId=excluded.peripheralId, sourceKind=excluded.sourceKind, capabilities=excluded.capabilities,
-                status=excluded.status, lastSeenAt=excluded.lastSeenAt
-        """, arguments: [d.id, d.brand, d.model, d.nickname, d.peripheralId, d.sourceKind.rawValue,
-                         d.capabilities.map(\.rawValue).sorted().joined(separator: ","),
-                         d.status.rawValue, d.addedAt, d.lastSeenAt])
-    }
-
-    fileprivate static func decodeGrdb(_ row: Row) -> PairedDevice {
-        let caps = (row["capabilities"] as String).split(separator: ",").compactMap { Metric(rawValue: String($0)) }
-        return PairedDevice(id: row["id"], brand: row["brand"], model: row["model"], nickname: row["nickname"],
-                            peripheralId: row["peripheralId"],
-                            sourceKind: SourceKind(rawValue: row["sourceKind"]) ?? .liveBLE,
-                            capabilities: Set(caps), status: DeviceStatus(rawValue: row["status"]) ?? .paired,
-                            addedAt: row["addedAt"], lastSeenAt: row["lastSeenAt"])
-    }
 
     fileprivate static func encodeRoom(_ d: PairedDevice) -> Shared.PairedDeviceRow {
         Shared.PairedDeviceRow(id: d.id, brand: d.brand, model: d.model, nickname: d.nickname,

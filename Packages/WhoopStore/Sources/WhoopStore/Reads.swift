@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import WhoopProtocol
 import Shared
 
@@ -48,25 +47,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
             return rows.map { HRSample(ts: Int($0.ts), bpm: Int($0.bpm)) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, bpm FROM (
-                        SELECT ts, bpm FROM hrSample
-                        WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                        UNION ALL
-                        SELECT p.ts, CAST(ROUND(p.bpm) AS INTEGER) AS bpm FROM ppgHrSample p
-                        WHERE p.deviceId = ? AND p.ts >= ? AND p.ts <= ?
-                          AND NOT EXISTS (
-                            SELECT 1 FROM hrSample h
-                            WHERE h.deviceId = p.deviceId AND h.ts = p.ts)
-                    )
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to,
-                                     deviceId, from, to,
-                                     limit])
-                    .map { HRSample(ts: $0["ts"], bpm: $0["bpm"]) }
-            }
         }
     }
 
@@ -85,19 +65,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to))
             return (Int(fp.count), Int(fp.maxTs))
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                // COUNT(*) and COALESCE(MAX(ts),0) are both NON-NULL, and the aggregate query always returns
-                // exactly one row, so fetchOne is non-nil and the columns read straight into Int. The guard is
-                // belt-and-suspenders.
-                guard let row = try Row.fetchOne(db, sql: """
-                    SELECT COUNT(*) AS c, COALESCE(MAX(ts), 0) AS m FROM hrSample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    """, arguments: [deviceId, from, to]) else { return (0, 0) }
-                let c: Int = row["c"]
-                let m: Int = row["m"]
-                return (c, m)
-            }
         }
     }
 
@@ -122,31 +89,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), bucketSeconds: Int64(bucket))
             return rows.map { HRBucket(ts: Int($0.bucket), bpm: $0.avgBpm, conf: $0.minConf) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                // MIN(conf) per bucket: measured rows contribute 1.0, PPG fallback rows their stored
-                // autocorrelation conf, so a bucket touched by ANY weak-optical estimate reads as weak
-                // (conservative), and a purely-measured bucket stays 1.0. Purely additive projection:
-                // the bpm aggregate and the anti-join semantics are byte-identical. (ryanAtriumAi #988)
-                try Row.fetchAll(db, sql: """
-                    SELECT (ts / ?) * ? AS bucket, AVG(bpm) AS avgBpm, MIN(conf) AS minConf FROM (
-                        SELECT ts, bpm, 1.0 AS conf FROM hrSample
-                        WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                        UNION ALL
-                        SELECT p.ts, p.bpm, p.conf FROM ppgHrSample p
-                        WHERE p.deviceId = ? AND p.ts >= ? AND p.ts <= ?
-                          AND NOT EXISTS (
-                            SELECT 1 FROM hrSample h
-                            WHERE h.deviceId = p.deviceId AND h.ts = p.ts)
-                    )
-                    GROUP BY ts / ?
-                    ORDER BY bucket ASC
-                    """, arguments: [bucket, bucket,
-                                     deviceId, from, to,
-                                     deviceId, from, to,
-                                     bucket])
-                    .map { HRBucket(ts: $0["bucket"], bpm: $0["avgBpm"], conf: $0["minConf"] ?? 1.0) }
-            }
         }
     }
 
@@ -160,15 +102,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
             return rows.map { RRInterval(ts: Int($0.ts), rrMs: Int($0.rrMs)) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, rrMs FROM rrInterval
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC, rrMs ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { RRInterval(ts: $0["ts"], rrMs: $0["rrMs"]) }
-            }
         }
     }
 
@@ -188,21 +121,6 @@ extension WhoopStore {
                 return WhoopProtocol.WhoopEvent(ts: Int(row.ts), kind: row.kind, payload: payload)
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, kind, payloadJSON FROM event
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC, kind ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { row in
-                        let json: String = row["payloadJSON"]
-                        let payload = (try? WhoopStore.eventDecoder.decode(
-                            [String: ParsedValue].self,
-                            from: Data(json.utf8))) ?? [:]
-                        return WhoopProtocol.WhoopEvent(ts: row["ts"], kind: row["kind"], payload: payload)
-                    }
-            }
         }
     }
 
@@ -223,15 +141,6 @@ extension WhoopStore {
                                             mv: $0.mv.map { Int(truncating: $0) })
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, soc, mv FROM battery
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { WhoopProtocol.BatterySample(ts: $0["ts"], soc: $0["soc"], mv: $0["mv"]) }
-            }
         }
     }
 
@@ -245,15 +154,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
             return rows.map { SpO2Sample(ts: Int($0.ts), red: Int($0.red), ir: Int($0.ir)) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, red, ir FROM spo2Sample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { SpO2Sample(ts: $0["ts"], red: $0["red"], ir: $0["ir"]) }
-            }
         }
     }
 
@@ -268,15 +168,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
             return rows.map { WhoopProtocol.SkinTempSample(ts: Int($0.ts), raw: Int($0.raw)) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, raw FROM skinTempSample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { WhoopProtocol.SkinTempSample(ts: $0["ts"], raw: $0["raw"]) }
-            }
         }
     }
 
@@ -295,18 +186,6 @@ extension WhoopStore {
                                          activityClass: $0.activityClass.map { Int(truncating: $0) })
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, counter, activityClass FROM stepSample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    // activityClass (#316, v19) reads back nil for any pre-v19 row (the column defaulted null) and
-                    // for any record whose @63 byte was 0xFF/invalid/absent, an absent class stays absent.
-                    .map { WhoopProtocol.StepSample(ts: $0["ts"], counter: $0["counter"],
-                                                    activityClass: $0["activityClass"]) }
-            }
         }
     }
 
@@ -321,15 +200,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
             return rows.map { WhoopProtocol.RespSample(ts: Int($0.ts), raw: Int($0.raw)) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, raw FROM respSample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { WhoopProtocol.RespSample(ts: $0["ts"], raw: $0["raw"]) }
-            }
         }
     }
 
@@ -344,15 +214,6 @@ extension WhoopStore {
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
             return rows.map { WhoopProtocol.GravitySample(ts: Int($0.ts), x: $0.x, y: $0.y, z: $0.z) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT ts, x, y, z FROM gravitySample
-                    WHERE deviceId = ? AND ts >= ? AND ts <= ?
-                    ORDER BY ts ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map { WhoopProtocol.GravitySample(ts: $0["ts"], x: $0["x"], y: $0["y"], z: $0["z"]) }
-            }
         }
     }
 
@@ -371,16 +232,6 @@ extension WhoopStore {
             let ts = try await roomDb.whoopDao().latestHrSampleTs(deviceId: deviceId)
             return ts.map { Int(truncating: $0) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Int.fetchOne(db, sql: """
-                    SELECT MAX(ts) FROM (
-                        SELECT ts FROM hrSample WHERE deviceId = ?
-                        UNION ALL
-                        SELECT ts FROM ppgHrSample WHERE deviceId = ?
-                    )
-                    """, arguments: [deviceId, deviceId])
-            }
         }
     }
 
@@ -414,18 +265,6 @@ extension WhoopStore {
             let grav = Int(truncating: try await dao.countGravity())
             decodedRows = hr + rr + ev + bat + spo2 + skin + resp + grav
             #endif
-        case .legacyGrdb:
-            decodedRows = try syncRead { db in
-                let hr   = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM hrSample") ?? 0
-                let rr   = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rrInterval") ?? 0
-                let ev   = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM event") ?? 0
-                let bat  = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM battery") ?? 0
-                let spo2 = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM spo2Sample") ?? 0
-                let skin = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM skinTempSample") ?? 0
-                let resp = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM respSample") ?? 0
-                let grav = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM gravitySample") ?? 0
-                return hr + rr + ev + bat + spo2 + skin + resp + grav
-            }
         }
         switch backend {
         case .room(let roomDb):
@@ -436,13 +275,6 @@ extension WhoopStore {
             let bytes = pending.reduce(0) { $0 + $1.byteSize }
             return (decodedRows, pending.count, bytes)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                let batches = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rawBatch") ?? 0
-                let bytes   = try Int.fetchOne(db,
-                    sql: "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? 0
-                return (decodedRows, batches, bytes)
-            }
         }
     }
 }

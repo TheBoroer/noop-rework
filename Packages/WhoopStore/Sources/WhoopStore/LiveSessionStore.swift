@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import Shared
 
 // MARK: - v22 store: Live Sessions
@@ -60,28 +59,6 @@ extension WhoopStore {
             ))
             return 1
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    INSERT INTO liveSession
-                        (deviceId, startTs, endTs, chargeAtStart, floorBpm, ceilingBpm,
-                         inBandSec, belowSec, aboveSec, pushCount, easeCount, hrSource)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(deviceId, startTs) DO UPDATE SET
-                        endTs = excluded.endTs,
-                        chargeAtStart = excluded.chargeAtStart,
-                        floorBpm = excluded.floorBpm,
-                        ceilingBpm = excluded.ceilingBpm,
-                        inBandSec = excluded.inBandSec,
-                        belowSec = excluded.belowSec,
-                        aboveSec = excluded.aboveSec,
-                        pushCount = excluded.pushCount,
-                        easeCount = excluded.easeCount,
-                        hrSource = excluded.hrSource
-                    """, arguments: [deviceId, r.startTs, r.endTs, r.chargeAtStart, r.floorBpm, r.ceilingBpm,
-                                     r.inBandSec, r.belowSec, r.aboveSec, r.pushCount, r.easeCount, r.hrSource])
-                return db.changesCount
-            }
         }
     }
 
@@ -102,23 +79,6 @@ extension WhoopStore {
                                hrSource: row.hrSource)
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT startTs, endTs, chargeAtStart, floorBpm, ceilingBpm, inBandSec, belowSec, aboveSec,
-                           pushCount, easeCount, hrSource FROM liveSession
-                    WHERE deviceId = ?
-                    ORDER BY startTs DESC LIMIT ?
-                    """, arguments: [deviceId, limit])
-                    .map {
-                        LiveSessionRow(startTs: $0["startTs"], endTs: $0["endTs"],
-                                       chargeAtStart: $0["chargeAtStart"], floorBpm: $0["floorBpm"],
-                                       ceilingBpm: $0["ceilingBpm"], inBandSec: $0["inBandSec"],
-                                       belowSec: $0["belowSec"], aboveSec: $0["aboveSec"],
-                                       pushCount: $0["pushCount"], easeCount: $0["easeCount"],
-                                       hrSource: $0["hrSource"])
-                    }
-            }
         }
     }
 }

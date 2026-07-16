@@ -1,74 +1,53 @@
 import Foundation
-import GRDB
 import WhoopProtocol
 import Shared
 
 /// OpenWhoop persistence library — decoded streams are durable; raw frames are a
-/// transient, compressed, prunable outbox. Built on GRDB/SQLite.
+/// transient, compressed, prunable outbox. Built on the shared Kotlin/Room database
+/// (GRDB removed, #65 Task 6); the legacy schema version is kept only for the ETL's
+/// provenance records.
 public enum WhoopStoreInfo {
-    /// Bumped whenever the migrator gains a new migration.
+    /// Final schema version of the retired GRDB migrator (see the frozen fixtures in
+    /// `Tests/WhoopStoreTests/Fixtures`). The one-time ETL was written against this.
     public static let schemaVersion = 18
 }
 
-/// WhoopStore is an `actor`: its public API is `async`, and all GRDB work runs on the
-/// actor's serial executor rather than the caller's (the main actor).
-///
-/// The connection is a GRDB `DatabasePool` (WAL): reads (`.read`) run CONCURRENTLY with the
-/// backfill's bulk writes (`.write`) instead of serializing behind them (#755). A `DatabaseQueue`
-/// funnels every read AND write through one serial executor, so the dashboard's ~40-55 reads
-/// queued behind a multi-thousand-row import and froze Today for seconds. A Pool keeps a single
-/// writer (writes still serialize, exactly as before, so every read-modify-write inside one
-/// `.write` stays atomic) but serves reads from WAL snapshots in parallel (committed data only,
-/// never a partial write). The actor still moves the synchronous-blocking GRDB calls off the
-/// caller's (main) thread; what changed is read/write CONCURRENCY at the SQLite layer, not the
-/// data or the query results.
+/// WhoopStore is an `actor`: its public API is `async`, and all database work runs on the
+/// actor's serial executor rather than the caller's (the main actor). Storage is the shared
+/// Kotlin/Room `noop.db` opened through `Shared.xcframework`; the only SQLite this package
+/// touches directly is the read-only raw-SQLite3 probe (`RawSQLite`, Task 2) for
+/// quarantine/introspection, which opens its own short-lived handles.
 public actor WhoopStore {
-    let dbWriter: any DatabaseWriter
+    /// Path the store was opened with — the LEGACY GRDB file location (`whoop.sqlite`). The live
+    /// Room database lives next to it at `WhoopStore.roomPath(forLegacyPath:)`. Kept after the
+    /// GRDB removal (#65 Task 6) because every path in the store's file layout is derived from
+    /// it: the Room file, the ETL sentinel, quarantine names, and the diagnostics size total.
+    nonisolated let legacyPath: String
 
-    /// Task 6 (Phase 2c-1): no longer `public`. `DeviceRegistryStore` now routes through the actor
-    /// (async, backend-aware) instead of opening its own synchronous handle onto this GRDB writer
-    /// directly -- that was the "sync bypass" that task killed: a raw `DatabaseWriter` handed out for
-    /// direct synchronous use skips both actor serialization AND the Room backend entirely. `private`
-    /// since Phase 2c-2 Task 8: its last external consumer (`DatabasePoolConcurrencyTests`) was deleted
-    /// with the legacy outbox drain. `nonisolated` because a GRDB `DatabaseWriter` (here a
-    /// `DatabasePool`) is `Sendable` and manages its own concurrency, so concurrent access alongside the
-    /// actor's own DB work is safe (the Pool serializes writes and runs reads in parallel under WAL).
-    private nonisolated var registryWriter: any DatabaseWriter { dbWriter }
-
-    // MARK: - Room cutover (Phase 2c-1 Task 3)
+    // MARK: - Room cutover (Phase 2c-1 Task 3; GRDB removed in #65 Task 6)
     //
-    // Every open decides which store serves the actor's per-feature methods (later tasks switch on
-    // `backend`; this phase only decides it, the GRDB methods below are all still current code): a
-    // fresh install or an already-migrated launch opens the shared Kotlin/Room database directly; a
-    // legacy-only install runs a ONE-TIME ETL (Task 2's `GrdbMigrator`) with a progress stream the
-    // app can show; an ETL failure falls back to the GRDB backend the store has always used.
-    // `dbWriter` above stays open and migrated in EVERY case: rawBatch/cursors (the raw-frame
-    // outbox) live there regardless of backend, and a fallback store must be fully functional on it.
+    // Every open lands on Room: a fresh install or an already-migrated launch opens the shared
+    // Kotlin/Room database directly; a legacy-only install runs a ONE-TIME ETL (the Kotlin
+    // `GrdbMigrator`) with a progress stream the app can show. A failed ETL THROWS
+    // (`MigrationFailedError`, Task 5) — there is no live GRDB fallback backend anymore, and no
+    // GRDB connection is opened at all.
     //
-    // Fix pass (review): "already migrated" is decided by a completion SENTINEL next to `noop.db`
+    // "Already migrated" is decided by a completion SENTINEL next to `noop.db`
     // (`noop.db.migrated`), not by the Room file merely existing, so a hard crash mid-ETL can never
     // leave a partial Room file that a later launch mistakes for "done" forever, see
-    // `detectMigrateOpen`. Progress is also reachable two ways now: `init(path:)` keeps its original
+    // `detectMigrateOpen`. Progress is also reachable two ways: `init(path:)` keeps its original
     // `migrationProgress` `AsyncStream` (replayed after the whole open returns, tests/back-compat),
     // and the `open(path:onProgress:)` factory additionally invokes `onProgress` LIVE, once per
     // committed ETL batch, for callers (the app) that want a real-time progress overlay.
     //
-    // Phase 2c-2 Task 4 update: the note above ("rawBatch/cursors live there [dbWriter] regardless of
-    // backend") is now only true for `.legacyGrdb`. `RawOutbox.swift`/`Cursors.swift` are
-    // backend-aware: a `.room`-backed store routes the raw-frame outbox and cursor reads/writes
-    // through `OutboxBridge` onto the Kotlin `WhoopDatabase` handle carried by this very `.room`
-    // case instead. `dbWriter` still stays open and migrated in every case (a `.legacyGrdb` store
-    // must be fully functional on it, and it also still backs decoded-table reads for that backend),
-    // but it is no longer where the raw outbox lives for a Room-backed store.
+    // The raw-frame outbox and cursors route through `OutboxBridge` onto the Kotlin
+    // `WhoopDatabase` handle carried by the `.room` case (Phase 2c-2 Task 4).
 
-    /// Which store serves this instance's per-feature methods. Internal: later tasks (Streams,
-    /// Metrics, Device registry, Backup) switch on this to pick the GRDB or the Room code path.
-    /// `.room` carries the live Kotlin `WhoopDatabase` handle so those methods don't need to reopen
-    /// it. `.legacyGrdb` needs no payload of its own: `dbWriter` above already IS that connection,
-    /// always open, whichever case this is.
+    /// The live store handle. Single-case since the GRDB removal (#65 Task 6): kept as an enum
+    /// (rather than a bare stored property) so the per-feature methods' `switch backend` shape —
+    /// and the x86_64 iOS-Simulator `#if` guards inside the `.room` branches — survive unchanged.
     enum Backend {
         case room(WhoopDatabase)
-        case legacyGrdb
     }
     let backend: Backend
 
@@ -99,21 +78,15 @@ public actor WhoopStore {
     }
 
     /// Public diagnostic surface (Settings / support screens, and this init's own tests): which
-    /// backend actually ended up live, and why. `nonisolated`: decided once, at init, and never
-    /// changes afterward, so callers can read it without an `await`.
+    /// backend actually ended up live. `nonisolated`: decided once, at init, and never changes
+    /// afterward, so callers can read it without an `await`. Single-case since the GRDB removal
+    /// (#65 Task 6): a store that constructs at all is Room-backed — an ETL failure now throws
+    /// `MigrationFailedError` from the open instead of producing a fallback value here. Kept as an
+    /// enum so app-side `switch`/`==` call sites survive unchanged.
     public enum StorageBackend: Equatable, Sendable {
         /// Room is live: a fresh install, a completed one-time ETL, or a prior launch already
         /// finished the cutover.
         case room
-        /// Every read/write still hits the legacy GRDB store. `fallbackReason` is `nil` for the
-        /// in-memory test store (a deliberate choice, not a failure); non-nil when a legacy-only
-        /// launch's ETL failed partway. The store is fully functional either way; a non-nil reason
-        /// means the NEXT launch retries the cutover. What actually gates that retry is the
-        /// completion SENTINEL (`noop.db.migrated`, written only once `GrdbMigrator.verify` confirms
-        /// every mapped table's row count matches), not whether a Room file happens to exist: this
-        /// launch deletes any Room file it created before falling back here, so the next launch sees
-        /// neither a Room file nor a sentinel and retries cleanly either way.
-        case legacyGrdb(fallbackReason: String?)
     }
     public nonisolated let storageBackend: StorageBackend
 
@@ -131,9 +104,9 @@ public actor WhoopStore {
     /// longer reaching 1.0, which the init-path tests pin.
     private static let migratedTableCount = 22
 
-    private init(dbWriter: any DatabaseWriter, backend: Backend, storageBackend: StorageBackend,
+    private init(legacyPath: String, backend: Backend, storageBackend: StorageBackend,
                  migrationProgress: AsyncStream<Double>?) {
-        self.dbWriter = dbWriter
+        self.legacyPath = legacyPath
         self.backend = backend
         self.storageBackend = storageBackend
         self.migrationProgress = migrationProgress
@@ -144,7 +117,7 @@ public actor WhoopStore {
     /// init above. Not `public`: purely an internal handoff between the two open paths and the one
     /// place that actually knows how to construct a `WhoopStore`.
     private struct OpenResult {
-        let dbWriter: any DatabaseWriter
+        let legacyPath: String
         let backend: Backend
         let storageBackend: StorageBackend
         let migrationProgress: AsyncStream<Double>?
@@ -167,7 +140,7 @@ public actor WhoopStore {
     /// point. Use `open(path:onProgress:)` for that (the single production creation site does).
     public init(path: String) async throws {
         let result = try await WhoopStore.detectMigrateOpen(path: path, onProgress: nil)
-        self.init(dbWriter: result.dbWriter, backend: result.backend, storageBackend: result.storageBackend,
+        self.init(legacyPath: result.legacyPath, backend: result.backend, storageBackend: result.storageBackend,
                   migrationProgress: result.migrationProgress)
     }
 
@@ -179,7 +152,7 @@ public actor WhoopStore {
     /// overlay tracks the real ETL instead of flashing through a finished replay.
     public static func open(path: String, onProgress: (@Sendable (Double) -> Void)? = nil) async throws -> WhoopStore {
         let result = try await WhoopStore.detectMigrateOpen(path: path, onProgress: onProgress)
-        return WhoopStore(dbWriter: result.dbWriter, backend: result.backend,
+        return WhoopStore(legacyPath: result.legacyPath, backend: result.backend,
                            storageBackend: result.storageBackend, migrationProgress: result.migrationProgress)
     }
 
@@ -210,31 +183,13 @@ public actor WhoopStore {
         // never gets to run this file's write) can never be mistaken for a finished migration.
         let sentinelExistedBefore = fm.fileExists(atPath: WhoopStore.migrationSentinelPath(forRoomPath: roomPath))
 
-        var config = Configuration()
-        config.prepareDatabase { db in
-            // `DatabasePool` puts the database in WAL mode itself (reads run as concurrent snapshots
-            // alongside the single writer, #755), so there is no explicit `PRAGMA journal_mode = WAL`.
-            // Bulk-write/read tuning. NORMAL is the durable, recommended pairing with WAL (only an
-            // OS crash/power loss can lose the last transaction, acceptable here). Bigger page cache
-            // + mmap + in-memory temp tables speed the multi-thousand-row import/backfill writes.
-            try db.execute(sql: "PRAGMA synchronous = NORMAL")
-            try db.execute(sql: "PRAGMA cache_size = -16000")     // ~16 MB page cache
-            try db.execute(sql: "PRAGMA mmap_size = 268435456")   // 256 MB memory-mapped I/O
-            try db.execute(sql: "PRAGMA temp_store = MEMORY")
-        }
-        config.busyMode = .timeout(5)
-        let legacyPool = try DatabasePool(path: path, configuration: config)
-        // Always applied, regardless of which backend ends up live below: rawBatch/cursors are
-        // GRDB-only forever (Task 2), and a `.legacyGrdb` fallback must be on the CURRENT schema.
-        try WhoopStore.makeMigrator().migrate(legacyPool)
-
         #if targetEnvironment(simulator) && arch(x86_64)
         // Phantom x86_64 iOS-Simulator slice (see RoomBackendUnavailableError): Shared has no such
         // slice, so the Room/ETL machinery below (whoopDatabase / onEnum / suspend DAO calls) cannot
         // type-check here. This slice is never linked or run; return the always-open legacy GRDB
         // backend so the package compiles for `generic/platform=iOS Simulator`. The arm64 slices carry
         // the real detect-migrate-open cutover.
-        _ = (roomPath, legacyExistedBefore, roomExistedBefore, sentinelExistedBefore, legacyPool)
+        _ = (roomPath, legacyExistedBefore, roomExistedBefore, sentinelExistedBefore)
         throw RoomBackendUnavailableError()
         #else
 
@@ -243,7 +198,7 @@ public actor WhoopStore {
             // actually completed: open Room as-is, no re-ETL (re-running it would blow away any
             // Room-only writes made since that launch).
             let room = whoopDatabase(path: roomPath)
-            return OpenResult(dbWriter: legacyPool, backend: .room(room), storageBackend: .room,
+            return OpenResult(legacyPath: path, backend: .room(room), storageBackend: .room,
                                migrationProgress: nil)
         }
 
@@ -266,7 +221,7 @@ public actor WhoopStore {
             let room = whoopDatabase(path: roomPath)
             try await WhoopStore.warmUpRoomDatabase(room)
             WhoopStore.writeFreshInstallMigrationSentinel(legacyPath: path, roomPath: roomPath)
-            return OpenResult(dbWriter: legacyPool, backend: .room(room), storageBackend: .room,
+            return OpenResult(legacyPath: path, backend: .room(room), storageBackend: .room,
                                migrationProgress: nil)
         }
 
@@ -301,7 +256,7 @@ public actor WhoopStore {
             // one a hard crash cut short partway.
             WhoopStore.verifyAndWriteEtlMigrationSentinel(legacyPath: path, roomPath: roomPath)
             let room = whoopDatabase(path: roomPath)
-            return OpenResult(dbWriter: legacyPool, backend: .room(room), storageBackend: .room,
+            return OpenResult(legacyPath: path, backend: .room(room), storageBackend: .room,
                                migrationProgress: progressStream)
         case .failed(let failure):
             // Never leave a partial Room file (or a stale sentinel) behind: the next launch must see
@@ -366,13 +321,13 @@ public actor WhoopStore {
     /// Fresh install (Task 3 Fix 1): writes the completion sentinel unconditionally, right after
     /// Room is created and warmed up. Nothing here needs verifying against `verify`'s row counts the
     /// way the ETL path below does: Room was built directly (never copied from legacy), so there is
-    /// no copy fidelity to confirm. `verify`'s counts still feed the sentinel's (informational-only)
-    /// content; they need NOT be 0 == 0 on the legacy side even for a brand-new database, GRDB's own
-    /// migrations can seed rows independently of any ETL (v15 seeds one `pairedDevice` row so no
-    /// existing WHOOP is orphaned), which Room's from-scratch schema has no equivalent of yet.
+    /// no copy fidelity to confirm — and, critically, NO legacy file exists in this branch, so
+    /// calling `GrdbMigrator.verify` here would try to open `legacyPath` and abort the process with
+    /// an uncaught Kotlin `SQLiteException` (error 14, CANTOPEN). The sentinel's content is
+    /// informational-only (presence is the gate), so an empty count map is written instead.
     private static func writeFreshInstallMigrationSentinel(legacyPath: String, roomPath: String) {
-        let counts = GrdbMigrator.shared.verify(legacyPath: legacyPath, roomPath: roomPath)
-        writeMigrationSentinelContent(counts, roomPath: roomPath)
+        _ = legacyPath // deliberately untouched: no legacy database exists on a fresh install
+        writeMigrationSentinelContent([:], roomPath: roomPath)
     }
 
     /// One-time ETL (Task 3 Fix 1): writes the completion sentinel ONLY IF `GrdbMigrator.verify`
@@ -542,22 +497,6 @@ public actor WhoopStore {
         return store
     }
 
-    // MARK: - Synchronous GRDB helpers
-    // GRDB 6 marks its sync read/write overloads @_disfavoredOverload so that in an async
-    // context Swift would otherwise pick the async overloads. These thin wrappers are
-    // regular (non-async) functions, so overload resolution always selects the synchronous
-    // GRDB API — which then blocks on the actor's serial executor (off main thread).
-
-    @inline(__always)
-    func syncRead<T>(_ block: (Database) throws -> T) throws -> T {
-        try dbWriter.read(block)
-    }
-
-    @inline(__always)
-    func syncWrite<T>(_ block: (Database) throws -> T) throws -> T {
-        try dbWriter.write(block)
-    }
-
     // MARK: - Maintenance
 
     /// Fully checkpoint the WAL into the main database file and truncate the -wal file, so the single
@@ -574,16 +513,6 @@ public actor WhoopStore {
             #else
             try await room.checkpointWal()
             #endif
-        case .legacyGrdb:
-            try checkpointWALImpl()
-        }
-    }
-
-    /// Non-async so GRDB's synchronous `writeWithoutTransaction` overload is chosen (mirrors the
-    /// syncRead/syncWrite pattern). Runs on the actor's executor, off the main thread.
-    private func checkpointWALImpl() throws {
-        try dbWriter.writeWithoutTransaction { db in
-            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
         }
     }
 
@@ -602,9 +531,7 @@ public actor WhoopStore {
         let base: String
         switch backend {
         case .room:
-            base = WhoopStore.roomPath(forLegacyPath: dbWriter.path)
-        case .legacyGrdb:
-            base = dbWriter.path
+            base = WhoopStore.roomPath(forLegacyPath: legacyPath)
         }
         guard base != ":memory:", !base.isEmpty else { return nil }
         let fm = FileManager.default
@@ -630,31 +557,29 @@ public actor WhoopStore {
         switch backend {
         case .room:
             return try Set(RawSQLite.queryStrings(
-                atPath: WhoopStore.roomPath(forLegacyPath: dbWriter.path),
+                atPath: WhoopStore.roomPath(forLegacyPath: legacyPath),
                 sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Set(String.fetchAll(db,
-                    sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
-            }
         }
     }
 
+    /// Room-schema introspection via the raw-SQLite probe (the Kotlin handle exposes no
+    /// `pragma_*` surface). `pk > 0` mirrors GRDB's `primaryKey(_:).columns` for explicit
+    /// PKs — every mapped Room table declares one, so the implicit-rowid case never applies.
     public func primaryKeyColumns(_ table: String) async throws -> [String] {
-        try syncRead { db in
-            try db.primaryKey(table).columns
-        }
+        try RawSQLite.queryStrings(
+            atPath: WhoopStore.roomPath(forLegacyPath: legacyPath),
+            sql: "SELECT name FROM pragma_table_info('\(table)') WHERE pk > 0 ORDER BY pk")
     }
 
     public func columnNamesForTest(table: String) async throws -> [String] {
-        try syncRead { db in
-            try db.columns(in: table).map(\.name)
-        }
+        try RawSQLite.queryStrings(
+            atPath: WhoopStore.roomPath(forLegacyPath: legacyPath),
+            sql: "SELECT name FROM pragma_table_info('\(table)') ORDER BY cid")
     }
 
     public func indexNamesForTest(table: String) async throws -> Set<String> {
-        try syncRead { db in
-            try Set(db.indexes(on: table).map(\.name))
-        }
+        try Set(RawSQLite.queryStrings(
+            atPath: WhoopStore.roomPath(forLegacyPath: legacyPath),
+            sql: "SELECT name FROM pragma_index_list('\(table)')"))
     }
 }

@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import Shared
 
 // MARK: - v8 cache: journal entries, workouts, and Apple-Health daily aggregates
@@ -91,24 +90,6 @@ extension WhoopStore {
             })
             return rows.count
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var n = 0
-                for r in rows {
-                    try db.execute(sql: """
-                        INSERT INTO journal
-                            (deviceId, day, question, answeredYes, notes, numericValue)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, day, question) DO UPDATE SET
-                            answeredYes = excluded.answeredYes,
-                            notes = excluded.notes,
-                            numericValue = excluded.numericValue
-                        """, arguments: [deviceId, r.day, r.question, r.answeredYes ? 1 : 0, r.notes,
-                                         r.numericValue])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -125,13 +106,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().deleteJournalEntry(
                 deviceId: deviceId, day: day, question: question))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    DELETE FROM journal WHERE deviceId = ? AND day = ? AND question = ?
-                    """, arguments: [deviceId, day, question])
-                return db.changesCount
-            }
         }
     }
 
@@ -159,27 +133,6 @@ extension WhoopStore {
                 })
             return rows.count
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    DELETE FROM journal WHERE deviceId = ? AND day >= ? AND day <= ?
-                    """, arguments: [deviceId, from, to])
-                var n = 0
-                for r in rows {
-                    try db.execute(sql: """
-                        INSERT INTO journal
-                            (deviceId, day, question, answeredYes, notes, numericValue)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, day, question) DO UPDATE SET
-                            answeredYes = excluded.answeredYes,
-                            notes = excluded.notes,
-                            numericValue = excluded.numericValue
-                        """, arguments: [deviceId, r.day, r.question, r.answeredYes ? 1 : 0, r.notes,
-                                         r.numericValue])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -212,33 +165,6 @@ extension WhoopStore {
             }
             return rows.count
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var n = 0
-                for r in rows {
-                    try db.execute(sql: """
-                        INSERT INTO workout
-                            (deviceId, startTs, endTs, sport, source, durationS, energyKcal,
-                             avgHr, maxHr, strain, distanceM, zonesJSON, notes)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, startTs, sport) DO UPDATE SET
-                            endTs = excluded.endTs,
-                            source = excluded.source,
-                            durationS = excluded.durationS,
-                            energyKcal = excluded.energyKcal,
-                            avgHr = excluded.avgHr,
-                            maxHr = excluded.maxHr,
-                            strain = excluded.strain,
-                            distanceM = excluded.distanceM,
-                            zonesJSON = excluded.zonesJSON,
-                            notes = excluded.notes
-                        """, arguments: [deviceId, r.startTs, r.endTs, r.sport, r.source, r.durationS,
-                                         r.energyKcal, r.avgHr, r.maxHr, r.strain, r.distanceM,
-                                         r.zonesJSON, r.notes])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -255,14 +181,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().deleteWorkoutsBySport(
                 deviceId: deviceId, sport: sport, from: Int64(from), to: Int64(to)))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    DELETE FROM workout
-                    WHERE deviceId = ? AND sport = ? AND startTs >= ? AND startTs <= ?
-                    """, arguments: [deviceId, sport, from, to])
-                return db.changesCount
-            }
         }
     }
 
@@ -290,30 +208,6 @@ extension WhoopStore {
             })
             return rows.count
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var n = 0
-                for r in rows {
-                    try db.execute(sql: """
-                        INSERT INTO appleDaily
-                            (deviceId, day, steps, activeKcal, basalKcal, vo2max,
-                             avgHr, maxHr, walkingHr, weightKg)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, day) DO UPDATE SET
-                            steps = excluded.steps,
-                            activeKcal = excluded.activeKcal,
-                            basalKcal = excluded.basalKcal,
-                            vo2max = excluded.vo2max,
-                            avgHr = excluded.avgHr,
-                            maxHr = excluded.maxHr,
-                            walkingHr = excluded.walkingHr,
-                            weightKg = excluded.weightKg
-                        """, arguments: [deviceId, r.day, r.steps, r.activeKcal, r.basalKcal, r.vo2max,
-                                         r.avgHr, r.maxHr, r.walkingHr, r.weightKg])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -334,20 +228,6 @@ extension WhoopStore {
                              numericValue: row.numericValue.map { Double(truncating: $0) })
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT day, question, answeredYes, notes, numericValue FROM journal
-                    WHERE deviceId = ? AND day >= ? AND day <= ?
-                    ORDER BY day ASC, question ASC
-                    """, arguments: [deviceId, from, to])
-                    .map {
-                        JournalEntry(day: $0["day"], question: $0["question"],
-                                     answeredYes: ($0["answeredYes"] as Int) != 0,
-                                     notes: $0["notes"],
-                                     numericValue: $0["numericValue"])
-                    }
-            }
         }
     }
 
@@ -374,22 +254,6 @@ extension WhoopStore {
                            zonesJSON: row.zonesJSON, notes: row.notes)
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT startTs, endTs, sport, source, durationS, energyKcal, avgHr, maxHr,
-                           strain, distanceM, zonesJSON, notes FROM workout
-                    WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
-                    ORDER BY startTs ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map {
-                        WorkoutRow(startTs: $0["startTs"], endTs: $0["endTs"], sport: $0["sport"],
-                                   source: $0["source"], durationS: $0["durationS"],
-                                   energyKcal: $0["energyKcal"], avgHr: $0["avgHr"], maxHr: $0["maxHr"],
-                                   strain: $0["strain"], distanceM: $0["distanceM"],
-                                   zonesJSON: $0["zonesJSON"], notes: $0["notes"])
-                    }
-            }
         }
     }
 
@@ -412,20 +276,6 @@ extension WhoopStore {
                            weightKg: row.weightKg.map { Double(truncating: $0) })
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT day, steps, activeKcal, basalKcal, vo2max, avgHr, maxHr, walkingHr, weightKg
-                    FROM appleDaily
-                    WHERE deviceId = ? AND day >= ? AND day <= ?
-                    ORDER BY day ASC
-                    """, arguments: [deviceId, from, to])
-                    .map {
-                        AppleDaily(day: $0["day"], steps: $0["steps"], activeKcal: $0["activeKcal"],
-                                   basalKcal: $0["basalKcal"], vo2max: $0["vo2max"], avgHr: $0["avgHr"],
-                                   maxHr: $0["maxHr"], walkingHr: $0["walkingHr"], weightKg: $0["weightKg"])
-                    }
-            }
         }
     }
 }

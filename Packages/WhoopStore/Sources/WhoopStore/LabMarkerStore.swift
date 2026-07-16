@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import Shared
 
 // MARK: - v17 store: Lab Book markers
@@ -70,24 +69,6 @@ public struct LabMarkerRow: Equatable, Codable, Sendable {
         self.note = note
         self.referenceText = referenceText
     }
-
-    /// Decode a GRDB row (raw-Row idiom, matching DeviceRegistryStore.decode).
-    static func decode(_ row: Row) -> LabMarkerRow {
-        LabMarkerRow(
-            id: row["id"],
-            deviceId: row["deviceId"],
-            markerKey: row["markerKey"],
-            category: row["category"],
-            day: row["day"],
-            takenAt: row["takenAt"],
-            value: row["value"],
-            valueText: row["valueText"],
-            unit: row["unit"],
-            source: row["source"],
-            note: row["note"],
-            referenceText: row["referenceText"]
-        )
-    }
 }
 
 extension WhoopStore {
@@ -131,38 +112,6 @@ extension WhoopStore {
                 )
             }))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var written = 0
-                // Track which (deviceId, markerKey, day) cells need re-projecting.
-                var touched: Set<DayCell> = []
-                for r in rows {
-                    // Upsert keyed on the natural index, NOT on the `id` PK: a re-import of the
-                    // "same reading" (same deviceId+markerKey+takenAt+source) must update, not
-                    // duplicate, even if the caller minted a fresh id.
-                    try db.execute(sql: """
-                        INSERT INTO labMarker
-                            (id, deviceId, markerKey, category, day, takenAt,
-                             value, valueText, unit, source, note, referenceText)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, markerKey, takenAt, source) DO UPDATE SET
-                            category = excluded.category,
-                            day = excluded.day,
-                            value = excluded.value,
-                            valueText = excluded.valueText,
-                            unit = excluded.unit,
-                            note = excluded.note,
-                            referenceText = excluded.referenceText
-                        """, arguments: [
-                            r.id, r.deviceId, r.markerKey, r.category, r.day, r.takenAt,
-                            r.value, r.valueText, r.unit, r.source, r.note, r.referenceText,
-                        ])
-                    written += db.changesCount
-                    touched.insert(DayCell(deviceId: r.deviceId, markerKey: r.markerKey, day: r.day))
-                }
-                try reprojectCells(db, cells: touched)
-                return written
-            }
         }
     }
 
@@ -186,14 +135,6 @@ extension WhoopStore {
                 )
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT * FROM labMarker
-                    WHERE deviceId = ? AND category = ?
-                    ORDER BY takenAt ASC
-                    """, arguments: [deviceId, category]).map(LabMarkerRow.decode)
-            }
         }
     }
 
@@ -215,14 +156,6 @@ extension WhoopStore {
                 )
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT * FROM labMarker
-                    WHERE deviceId = ? AND markerKey = ?
-                    ORDER BY takenAt ASC
-                    """, arguments: [deviceId, markerKey]).map(LabMarkerRow.decode)
-            }
         }
     }
 
@@ -235,14 +168,6 @@ extension WhoopStore {
             #else
             return try await roomDb.whoopDao().markerKeysPresent(deviceId: deviceId)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try String.fetchAll(db, sql: """
-                    SELECT DISTINCT markerKey FROM labMarker
-                    WHERE deviceId = ?
-                    ORDER BY markerKey ASC
-                    """, arguments: [deviceId])
-            }
         }
     }
 
@@ -263,57 +188,6 @@ extension WhoopStore {
             // that cell internally, matching the GRDB legacy branch's sequence exactly.
             return Bool(truncating: try await roomDb.whoopDao().deleteLabMarker(id: id))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                // Capture the cell so we can re-project after the delete.
-                guard let row = try Row.fetchOne(db, sql:
-                    "SELECT * FROM labMarker WHERE id = ?", arguments: [id]).map(LabMarkerRow.decode) else {
-                    return false
-                }
-                try db.execute(sql: "DELETE FROM labMarker WHERE id = ?", arguments: [id])
-                try reprojectCells(db, cells: [DayCell(deviceId: row.deviceId, markerKey: row.markerKey, day: row.day)])
-                return true
-            }
-        }
-    }
-
-    // MARK: - Projection helpers (private)
-
-    /// Identifies one daily projection cell.
-    private struct DayCell: Hashable {
-        let deviceId: String
-        let markerKey: String
-        let day: String
-    }
-
-    /// Recompute the `metricSeries` projection (under `lab-book`) for each touched cell
-    /// from the CURRENT `labMarker` rows. Latest-numeric-per-day wins; if no numeric
-    /// reading remains for a cell, its projected day is deleted (so a removed/last
-    /// reading never leaves a stale projected value behind).
-    private func reprojectCells(_ db: Database, cells: Set<DayCell>) throws {
-        for cell in cells {
-            // Latest NUMERIC reading for this (markerKey, day): greatest takenAt with a
-            // non-null value. Matches LabBookProjection.project(.latest) on numeric rows.
-            let latest = try Double.fetchOne(db, sql: """
-                SELECT value FROM labMarker
-                WHERE deviceId = ? AND markerKey = ? AND day = ? AND value IS NOT NULL
-                ORDER BY takenAt DESC
-                LIMIT 1
-                """, arguments: [cell.deviceId, cell.markerKey, cell.day])
-
-            if let v = latest {
-                try db.execute(sql: """
-                    INSERT INTO metricSeries (deviceId, day, key, value)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(deviceId, day, key) DO UPDATE SET value = excluded.value
-                    """, arguments: [WhoopStore.labBookSourceId, cell.day, cell.markerKey, v])
-            } else {
-                // No numeric reading remains for this cell → drop the projected day.
-                try db.execute(sql: """
-                    DELETE FROM metricSeries
-                    WHERE deviceId = ? AND day = ? AND key = ?
-                    """, arguments: [WhoopStore.labBookSourceId, cell.day, cell.markerKey])
-            }
         }
     }
 }

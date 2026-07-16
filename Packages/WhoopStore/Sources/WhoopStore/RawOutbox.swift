@@ -1,6 +1,5 @@
 import Foundation
 import Compression
-import GRDB
 import WhoopProtocol
 
 public struct ClockRef: Equatable, Codable {
@@ -109,9 +108,7 @@ extension WhoopStore {
         return blob
     }
 
-    // MARK: - Public API (Phase 2c-2 Task 4: backend-aware — `.room` routes through `OutboxBridge`
-    // over Room's `outboxBatch` table, `.legacyGrdb` keeps the original GRDB SQL byte-for-byte via the
-    // `*Grdb` helpers below.)
+    // MARK: - Public API (`.room` routes through `OutboxBridge` over Room's `outboxBatch` table.)
     //
     // `OutboxBridge(db: room)` is constructed FRESH inside each `.room` case, never stored in actor
     // state: it mirrors the bridge's own documented design (it builds its own `OutboxStore` per call
@@ -138,8 +135,6 @@ extension WhoopStore {
             let persisted = try await OutboxBridge(db: room).outboxEnqueue(meta: meta, framesBlob: blob)
             try WhoopStore.requirePersisted(persisted, batchId: meta.batchId)
             #endif
-        case .legacyGrdb:
-            try enqueueRawBatchGrdb(meta, frames: frames)
         }
     }
 
@@ -157,23 +152,6 @@ extension WhoopStore {
         }
     }
 
-    private func enqueueRawBatchGrdb(_ meta: RawBatchMeta, frames: [[UInt8]]) throws {
-        let packed = WhoopStore.packFrames(frames)
-        let blob = try WhoopStore.zlibCompressWithLength(packed)
-        try syncWrite { db in
-            try db.execute(sql: """
-                INSERT INTO rawBatch
-                    (batchId, deviceId, capturedAt, deviceClockRef, wallClockRef,
-                     startTs, endTs, frameCount, byteSize, framesBlob, syncedAt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                ON CONFLICT(batchId) DO NOTHING
-                """, arguments: [
-                    meta.batchId, meta.deviceId, meta.capturedAt,
-                    meta.clockRef.device, meta.clockRef.wall,
-                    meta.startTs, meta.endTs, meta.frameCount, meta.byteSize, blob])
-        }
-    }
-
     /// Decompress and return the exact frame bytes for a batch (empty if unknown).
     public func rawFrames(batchId: String) async throws -> [[UInt8]] {
         switch backend {
@@ -187,29 +165,7 @@ extension WhoopStore {
             let raw = try WhoopStore.zlibDecompressWithLength(blob)
             return WhoopStore.unpackFrames(raw)
             #endif
-        case .legacyGrdb:
-            return try rawFramesGrdb(batchId: batchId)
         }
-    }
-
-    private func rawFramesGrdb(batchId: String) throws -> [[UInt8]] {
-        let row: Row? = try syncRead { db in
-            try Row.fetchOne(db,
-                sql: "SELECT framesBlob FROM rawBatch WHERE batchId = ?",
-                arguments: [batchId])
-        }
-        guard let row = row else { return [] }
-        let blob: Data = row["framesBlob"]
-        let raw = try WhoopStore.zlibDecompressWithLength(blob)
-        return WhoopStore.unpackFrames(raw)
-    }
-
-    private static func metaFromRow(_ row: Row) -> RawBatchMeta {
-        RawBatchMeta(
-            batchId: row["batchId"], deviceId: row["deviceId"],
-            clockRef: ClockRef(device: row["deviceClockRef"], wall: row["wallClockRef"]),
-            capturedAt: row["capturedAt"], startTs: row["startTs"], endTs: row["endTs"],
-            frameCount: row["frameCount"], byteSize: row["byteSize"])
     }
 
     /// Un-synced batches (syncedAt IS NULL), oldest first, capped at `limit`.
@@ -221,21 +177,6 @@ extension WhoopStore {
             #else
             return try await OutboxBridge(db: room).outboxPending(limit: limit)
             #endif
-        case .legacyGrdb:
-            return try pendingRawBatchesGrdb(limit: limit)
-        }
-    }
-
-    private func pendingRawBatchesGrdb(limit: Int) throws -> [RawBatchMeta] {
-        try syncRead { db in
-            try Row.fetchAll(db, sql: """
-                SELECT batchId, deviceId, capturedAt, deviceClockRef, wallClockRef,
-                       startTs, endTs, frameCount, byteSize
-                FROM rawBatch
-                WHERE syncedAt IS NULL
-                ORDER BY capturedAt ASC
-                LIMIT ?
-                """, arguments: [limit]).map(WhoopStore.metaFromRow)
         }
     }
 
@@ -248,15 +189,6 @@ extension WhoopStore {
             #else
             try await OutboxBridge(db: room).outboxMarkSynced(batchId: batchId, at: at)
             #endif
-        case .legacyGrdb:
-            try markRawBatchSyncedGrdb(batchId: batchId, at: at)
-        }
-    }
-
-    private func markRawBatchSyncedGrdb(batchId: String, at: Int) throws {
-        try syncWrite { db in
-            try db.execute(sql: "UPDATE rawBatch SET syncedAt = ? WHERE batchId = ?",
-                           arguments: [at, batchId])
         }
     }
 }
@@ -298,8 +230,7 @@ extension WhoopStore {
     ///
     /// Backend-aware (Phase 2c-2 Task 4): `.room` routes through `OutboxBridge.outboxPrune`, which
     /// wraps the Kotlin `OutboxStore.prune` running the identical two policies in one Room
-    /// transaction (see that method's doc comment for the GRDB-parity confirmation); `.legacyGrdb`
-    /// keeps the exact SQL below.
+    /// transaction (see that method's doc comment for the GRDB-parity confirmation).
     @discardableResult
     public func pruneRaw(now: Int, keepWindowSeconds: Int, maxUnsyncedBytes: Int) async throws -> Int {
         switch backend {
@@ -310,54 +241,13 @@ extension WhoopStore {
             return try await OutboxBridge(db: room).outboxPrune(
                 now: now, keepWindowSeconds: keepWindowSeconds, maxUnsyncedBytes: maxUnsyncedBytes)
             #endif
-        case .legacyGrdb:
-            return try pruneRawGrdb(now: now, keepWindowSeconds: keepWindowSeconds,
-                                    maxUnsyncedBytes: maxUnsyncedBytes)
-        }
-    }
-
-    private func pruneRawGrdb(now: Int, keepWindowSeconds: Int, maxUnsyncedBytes: Int) throws -> Int {
-        try syncWrite { db in
-            var pruned = 0
-            // Policy 1: aged synced batches.
-            let cutoff = now - keepWindowSeconds
-            try db.execute(sql: """
-                DELETE FROM rawBatch WHERE syncedAt IS NOT NULL AND syncedAt < ?
-                """, arguments: [cutoff])
-            pruned += db.changesCount
-
-            // Policy 2 (#27): size-based eviction of the OLDEST raw beyond the cap. Sum byteSize
-            // newest-first; once the cumulative total exceeds maxUnsyncedBytes, the remaining (older)
-            // rows are over budget and get dropped. rowid keeps the cutoff stable regardless of ties
-            // on capturedAt. Decoded streams persist before raw (E2), so this loses no metric.
-            let rows = try Row.fetchAll(db, sql: """
-                SELECT rowid, byteSize FROM rawBatch ORDER BY capturedAt DESC, rowid DESC
-                """)
-            var cumulative = 0
-            var evict: [Int64] = []
-            for row in rows {
-                let size: Int = row["byteSize"]
-                let rowid: Int64 = row["rowid"]
-                cumulative += size
-                if cumulative > maxUnsyncedBytes {
-                    evict.append(rowid)
-                }
-            }
-            if !evict.isEmpty {
-                let placeholders = evict.map { _ in "?" }.joined(separator: ",")
-                try db.execute(
-                    sql: "DELETE FROM rawBatch WHERE rowid IN (\(placeholders))",
-                    arguments: StatementArguments(evict))
-                pruned += db.changesCount
-            }
-            return pruned
         }
     }
 
     // MARK: - Test helper
 
-    /// All batch ids, oldest-first. `.legacyGrdb` returns every row (synced or not), matching the
-    /// original GRDB query. `.room` has no bridge method for an unfiltered scan — Task 3 only exposed
+    /// All batch ids, oldest-first. `.room` has no bridge method for an unfiltered scan — Task 3 only
+    /// exposed
     /// `outboxPending` (unsynced-only, see `OutboxBridge`'s doc comment) — so this falls back to that,
     /// meaning a `.room`-backed store's result here excludes already-synced batches. That gap is
     /// unexercised in production: nothing in this repo ever calls `markRawBatchSynced`/
@@ -373,14 +263,6 @@ extension WhoopStore {
             #else
             return try await OutboxBridge(db: room).outboxPending(limit: Int(Int32.max)).map(\.batchId)
             #endif
-        case .legacyGrdb:
-            return try allBatchIdsForTestGrdb()
-        }
-    }
-
-    private func allBatchIdsForTestGrdb() throws -> [String] {
-        try syncRead { db in
-            try String.fetchAll(db, sql: "SELECT batchId FROM rawBatch ORDER BY capturedAt ASC")
         }
     }
 }

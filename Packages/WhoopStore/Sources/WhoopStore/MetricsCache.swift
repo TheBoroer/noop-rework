@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import Shared
 
 // MARK: - Offline cache of SERVER-computed metrics (Task 3.1 → M0.4)
@@ -134,33 +133,6 @@ extension WhoopStore {
             }
             return n
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var n = 0
-                for s in sessions {
-                    try db.execute(sql: """
-                        INSERT INTO sleepSession
-                            (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
-                             userEdited, startTsAdjusted)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, startTs) DO UPDATE SET
-                            -- A user-corrected night keeps its hand-set bed/wake times and stage breakdown;
-                            -- a recompute/import refresh (this path) updates only the derived vitals. The
-                            -- `userEdited` flag is preserved, never cleared here, so a later strap re-sync
-                            -- can't revert a correction (the dedicated edit path is `applySleepEdit`).
-                            endTs = CASE WHEN sleepSession.userEdited THEN sleepSession.endTs ELSE excluded.endTs END,
-                            efficiency = excluded.efficiency,
-                            restingHr = excluded.restingHr,
-                            avgHrv = excluded.avgHrv,
-                            stagesJSON = CASE WHEN sleepSession.userEdited THEN sleepSession.stagesJSON ELSE excluded.stagesJSON END,
-                            startTsAdjusted = CASE WHEN sleepSession.userEdited THEN sleepSession.startTsAdjusted ELSE excluded.startTsAdjusted END,
-                            userEdited = sleepSession.userEdited
-                        """, arguments: [deviceId, s.startTs, s.endTs, s.efficiency,
-                                         s.restingHr, s.avgHrv, s.stagesJSON, s.userEdited, s.startTsAdjusted])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -184,15 +156,6 @@ extension WhoopStore {
                 deviceId: deviceId, detectedStartTs: Int64(detectedStartTs),
                 newStartTs: Int64(newStartTs), newEndTs: Int64(newEndTs), stagesJSON: stagesJSON))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    UPDATE sleepSession
-                    SET startTsAdjusted = ?, endTs = ?, stagesJSON = COALESCE(?, stagesJSON), userEdited = 1
-                    WHERE deviceId = ? AND startTs = ?
-                    """, arguments: [newStartTs, newEndTs, stagesJSON, deviceId, detectedStartTs])
-                return db.changesCount
-            }
         }
     }
 
@@ -213,12 +176,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().deleteSleepSession(
                 deviceId: deviceId, startTs: Int64(startTs)))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: "DELETE FROM sleepSession WHERE deviceId = ? AND startTs = ?",
-                               arguments: [deviceId, startTs])
-                return db.changesCount
-            }
         }
     }
 
@@ -251,17 +208,6 @@ extension WhoopStore {
                 userEdited: true, startTsAdjusted: nil, motionJSON: nil, sleepStateJSON: nil))
             return rowid.int64Value == -1 ? 0 : 1
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    INSERT INTO sleepSession
-                        (deviceId, startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON,
-                         userEdited, startTsAdjusted)
-                    VALUES (?, ?, ?, ?, NULL, NULL, ?, 1, NULL)
-                    ON CONFLICT(deviceId, startTs) DO NOTHING
-                    """, arguments: [deviceId, startTs, endTs, efficiency, stagesJSON])
-                return db.changesCount
-            }
         }
     }
 
@@ -283,15 +229,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().updateSleepStages(
                 deviceId: deviceId, detectedStartTs: Int64(detectedStartTs), stagesJSON: stagesJSON))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    UPDATE sleepSession
-                    SET stagesJSON = ?
-                    WHERE deviceId = ? AND startTs = ? AND userEdited = 1
-                    """, arguments: [stagesJSON, deviceId, detectedStartTs])
-                return db.changesCount
-            }
         }
     }
 
@@ -318,14 +255,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().updateSessionMotion(
                 deviceId: deviceId, sessionStart: Int64(sessionStart), json: json))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    UPDATE sleepSession SET motionJSON = ?
-                    WHERE deviceId = ? AND startTs = ?
-                    """, arguments: [json, deviceId, sessionStart])
-                return db.changesCount
-            }
         }
     }
 
@@ -341,13 +270,6 @@ extension WhoopStore {
                 deviceId: deviceId, sessionStart: Int64(sessionStart))
             return json.flatMap(Self.decodeDoubleArray)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                let json = try String.fetchOne(db, sql: """
-                    SELECT motionJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
-                    """, arguments: [deviceId, sessionStart])
-                return json.flatMap(Self.decodeDoubleArray)
-            }
         }
     }
 
@@ -365,14 +287,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().updateSessionSleepState(
                 deviceId: deviceId, sessionStart: Int64(sessionStart), json: json))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    UPDATE sleepSession SET sleepStateJSON = ?
-                    WHERE deviceId = ? AND startTs = ?
-                    """, arguments: [json, deviceId, sessionStart])
-                return db.changesCount
-            }
         }
     }
 
@@ -388,13 +302,6 @@ extension WhoopStore {
                 deviceId: deviceId, sessionStart: Int64(sessionStart))
             return json.flatMap(Self.decodeIntArray)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                let json = try String.fetchOne(db, sql: """
-                    SELECT sleepStateJSON FROM sleepSession WHERE deviceId = ? AND startTs = ?
-                    """, arguments: [deviceId, sessionStart])
-                return json.flatMap(Self.decodeIntArray)
-            }
         }
     }
 
@@ -429,30 +336,6 @@ extension WhoopStore {
             }
             return out
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                var out: [Int: [Double]] = [:]
-                let uniq = Array(Set(sessionStarts))
-                var lo = 0
-                while lo < uniq.count {
-                    let chunk = Array(uniq[lo ..< min(lo + Self.inClauseChunk, uniq.count)])
-                    lo += Self.inClauseChunk
-                    let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
-                    var args: [DatabaseValueConvertible] = [deviceId]
-                    args.append(contentsOf: chunk)
-                    let rows = try Row.fetchAll(db, sql: """
-                        SELECT startTs, motionJSON FROM sleepSession
-                        WHERE deviceId = ? AND startTs IN (\(placeholders)) AND motionJSON IS NOT NULL
-                        """, arguments: StatementArguments(args))
-                    for row in rows {
-                        let startTs: Int = row["startTs"]
-                        guard let json: String = row["motionJSON"],
-                              let arr = Self.decodeDoubleArray(json), !arr.isEmpty else { continue }
-                        out[startTs] = arr
-                    }
-                }
-                return out
-            }
         }
     }
 
@@ -476,21 +359,6 @@ extension WhoopStore {
             }
             return out
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                var out: [Int: [Int]] = [:]
-                let rows = try Row.fetchAll(db, sql: """
-                    SELECT startTs, sleepStateJSON FROM sleepSession
-                    WHERE deviceId = ? AND startTs >= ? AND startTs <= ? AND sleepStateJSON IS NOT NULL
-                    """, arguments: [deviceId, from, to])
-                for row in rows {
-                    let startTs: Int = row["startTs"]
-                    guard let json: String = row["sleepStateJSON"],
-                          let arr = Self.decodeIntArray(json), !arr.isEmpty else { continue }
-                    out[startTs] = arr
-                }
-                return out
-            }
         }
     }
 
@@ -549,46 +417,6 @@ extension WhoopStore {
             })
             return days.count
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var n = 0
-                for d in days {
-                    try db.execute(sql: """
-                        INSERT INTO dailyMetric
-                            (deviceId, day, totalSleepMin, efficiency, deepMin, remMin, lightMin,
-                             disturbances, restingHr, avgHrv, recovery, strain, exerciseCount,
-                             spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
-                             spo2Red, spo2Ir)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(deviceId, day) DO UPDATE SET
-                            totalSleepMin = excluded.totalSleepMin,
-                            efficiency = excluded.efficiency,
-                            deepMin = excluded.deepMin,
-                            remMin = excluded.remMin,
-                            lightMin = excluded.lightMin,
-                            disturbances = excluded.disturbances,
-                            restingHr = excluded.restingHr,
-                            avgHrv = excluded.avgHrv,
-                            recovery = excluded.recovery,
-                            strain = excluded.strain,
-                            exerciseCount = excluded.exerciseCount,
-                            spo2Pct = excluded.spo2Pct,
-                            skinTempDevC = excluded.skinTempDevC,
-                            respRateBpm = excluded.respRateBpm,
-                            steps = excluded.steps,
-                            activeKcalEst = excluded.activeKcalEst,
-                            spo2Red = excluded.spo2Red,
-                            spo2Ir = excluded.spo2Ir
-                        """, arguments: [deviceId, d.day, d.totalSleepMin, d.efficiency, d.deepMin,
-                                         d.remMin, d.lightMin, d.disturbances, d.restingHr, d.avgHrv,
-                                         d.recovery, d.strain, d.exerciseCount,
-                                         d.spo2Pct, d.skinTempDevC, d.respRateBpm,
-                                         d.steps, d.activeKcalEst,
-                                         d.spo2Red, d.spo2Ir])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -608,14 +436,6 @@ extension WhoopStore {
             return Int(truncating: try await roomDb.whoopDao().deleteDailyMetricsInRange(
                 deviceId: deviceId, from: from, to: to))
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                try db.execute(sql: """
-                    DELETE FROM dailyMetric
-                    WHERE deviceId = ? AND day >= ? AND day <= ?
-                    """, arguments: [deviceId, from, to])
-                return db.changesCount
-            }
         }
     }
 
@@ -641,21 +461,6 @@ extension WhoopStore {
                     startTsAdjusted: row.startTsAdjusted.map { Int(truncating: $0) })
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON, userEdited,
-                           startTsAdjusted FROM sleepSession
-                    WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
-                    ORDER BY startTs ASC LIMIT ?
-                    """, arguments: [deviceId, from, to, limit])
-                    .map {
-                        CachedSleepSession(startTs: $0["startTs"], endTs: $0["endTs"],
-                                           efficiency: $0["efficiency"], restingHr: $0["restingHr"],
-                                           avgHrv: $0["avgHrv"], stagesJSON: $0["stagesJSON"],
-                                           userEdited: $0["userEdited"], startTsAdjusted: $0["startTsAdjusted"])
-                    }
-            }
         }
     }
 
@@ -690,29 +495,6 @@ extension WhoopStore {
                     spo2Ir: row.spo2Ir.map { Int(truncating: $0) })
             }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT day, totalSleepMin, efficiency, deepMin, remMin, lightMin, disturbances,
-                           restingHr, avgHrv, recovery, strain, exerciseCount,
-                           spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst,
-                           spo2Red, spo2Ir FROM dailyMetric
-                    WHERE deviceId = ? AND day >= ? AND day <= ?
-                    ORDER BY day ASC
-                    """, arguments: [deviceId, from, to])
-                    .map {
-                        DailyMetric(day: $0["day"], totalSleepMin: $0["totalSleepMin"],
-                                    efficiency: $0["efficiency"], deepMin: $0["deepMin"],
-                                    remMin: $0["remMin"], lightMin: $0["lightMin"],
-                                    disturbances: $0["disturbances"], restingHr: $0["restingHr"],
-                                    avgHrv: $0["avgHrv"], recovery: $0["recovery"],
-                                    strain: $0["strain"], exerciseCount: $0["exerciseCount"],
-                                    spo2Pct: $0["spo2Pct"], skinTempDevC: $0["skinTempDevC"],
-                                    respRateBpm: $0["respRateBpm"],
-                                    steps: $0["steps"], activeKcalEst: $0["activeKcalEst"],
-                                    spo2Red: $0["spo2Red"], spo2Ir: $0["spo2Ir"])
-                    }
-            }
         }
     }
 }

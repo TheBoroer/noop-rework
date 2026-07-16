@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import Shared
 
 // MARK: - v9 cache: generic long-format metric store
@@ -42,21 +41,6 @@ extension WhoopStore {
             })
             return rows.count
             #endif
-        case .legacyGrdb:
-            return try syncWrite { db in
-                var n = 0
-                for r in rows {
-                    try db.execute(sql: """
-                        INSERT INTO metricSeries
-                            (deviceId, day, key, value)
-                        VALUES (?, ?, ?, ?)
-                        ON CONFLICT(deviceId, day, key) DO UPDATE SET
-                            value = excluded.value
-                        """, arguments: [deviceId, r.day, r.key, r.value])
-                    n += db.changesCount
-                }
-                return n
-            }
         }
     }
 
@@ -73,15 +57,6 @@ extension WhoopStore {
             let rows = try await roomDb.whoopDao().metricSeries(deviceId: deviceId, key: key, from: from, to: to)
             return rows.map { MetricPoint(day: $0.day, key: $0.key, value: $0.value) }
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try Row.fetchAll(db, sql: """
-                    SELECT day, key, value FROM metricSeries
-                    WHERE deviceId = ? AND key = ? AND day >= ? AND day <= ?
-                    ORDER BY day ASC
-                    """, arguments: [deviceId, key, from, to])
-                    .map { MetricPoint(day: $0["day"], key: $0["key"], value: $0["value"]) }
-            }
         }
     }
 
@@ -94,14 +69,6 @@ extension WhoopStore {
             #else
             return try await roomDb.whoopDao().metricKeys(deviceId: deviceId)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                try String.fetchAll(db, sql: """
-                    SELECT DISTINCT key FROM metricSeries
-                    WHERE deviceId = ?
-                    ORDER BY key ASC
-                    """, arguments: [deviceId])
-            }
         }
     }
 
@@ -116,17 +83,6 @@ extension WhoopStore {
             guard let earliest = range.earliest, let latest = range.latest else { return nil }
             return (earliest, latest)
             #endif
-        case .legacyGrdb:
-            return try syncRead { db in
-                guard let row = try Row.fetchOne(db, sql: """
-                    SELECT MIN(day) AS earliest, MAX(day) AS latest FROM metricSeries
-                    WHERE deviceId = ? AND key = ?
-                    """, arguments: [deviceId, key]),
-                    let earliest: String = row["earliest"],
-                    let latest: String = row["latest"]
-                else { return nil }
-                return (earliest, latest)
-            }
         }
     }
 }
