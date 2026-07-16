@@ -119,7 +119,9 @@ class WhoopRepositoryPinningTest {
         val nowSec = 1_750_000_000L
         val minTs = com.noop.protocol.MIN_PLAUSIBLE_UNIX
         val deleted = repo.healImplausibleTimestamps(nowSec = nowSec, today = "2026-07-09")
-        assertEquals(0, deleted)
+        assertEquals(TimestampHealCounts(rawRowsDeleted = 0, computedRowsDeleted = 0), deleted)
+        assertEquals(0, deleted.total)
+        assertEquals(false, deleted.didChange)
         // The computed-daily prune gets (today verbatim, minDay = LOCAL calendar day of minTs).
         val daily = handler.calls.first { it.first == "pruneDailyMetricByDay" }
         assertEquals("2026-07-09", daily.second[0])

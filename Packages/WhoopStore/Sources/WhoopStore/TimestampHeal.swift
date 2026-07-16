@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Shared
 import WhoopProtocol
 
 extension WhoopStore {
@@ -40,8 +41,43 @@ extension WhoopStore {
         now: Int = Int(Date().timeIntervalSince1970),
         todayLocalDayKey: String = WhoopStore.localDayKey(Date())
     ) async throws -> TimestampHealResult {
-        let lo = MIN_PLAUSIBLE_UNIX
-        let hi = now + FUTURE_MARGIN
+        // Backend-aware (#65 T3): a `.room`-backed store MUST heal the live Room `noop.db`, not the
+        // vestigial GRDB pool this actor still carries during the migration window — before this
+        // dispatch the heal always ran the GRDB SQL, so on a Room store it "succeeded" against the
+        // wrong (empty) database and the polluted rows survived every launch (the heal-wrong-DB bug).
+        // Routes through the shared Kotlin `WhoopRepository.healImplausibleTimestamps` (the Android
+        // heal), constructed per call over the live handle exactly like `OutboxBridge` — nothing is
+        // stored. Bounds are the same WhoopProtocol ingest-gate constants both sides re-export.
+        // One deliberate nuance: the Kotlin heal derives the far-past floor day (`minDay`) in the
+        // LOCAL calendar (Android parity) where the GRDB path uses a UTC day key — both are the same
+        // 2023-11 sentinel ±1 day, and the floor only gates already-implausible `-noop` rows.
+        switch backend {
+        case .room(let room):
+            #if targetEnvironment(simulator) && arch(x86_64)
+            _ = room; throw RoomBackendUnavailableError()
+            #else
+            let counts = try await WhoopRepository(db: room).healImplausibleTimestamps(
+                nowSec: Int64(now),
+                today: todayLocalDayKey,
+                minTs: Int64(WhoopProtocol.MIN_PLAUSIBLE_UNIX),
+                futureMargin: Int64(WhoopProtocol.FUTURE_MARGIN)
+            )
+            return TimestampHealResult(rawRowsDeleted: Int(counts.rawRowsDeleted),
+                                       computedRowsDeleted: Int(counts.computedRowsDeleted))
+            #endif
+        case .legacyGrdb:
+            return try healImplausibleTimestampsGrdb(now: now, todayLocalDayKey: todayLocalDayKey)
+        }
+    }
+
+    /// The legacy-GRDB heal body, unchanged; non-async so GRDB's synchronous `syncWrite` runs on the
+    /// actor's executor (mirrors `checkpointWALImpl`). Deleted with the backend in #65 T6.
+    private func healImplausibleTimestampsGrdb(
+        now: Int,
+        todayLocalDayKey: String
+    ) throws -> TimestampHealResult {
+        let lo = WhoopProtocol.MIN_PLAUSIBLE_UNIX
+        let hi = now + WhoopProtocol.FUTURE_MARGIN
         return try syncWrite { db in
             // (a) Raw, ts-keyed streams. Every one of these is fed by the historical type-47 / EVENT /
             // REALTIME paths the #547 gate now guards, so the same out-of-bounds predicate cleans them.
@@ -62,7 +98,7 @@ extension WhoopStore {
             // one is bad-clock garbage — but a WHOOP CSV import (bare "my-whoop") carries REAL dates going
             // back years, and reusing the floor across all sources silently purged that imported history on
             // any heal (v8.2.1). String comparison is correct for the zero-padded yyyy-MM-dd format.
-            let floorDayKey = WhoopStore.utcDayKey(MIN_PLAUSIBLE_UNIX)
+            let floorDayKey = WhoopStore.utcDayKey(WhoopProtocol.MIN_PLAUSIBLE_UNIX)
             var computedDeleted = 0
             try db.execute(sql: "DELETE FROM dailyMetric WHERE day > ? OR (day < ? AND deviceId LIKE '%-noop')",
                            arguments: [todayLocalDayKey, floorDayKey])

@@ -79,6 +79,21 @@ object HistoryHeal {
 }
 
 /**
+ * Outcome of [WhoopRepository.healImplausibleTimestamps], split the way the Swift heal reports it:
+ * [rawRowsDeleted] = garbage raw stream rows purged (HR/PPG-HR/RR/skinTemp/step/resp/gravity/spo2/
+ * event/battery); [computedRowsDeleted] = future/implausible computed dailyMetric + sleepSession rows
+ * purged. Mirrors WhoopStore.TimestampHealResult so the iOS caller keeps its two-count heal log line
+ * when the heal routes through the shared Room store (#65 T3).
+ */
+data class TimestampHealCounts(
+    val rawRowsDeleted: Int,
+    val computedRowsDeleted: Int,
+) {
+    val total: Int get() = rawRowsDeleted + computedRowsDeleted
+    val didChange: Boolean get() = rawRowsDeleted > 0 || computedRowsDeleted > 0
+}
+
+/**
  * Repository over [WhoopDatabase] / [WhoopDao]. The single seam the rest of the app uses
  * to read/write the local store. Port of WhoopStore's public surface (StreamStore.swift,
  * Reads.swift, MetricsCache.swift) , the phone does NO metric computation here; daily/sleep
@@ -274,39 +289,41 @@ class WhoopRepository(private val dao: WhoopDao) {
      * normal analyzeRecent rescore so the real days recompute cleanly (the repeated 721-minute block is gone
      * once its garbage rows are purged). Idempotent: a re-run matches nothing.
      *
-     * Returns the TOTAL number of rows deleted (for the heal log). Bounds default to the ingest-gate
-     * constants; [nowSec] / [today] / [minDay] are injectable so a test pins the boundary deterministically.
+     * Returns the raw/computed row counts split as [TimestampHealCounts] (the iOS heal log reports the
+     * two counts separately). Bounds default to the ingest-gate constants; [nowSec] / [today] / [minDay]
+     * are injectable so a test pins the boundary deterministically.
      */
     suspend fun healImplausibleTimestamps(
         nowSec: Long = Clock.System.now().epochSeconds,
         today: String = epochSecondsToLocalDate(Clock.System.now().epochSeconds).toString(),
         minTs: Long = com.noop.protocol.MIN_PLAUSIBLE_UNIX,
         futureMargin: Long = com.noop.protocol.FUTURE_MARGIN,
-    ): Int {
+    ): TimestampHealCounts {
         val maxTs = nowSec + futureMargin
         // The far-past floor day (local day of MIN_PLAUSIBLE_UNIX). A computed (`-noop`) row before this
         // can't legitimately predate NOOP, so it is bad-clock garbage and is purged; the prune queries
         // apply this floor ONLY to `-noop` rows so a WHOOP CSV import (bare "my-whoop", REAL dates going
         // back years) is never touched (v8.2.1). A day after `today` is future-dated and always purged.
         val minDay = epochSecondsToLocalDate(minTs).toString()
-        var deleted = 0
+        var rawDeleted = 0
         // (a) raw streams (all keyed by ts)
-        deleted += dao.pruneHrByTs(minTs, maxTs)
-        deleted += dao.prunePpgHrByTs(minTs, maxTs)
-        deleted += dao.pruneRrByTs(minTs, maxTs)
-        deleted += dao.pruneSkinTempByTs(minTs, maxTs)
-        deleted += dao.pruneStepByTs(minTs, maxTs)
-        deleted += dao.pruneRespByTs(minTs, maxTs)
-        deleted += dao.pruneGravityByTs(minTs, maxTs)
-        deleted += dao.pruneSpo2ByTs(minTs, maxTs)
-        deleted += dao.pruneEventByTs(minTs, maxTs)
-        deleted += dao.pruneBatteryByTs(minTs, maxTs)
+        rawDeleted += dao.pruneHrByTs(minTs, maxTs)
+        rawDeleted += dao.prunePpgHrByTs(minTs, maxTs)
+        rawDeleted += dao.pruneRrByTs(minTs, maxTs)
+        rawDeleted += dao.pruneSkinTempByTs(minTs, maxTs)
+        rawDeleted += dao.pruneStepByTs(minTs, maxTs)
+        rawDeleted += dao.pruneRespByTs(minTs, maxTs)
+        rawDeleted += dao.pruneGravityByTs(minTs, maxTs)
+        rawDeleted += dao.pruneSpo2ByTs(minTs, maxTs)
+        rawDeleted += dao.pruneEventByTs(minTs, maxTs)
+        rawDeleted += dao.pruneBatteryByTs(minTs, maxTs)
         // (b) computed daily metrics (by day key) + sleep sessions (by startTs). The prune queries apply
         // the far-past floor ONLY to `-noop` computed rows, so a multi-year import (bare "my-whoop")
         // survives; future rows are always purged (v8.2.1).
-        deleted += dao.pruneDailyMetricByDay(today, minDay)
-        deleted += dao.pruneSleepSessionByTs(minTs, maxTs)
-        return deleted
+        var computedDeleted = 0
+        computedDeleted += dao.pruneDailyMetricByDay(today, minDay)
+        computedDeleted += dao.pruneSleepSessionByTs(minTs, maxTs)
+        return TimestampHealCounts(rawRowsDeleted = rawDeleted, computedRowsDeleted = computedDeleted)
     }
 
     /** Manually ADD a missed sleep session , typically a daytime NAP the detector didn't pick up (#508).
