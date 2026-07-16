@@ -51,6 +51,32 @@ private fun printCentralState(seconds: Long) {
     println("  final state=${stateName(central.state)}")
 }
 
+private fun printUsage() {
+    println(
+        """
+        scan-harness — NOOP BLE hardware harness (one binary, argv dispatch)
+
+        Usage: scan-harness.kexe [mode] [options]
+
+        Modes:
+          scan (default)  Scan for straps; print name/rssi/model/id per advertisement
+          session         Connect + handshake, read battery/clock, hold session open
+          realtime        Arm realtime streams; print HR/RR inserts until budget elapses
+          backfill        Historical offload: chunks → outbox → ack; runs to HISTORY_COMPLETE
+          command         Flow-5 commands (rename, alarm, buzz)
+          --help | -h     This text
+
+        Common options:
+          --whoop4 | --whoop5   Filter by model (default: both)
+          --seconds N           Time budget (defaults: scan 30, session 60, realtime 90, backfill 180)
+
+        Mode-specific:
+          scan:     --all (unfiltered), --state (CBCentralManager state probe)
+          command:  --skip-buzz, --wait-fire, --keep-alarm, --alarm-minutes N, --rename NAME
+        """.trimIndent()
+    )
+}
+
 @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
 fun main(args: Array<String>) {
     // One binary, one entrypoint (gradle pins com.noop.ble.harness.main): argv dispatch.
@@ -61,6 +87,10 @@ fun main(args: Array<String>) {
     // (CommandHarness.kt); everything else falls through to the Task 9 scan harness below. `scan`
     // is accepted as an explicit alias for the default.
     when (args.firstOrNull()) {
+        "--help", "-h", "help" -> {
+            printUsage()
+            return
+        }
         "session" -> {
             runSessionHarness(args.drop(1).toTypedArray())
             return

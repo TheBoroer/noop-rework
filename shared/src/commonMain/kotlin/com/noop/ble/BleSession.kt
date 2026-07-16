@@ -530,6 +530,12 @@ class BleSession(
     /** Serialises reassembler feeds — notify collectors run concurrently per characteristic. */
     private val reassemblerLock = Mutex()
 
+    /**
+     * Burst pacing for strap-bound commands — the strap drops all but the tail of a
+     * back-to-back command burst (hardware finding, T15e/#75; see CommandPacer).
+     */
+    private val pacer = CommandPacer()
+
     /** Monotonic mark of the moment the bond write was acked; drives post-bond-loop classification. */
     private var bondedAtMark: TimeSource.Monotonic.ValueTimeMark? = null
 
@@ -658,12 +664,18 @@ class BleSession(
         payload: ByteArray = byteArrayOf(0x00),
         writeType: WriteType = WriteType.WithoutResponse,
     ) {
-        seq = (seq + 1) and 0xFF
-        val frame = when (family) {
-            DeviceFamily.WHOOP4 -> Framing.buildCommand(cmd, payload, seq)
-            DeviceFamily.WHOOP5 -> Framing.puffinCommandFrame(cmd.rawValue, seq, payload)
+        // Paced + serialized: the strap silently drops mid-burst commands (see CommandPacer),
+        // so every write gets its own processing slot. seq is assigned inside the slot so
+        // wire order always matches sequence order under concurrent senders.
+        pacer.paced {
+            seq = (seq + 1) and 0xFF
+            val frame = when (family) {
+                DeviceFamily.WHOOP4 -> Framing.buildCommand(cmd, payload, seq)
+                DeviceFamily.WHOOP5 -> Framing.puffinCommandFrame(cmd.rawValue, seq, payload)
+            }
+            log("tx ${cmd.name} seq=$seq ${frame.size}B $writeType")
+            peripheral.write(commandCharacteristic, frame, writeType)
         }
-        peripheral.write(commandCharacteristic, frame, writeType)
     }
 
     /**

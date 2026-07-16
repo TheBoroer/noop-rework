@@ -27,6 +27,13 @@ import kotlin.uuid.ExperimentalUuidApi
  *   shared/build/bin/macosArm64/debugExecutable/scan-harness.kexe session \
  *       [--seconds N] [--whoop4|--whoop5]
  *
+ * FIRST RUN: the strap must be in PAIRING MODE — WHOOP4 silently ignores connect requests from
+ * unbonded centrals (the connect queues forever, stuck in `Connecting.Bluetooth`). Once the bond
+ * write is acked the bond persists and later runs connect without pairing mode. Also keep the
+ * official WHOOP app's phone Bluetooth off: a backgrounded app auto-reconnects and holds the
+ * strap's single data link while the strap keeps advertising (broadcast mode), so scans still
+ * see it but connects hang.
+ *
  * Flow: scan → connect to the first WHOOP seen → bond write → hello/version/clock handshake →
  * print every parsed reply → stay up for N seconds (default 60) printing connection-state
  * changes (walk out of range and back for the manual reconnect test; the harness re-runs
