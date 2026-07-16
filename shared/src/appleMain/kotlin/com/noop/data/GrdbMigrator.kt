@@ -25,7 +25,14 @@ import kotlin.math.floor
  *    exact integer (never silently truncated); the ONE deliberate conversion is
  *    ppgHrSample.bpm (GRDB REAL -> Room INTEGER, rounded half-up),
  *  - stepSample/ppgHrSample gain `synced = 0` (Room NOT NULL, absent in GRDB),
- *  - workout.routePolyline (Room-only column) is simply not named in the INSERT and lands NULL.
+ *  - workout.routePolyline (Room-only column) is simply not named in the INSERT and lands NULL,
+ *  - OLDER legacy schemas are tolerated (#65 T8): a backup written by an app version that
+ *    predates a table simply skips that table (reported in [Result.Done.skippedTables]), and a
+ *    legacy table missing newer columns copies only the shared intersection (the absent columns
+ *    are omitted from the INSERT and land NULL/default; reported in
+ *    [Result.Done.droppedColumns]). Neither is a hard failure -- schema drift the OTHER way
+ *    (legacy column with no Room twin) is impossible because the column lists below are the
+ *    frozen final GRDB shape.
  *
  * Implementation is raw SQL on BundledSQLiteDriver connections: streamed `SELECT` over the
  * legacy file, plain batched `INSERT` on the Room database's own writer connection
@@ -37,7 +44,19 @@ object GrdbMigrator {
 
     sealed interface Result {
         /** Every mapped table copied; [rowCounts] holds the copied row count per table. */
-        data class Done(val rowCounts: Map<String, Long>) : Result
+        data class Done(
+            val rowCounts: Map<String, Long>,
+            /**
+             * Mapped tables absent from the legacy file (a backup from an app version that
+             * predates them): skipped, left empty in Room. Not present in [rowCounts].
+             */
+            val skippedTables: List<String> = emptyList(),
+            /**
+             * Per-table Room columns absent from the legacy table (older backup schema): omitted
+             * from the INSERT, they land NULL/default in Room.
+             */
+            val droppedColumns: Map<String, List<String>> = emptyMap(),
+        ) : Result
 
         /** The copy stopped at [table]; already-committed batches remain but a re-run truncates them. */
         data class Failed(val table: String, val message: String) : Result
@@ -72,11 +91,16 @@ object GrdbMigrator {
      * NOT-NULL `synced` column (absent in GRDB) bound to the constant 0.
      */
     private class TableSpec(val name: String, val cols: List<Col>, val syntheticSynced: Boolean = false) {
-        val selectSql = "SELECT ${cols.joinToString(", ") { "`${it.name}`" }} FROM `$name`"
-        val insertSql = run {
-            val names = cols.map { it.name } + (if (syntheticSynced) listOf("synced") else emptyList())
+        /** SELECT over [effectiveCols] -- the intersection actually present in the legacy file. */
+        fun selectSql(effectiveCols: List<Col>) =
+            "SELECT ${effectiveCols.joinToString(", ") { "`${it.name}`" }} FROM `$name`"
+
+        /** INSERT naming only [effectiveCols]; absent Room columns land NULL/default. */
+        fun insertSql(effectiveCols: List<Col>): String {
+            val names = effectiveCols.map { it.name } +
+                (if (syntheticSynced) listOf("synced") else emptyList())
             val marks = names.joinToString(", ") { "?" }
-            "INSERT INTO `$name` (${names.joinToString(", ") { "`$it`" }}) VALUES ($marks)"
+            return "INSERT INTO `$name` (${names.joinToString(", ") { "`$it`" }}) VALUES ($marks)"
         }
     }
 
@@ -207,9 +231,24 @@ object GrdbMigrator {
                             return@useWriterConnection Result.Failed("(truncate)", e.message ?: "truncate failed")
                         }
                         val counts = LinkedHashMap<String, Long>()
+                        val skippedTables = ArrayList<String>()
+                        val droppedColumns = LinkedHashMap<String, List<String>>()
                         for (spec in TABLES) {
+                            // Schema tolerance (#65 T8): an OLDER legacy file may predate a
+                            // mapped table or newer columns of one. Skip / intersect instead of
+                            // failing the whole ETL; the Room side keeps its (already truncated)
+                            // empty table, absent columns land NULL/default.
+                            val legacyCols = legacy.tableColumns(spec.name)
+                            val effective = spec.cols.filter { it.name in legacyCols }
+                            if (effective.isEmpty()) {
+                                skippedTables.add(spec.name)
+                                continue
+                            }
+                            val dropped = spec.cols.map { it.name }.filterNot { it in legacyCols }
+                            if (dropped.isNotEmpty()) droppedColumns[spec.name] = dropped
                             try {
-                                counts[spec.name] = copyTable(legacy, transactor, spec, onProgress)
+                                counts[spec.name] =
+                                    copyTable(legacy, transactor, spec, effective, onProgress)
                             } catch (e: Throwable) {
                                 return@useWriterConnection Result.Failed(
                                     spec.name,
@@ -224,7 +263,7 @@ object GrdbMigrator {
                         // onto the live store, so any committed rows still sitting in a -wal would be
                         // silently lost. DATA SAFETY IS ABSOLUTE: checkpoint before the close below.
                         transactor.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
-                        Result.Done(counts)
+                        Result.Done(counts, skippedTables, droppedColumns)
                     }
                 }
             } finally {
@@ -238,15 +277,18 @@ object GrdbMigrator {
     /**
      * Post-copy verification: per-table `SELECT COUNT(*)` comparison, legacy vs Room, for the
      * mapped tables only. Returns table -> (legacyCount, roomCount); both files opened read-only.
+     * Tables absent from the legacy file (older backup schema, skipped by [migrate]) are omitted:
+     * there is nothing to compare, they are listed by [missingLegacyTables] instead.
      */
     fun verify(legacyPath: String, roomPath: String): Map<String, Pair<Long, Long>> {
         val legacy = BundledSQLiteDriver().open(legacyPath, SQLITE_OPEN_READONLY)
         try {
             val room = BundledSQLiteDriver().open(roomPath, SQLITE_OPEN_READONLY)
             try {
-                return TABLES.associate { spec ->
+                return TABLES.mapNotNull { spec ->
+                    if (legacy.tableColumns(spec.name).isEmpty()) return@mapNotNull null
                     spec.name to (legacy.countRows(spec.name) to room.countRows(spec.name))
-                }
+                }.toMap()
             } finally {
                 room.close()
             }
@@ -255,23 +297,43 @@ object GrdbMigrator {
         }
     }
 
+    /**
+     * Mapped tables absent from the legacy file at [legacyPath] (a backup written before the
+     * table existed). [migrate] skips them and [verify] omits them; the Swift sentinel writer
+     * logs them so support can see WHY a table is empty after a cutover. Read-only.
+     */
+    fun missingLegacyTables(legacyPath: String): List<String> {
+        val legacy = BundledSQLiteDriver().open(legacyPath, SQLITE_OPEN_READONLY)
+        try {
+            return TABLES.map { it.name }.filter { legacy.tableColumns(it).isEmpty() }
+        } finally {
+            legacy.close()
+        }
+    }
+
     // MARK: - Copy internals
 
-    /** Streams one legacy table into Room in [BATCH_SIZE]-row transactions; returns rows copied. */
+    /**
+     * Streams one legacy table into Room in [BATCH_SIZE]-row transactions; returns rows copied.
+     * [effectiveCols] is the subset of [TableSpec.cols] actually present in the legacy file
+     * (schema tolerance, #65 T8); columns not named land NULL/default on the Room side.
+     */
     private suspend fun copyTable(
         legacy: SQLiteConnection,
         transactor: Transactor,
         spec: TableSpec,
+        effectiveCols: List<Col>,
         onProgress: (Progress) -> Unit,
     ): Long {
         val total = legacy.countRows(spec.name)
         var copied = 0L
         val batch = ArrayList<Array<Any?>>(BATCH_SIZE)
+        val insertSql = spec.insertSql(effectiveCols)
 
         suspend fun flush() {
             if (batch.isEmpty()) return
             transactor.immediateTransaction {
-                usePrepared(spec.insertSql) { insert ->
+                usePrepared(insertSql) { insert ->
                     for (row in batch) {
                         insert.reset()
                         insert.clearBindings()
@@ -294,10 +356,10 @@ object GrdbMigrator {
             onProgress(Progress(spec.name, copied, total))
         }
 
-        val select = legacy.prepare(spec.selectSql)
+        val select = legacy.prepare(spec.selectSql(effectiveCols))
         try {
             while (select.step()) {
-                batch.add(readRow(select, spec))
+                batch.add(readRow(select, spec, effectiveCols))
                 if (batch.size == BATCH_SIZE) flush()
             }
         } finally {
@@ -310,10 +372,10 @@ object GrdbMigrator {
     }
 
     /** Reads one legacy row into bind-ready values, enforcing the per-column [Kind] rules. */
-    private fun readRow(select: SQLiteStatement, spec: TableSpec): Array<Any?> {
+    private fun readRow(select: SQLiteStatement, spec: TableSpec, effectiveCols: List<Col>): Array<Any?> {
         val extra = if (spec.syntheticSynced) 1 else 0
-        val row = arrayOfNulls<Any?>(spec.cols.size + extra)
-        spec.cols.forEachIndexed { index, col ->
+        val row = arrayOfNulls<Any?>(effectiveCols.size + extra)
+        effectiveCols.forEachIndexed { index, col ->
             row[index] = if (select.isNull(index)) {
                 null
             } else {
@@ -335,8 +397,23 @@ object GrdbMigrator {
                 }
             }
         }
-        if (spec.syntheticSynced) row[spec.cols.size] = 0L
+        if (spec.syntheticSynced) row[effectiveCols.size] = 0L
         return row
+    }
+
+    /**
+     * Column names of [table] in this database, empty if the table does not exist (PRAGMA
+     * table_info yields zero rows for unknown tables rather than erroring).
+     */
+    private fun SQLiteConnection.tableColumns(table: String): Set<String> {
+        val statement = prepare("PRAGMA table_info(`$table`)")
+        try {
+            val cols = LinkedHashSet<String>()
+            while (statement.step()) cols.add(statement.getText(1))
+            return cols
+        } finally {
+            statement.close()
+        }
     }
 
     private fun SQLiteConnection.countRows(table: String): Long {

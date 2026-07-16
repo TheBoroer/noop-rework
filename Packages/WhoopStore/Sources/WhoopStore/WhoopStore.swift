@@ -305,16 +305,19 @@ public actor WhoopStore {
     }
 
     /// Writes the sentinel's content: one `table=count` line per `GrdbMigrator.verify` row (the
-    /// Room-side count; the two sides already agree by the time either caller below reaches this).
+    /// Room-side count; the two sides already agree by the time either caller below reaches this),
+    /// plus one `table=skipped (absent in legacy)` line per mapped table the legacy file predates
+    /// (#65 T8 schema tolerance), so support can see WHY such a table is empty after a cutover.
     /// Best-effort: a write failure (e.g. a full disk) just leaves the sentinel unwritten, which is
     /// safe, the next launch simply finds no sentinel and retries as if this one had crashed.
     private static func writeMigrationSentinelContent(
-        _ counts: [String: KotlinPair<KotlinLong, KotlinLong>], roomPath: String
+        _ counts: [String: KotlinPair<KotlinLong, KotlinLong>], skipped: [String] = [], roomPath: String
     ) {
-        let lines = counts.keys.sorted().map { table in
+        let countLines = counts.keys.sorted().map { table in
             "\(table)=\(counts[table]?.second?.int64Value ?? -1)"
         }
-        let content = lines.joined(separator: "\n") + "\n"
+        let skipLines = skipped.sorted().map { "\($0)=skipped (absent in legacy)" }
+        let content = (countLines + skipLines).joined(separator: "\n") + "\n"
         try? content.write(toFile: migrationSentinelPath(forRoomPath: roomPath), atomically: true, encoding: .utf8)
     }
 
@@ -341,7 +344,10 @@ public actor WhoopStore {
     private static func verifyAndWriteEtlMigrationSentinel(legacyPath: String, roomPath: String) {
         let counts = GrdbMigrator.shared.verify(legacyPath: legacyPath, roomPath: roomPath)
         guard counts.values.allSatisfy({ $0.first?.int64Value == $0.second?.int64Value }) else { return }
-        writeMigrationSentinelContent(counts, roomPath: roomPath)
+        // Tables the legacy file predates were skipped by the ETL (schema tolerance, #65 T8):
+        // verify omits them (nothing to compare), the sentinel records them explicitly.
+        let skipped = GrdbMigrator.shared.missingLegacyTables(legacyPath: legacyPath)
+        writeMigrationSentinelContent(counts, skipped: skipped, roomPath: roomPath)
     }
 
     /// Removes a Room database file (plus its `-wal`/`-shm`/`-journal` sidecars) left behind by an

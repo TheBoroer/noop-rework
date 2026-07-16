@@ -245,4 +245,98 @@ class GrdbMigratorTest {
         assertEquals("hrSample", failed.table)
         assertTrue("bpm" in failed.message && "65.5" in failed.message, failed.message)
     }
+
+    /** Applies [sql] statements to the writable legacy copy (schema-drift simulation). */
+    private fun execLegacy(path: String, vararg sql: String) {
+        val conn = BundledSQLiteDriver().open(path, SQLITE_OPEN_READWRITE)
+        try {
+            sql.forEach { s ->
+                val st = conn.prepare(s)
+                try {
+                    st.step()
+                } finally {
+                    st.close()
+                }
+            }
+        } finally {
+            conn.close()
+        }
+    }
+
+    /**
+     * #65 T8 tolerance, missing table: a legacy backup from an app version that predates a mapped
+     * table (here `journal`) is skipped -- reported in [GrdbMigrator.Result.Done.skippedTables],
+     * left empty in Room, omitted by [GrdbMigrator.verify] and named by
+     * [GrdbMigrator.missingLegacyTables] -- never a hard failure.
+     */
+    @Test
+    fun legacyFileMissingAMappedTableIsSkippedNotFatal() = runTest {
+        val dir = tempDir()
+        val legacy = copyFixtureTo(dir)
+        execLegacy(legacy, "DROP TABLE `journal`")
+
+        assertEquals(listOf("journal"), GrdbMigrator.missingLegacyTables(legacy))
+
+        val room = "$dir/room.db"
+        val result = GrdbMigrator.migrate(legacy, room)
+        val done = assertIs<GrdbMigrator.Result.Done>(result, "a missing table must not fail, got $result")
+
+        assertEquals(listOf("journal"), done.skippedTables)
+        assertTrue(done.droppedColumns.isEmpty(), "no column drift was simulated: ${done.droppedColumns}")
+        assertEquals(expectedCounts - "journal", done.rowCounts)
+        assertEquals(0L, rawCount(room, "journal"), "the skipped table must stay empty in Room")
+
+        val verified = GrdbMigrator.verify(legacy, room)
+        assertTrue("journal" !in verified, "verify must omit the missing table: ${verified.keys}")
+        verified.forEach { (table, counts) -> assertEquals(counts.first, counts.second, table) }
+    }
+
+    /**
+     * #65 T8 tolerance, missing columns: a legacy `sleepSession` predating the v13/v14 edit
+     * columns and the v18 analytics columns copies only the shared intersection; the absent Room
+     * columns land NULL/default and are named in [GrdbMigrator.Result.Done.droppedColumns].
+     */
+    @Test
+    fun legacyTableMissingNewerColumnsCopiesTheIntersection() = runTest {
+        val dir = tempDir()
+        val legacy = copyFixtureTo(dir)
+        execLegacy(
+            legacy,
+            "ALTER TABLE `sleepSession` DROP COLUMN `motionJSON`",
+            "ALTER TABLE `sleepSession` DROP COLUMN `sleepStateJSON`",
+        )
+
+        val room = "$dir/room.db"
+        val result = GrdbMigrator.migrate(legacy, room)
+        val done = assertIs<GrdbMigrator.Result.Done>(result, "missing columns must not fail, got $result")
+
+        assertEquals(mapOf("sleepSession" to listOf("motionJSON", "sleepStateJSON")), done.droppedColumns)
+        assertTrue(done.skippedTables.isEmpty(), "no table may be skipped: ${done.skippedTables}")
+        assertEquals(expectedCounts, done.rowCounts, "every row still crosses, minus the two columns")
+
+        // Every migrated row landed with the absent columns NULL (never a fabricated value).
+        val conn = BundledSQLiteDriver().open(room, SQLITE_OPEN_READONLY)
+        try {
+            val st = conn.prepare(
+                "SELECT COUNT(*) FROM `sleepSession` WHERE `motionJSON` IS NULL AND `sleepStateJSON` IS NULL",
+            )
+            try {
+                check(st.step())
+                assertEquals(
+                    expectedCounts.getValue("sleepSession"),
+                    st.getLong(0),
+                    "absent legacy columns must land NULL in Room",
+                )
+            } finally {
+                st.close()
+            }
+        } finally {
+            conn.close()
+        }
+
+        // Row counts still reconcile table-for-table after the intersection copy.
+        GrdbMigrator.verify(legacy, room).forEach { (table, counts) ->
+            assertEquals(counts.first, counts.second, table)
+        }
+    }
 }
