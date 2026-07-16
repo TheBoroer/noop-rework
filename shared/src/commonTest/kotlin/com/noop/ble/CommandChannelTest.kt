@@ -282,6 +282,19 @@ class CommandChannelTest {
         assertNull(CommandPlanner.planRename(DeviceFamily.WHOOP4, ""))
     }
 
+    @Test
+    fun planReadAdvertisingName_whoop4Only() {
+        val w4 = CommandPlanner.planReadAdvertisingName(DeviceFamily.WHOOP4)
+        assertNotNull(w4, "4.0: rename card re-reads the name ~2s after a rename")
+        assertEquals(CommandNumber.GET_ADVERTISING_NAME, w4.cmd)
+        assertContentEquals(byteArrayOf(0x00), w4.payload)
+
+        assertNull(
+            CommandPlanner.planReadAdvertisingName(DeviceFamily.WHOOP5),
+            "5/MG: advertising-name reads are WHOOP 4.0 only",
+        )
+    }
+
     // ---- haptic pattern / stop (T15c: AppModel.runPattern / stopHaptics) -----------------------
 
     @Test

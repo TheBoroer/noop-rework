@@ -180,14 +180,10 @@ run macOS prompts for Bluetooth permission — the prompt text comes from
 
 ### 4. Pairing & BLE on macOS
 
-NOOP connects over CoreBluetooth (`Strand/BLE/BLEManager.swift`). The central manager is created
-on the main queue:
-
-```swift
-central = CBCentralManager(delegate: self, queue: .main)
-```
-
-so all delegate callbacks arrive on the main actor. WHOOP 4.0 uses the `61080001-…` service family
+NOOP connects over CoreBluetooth through the shared Kotlin BLE client
+(`shared/src/commonMain/kotlin/com/noop/ble/` — Kable wraps `CBCentralManager` on Apple targets),
+bridged into the app by `Strand/BLE/WhoopBleShim.swift`, which republishes connection state and
+frames onto the main actor for `LiveState`. WHOOP 4.0 uses the `61080001-…` service family
 with a CRC8 header; WHOOP 5.0 (the "goose"/MG path) uses the `fd4b0001-…` family with a
 CRC16-Modbus header. The strap must be **out of range of the official app** during initial bonding,
 and worn/charged to report a non-zero heart rate.
@@ -273,7 +269,7 @@ Notes:
 - Running on a physical iPhone needs a signing identity selected in Xcode (a free personal Apple ID
   works for on-device builds). **BLE requires a real device** — the iOS simulator can't reach a
   physical strap.
-- The iOS app reuses `BLEManager` (CoreBluetooth is identical API on iOS) and the shared analytics,
+- The iOS app reuses the shared Kotlin BLE client + `WhoopBleShim` (CoreBluetooth is identical API on iOS) and the shared analytics,
   store, import, and design packages. `StrandDesign` already bridges `NSColor`/`UIColor` behind
   `#if canImport(AppKit) / #elseif canImport(UIKit)`, so the palette, fonts, and components carry
   over. macOS-only surfaces (the menu-bar HR extra, screen-lock / Shortcut strap actions) have no

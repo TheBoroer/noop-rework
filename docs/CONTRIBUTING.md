@@ -345,7 +345,9 @@ the framing/decoding, not in the check.
 
 ### 3. Keep the BLE path stable
 
-The connect/bond/offload state machine in `Strand/BLE/BLEManager.swift` (plus `Strand/Collect/`) is
+The connect/bond/offload state machine in the shared Kotlin client
+(`shared/src/commonMain/kotlin/com/noop/ble/BleSession.kt`, bridged by
+`Strand/BLE/WhoopBleShim.swift`, plus `Strand/Collect/`) is
 load-bearing and was hardened against real failure modes that are documented in the comments
 (racing `SEND_HISTORICAL` ahead of the handshake, straps left parked in high-freq sync, a type-43
 realtime-raw flood that dominated flash). Treat it as stable infrastructure:
@@ -430,9 +432,10 @@ Only after re-reading [The BLE safety contract](#the-ble-safety-contract-read-th
    was verified on-device.
 3. **Add a payload builder if needed** (cf. `setAlarmPayload(epochSec:)`), keeping the byte layout
    documented.
-4. **Send it through the existing path** — `BLEManager.send(_:payload:writeType:)` — which frames the
-   command (correct CRC8 + CRC32) and writes to the command characteristic. Don't build raw writes
-   by hand.
+4. **Send it through the existing path** — the shared Kotlin client (`CommandChannel.kt` plans the
+   framed bytes, `BleSession.kt` performs the write), reached from Swift via `WhoopBleShim` — which
+   frames the command (correct CRC8 + CRC32) and writes to the command characteristic. Don't build
+   raw writes by hand.
 5. **Verify on a real strap** and record the result in the PR.
 
 ### Add a database column or table

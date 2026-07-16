@@ -26,9 +26,9 @@ off-device.
    ────────────────────   │                                                          │
         BLE GATT           │   CoreBluetooth          WhoopProtocol (pure decode)    │
    ┌──────────────┐  notify│  ┌────────────┐  bytes  ┌──────────────────────────┐    │
-   │ custom svc   ├────────┼─▶│ BLEManager │────────▶│ Reassembler              │    │
-   │ 6108…/fd4b…  │  write │  │ (CoreBT    │  frames │  → parseFrame            │    │
-   │ HR 0x2A37    │◀───────┼──│  delegate) │         │  → extract[Historical]…  │    │
+   │ custom svc   ├────────┼─▶│ Kotlin BLE │────────▶│ Reassembler              │    │
+   │ 6108…/fd4b…  │  write │  │ (Kable +   │  frames │  → parseFrame            │    │
+   │ HR 0x2A37    │◀───────┼──│  shim)     │         │  → extract[Historical]…  │    │
    │ batt 0x2A19  │  cmds  │  └─────┬──────┘         └────────────┬─────────────┘    │
    └──────────────┘        │        │                             │ Streams          │
                            │        │ complete frame              ▼                  │
@@ -67,7 +67,7 @@ Strand/                         macOS SwiftUI app target (the reference implemen
 │   ├── RootView.swift          NavigationSplitView shell + NavItem routing
 │   └── ContentView.swift
 ├── BLE/                        CoreBluetooth + the live/decode seam
-│   ├── BLEManager.swift        CBCentral/CBPeripheral delegate, scan→bond→stream
+│   ├── WhoopBleShim.swift      bridge to the shared Kotlin BLE client (scan→bond→stream runs in `shared/.../com/noop/ble/`)
 │   ├── FrameRouter.swift       pure decode→LiveState router (no CoreBluetooth)
 │   ├── LiveState.swift         @MainActor observable connection/biometric snapshot
 │   ├── Commands.swift          WhoopCommand enum (command bytes + frame builders)
@@ -158,15 +158,15 @@ Concurrency is deliberately split between two isolation domains plus a serial dr
 | Component | Isolation | Why |
 |---|---|---|
 | `WhoopStore` | **`actor`** | GRDB's `DatabaseQueue` calls block; the actor moves that blocking off the main thread onto its own serial executor. `DatabaseQueue` (not `DatabasePool`) is kept on purpose — the actor provides serialization. |
-| `AppModel`, `LiveState`, `Repository`, `BLEManager`, `FrameRouter`, `Collector`, `Backfiller` | **`@MainActor`** | These observe/mutate published UI state. CoreBluetooth's central is created on `queue: .main`, so delegate callbacks already arrive on the main actor — no hopping needed to update `LiveState`. |
-| Historical frame drain | **serial Task queue** | `BLEManager.routeBackfillFrame` appends frames synchronously (delegate order) and a single drain `Task` awaits `Backfiller.ingest` one frame at a time, so `HISTORY_START → data → HISTORY_END` chunk assembly can never be reordered. |
+| `AppModel`, `LiveState`, `Repository`, `WhoopBleShim`, `FrameRouter`, `Collector`, `Backfiller` | **`@MainActor`** | These observe/mutate published UI state. The Kotlin client emits on its own dispatchers; `WhoopBleShim` re-publishes every event onto the main actor, so `LiveState` mutation stays main-actor-only. |
+| Historical frame drain | **serial Task queue** | `WhoopBleShim.routeBackfillFrame` appends frames synchronously (stream order) and a single drain `Task` awaits `Backfiller.ingest` one frame at a time, so `HISTORY_START → data → HISTORY_END` chunk assembly can never be reordered. |
 
 The key invariant: **frames are buffered synchronously in delegate-callback order**, and only the
 slow work (decode + `await store.insert`) crosses into the store actor. `Collector.flush()` and
 `Backfiller.finishChunk()` both *snapshot-and-clear* their buffer before the first `await`, so
 concurrent ingests accumulate cleanly into the next batch.
 
-Two SQLite handles are open simultaneously — one inside `BLEManager`'s `Collector`/`Backfiller`, one
+Two SQLite handles are open simultaneously — one inside `WhoopBleShim`'s `Collector`/`Backfiller`, one
 inside `Repository`. This is safe because `WhoopStore` enables **WAL journal mode** and a **5-second
 busy timeout** (`PRAGMA journal_mode = WAL`, `config.busyMode = .timeout(5)`), so the writer and the
 reader never deadlock on contention.
@@ -175,13 +175,14 @@ reader never deadlock on contention.
 
 ## 5. Live path vs. historical path
 
-The two BLE data paths diverge at one branch in `BLEManager.peripheral(_:didUpdateValueFor:)`. After
-the `Reassembler` yields a complete frame, `FrameRouter.handle(frame:)` always runs (it drives the
+The two BLE data paths diverge at one branch in `WhoopBleShim`'s frame handler (fed by the Kotlin
+client's frame stream). After
+the Kotlin session yields a complete frame, `FrameRouter.handle(frame:)` always runs (it drives the
 live UI state), and then:
 
 ```swift
 if backfilling {
-    if BLEManager.isOffloadFrame(frame) {   // types 47/48/49/50 only
+    if Self.isOffloadFrame(frame, family: storeFamily) {   // types 47/48/49/50 only
         armBackfillTimeout()
         routeBackfillFrame(frame)           // serial drain → Backfiller
     }                                       // live type-40/43 flood is dropped during offload
@@ -253,9 +254,10 @@ Type-47 records carry their **own real-unix timestamps**, so the historical path
 
 ## 6. The BLE connection lifecycle
 
-`BLEManager` is the only CoreBluetooth surface. The connection handshake runs **exactly once per
-connection** (guarded by `connectHandshakeDone`, because `didWriteValueFor` re-fires on every
-confirmed write):
+The shared Kotlin client (Kable) is the only CoreBluetooth surface; `WhoopBleShim` is its single
+Swift consumer. The connection handshake runs **exactly once per
+connection** (guarded by `connectHandshakeDone` in `BleSession.kt`, because confirmed-write
+callbacks re-fire on every confirmed write):
 
 ```
 scan(customService) ─▶ didDiscover ─▶ connect ─▶ didDiscoverServices
@@ -278,7 +280,7 @@ Supporting machinery, all on the main run loop:
   frontier-frozen ⇒ a reboot hint banner; off-wrist / caught-up is *not* flagged.
 - **Auto-reconnect:** an unintentional disconnect flushes the `Collector` and rescans after 3s.
 
-`LiveState` is the published bridge: `BLEManager` and `FrameRouter` write it; SwiftUI observes it.
+`LiveState` is the published bridge: `WhoopBleShim` and `FrameRouter` write it; SwiftUI observes it.
 `RootView` isolates the ~1 Hz HR/frame churn into a small `SidebarStatus` view so the rest of the
 shell doesn't re-render on every beat.
 

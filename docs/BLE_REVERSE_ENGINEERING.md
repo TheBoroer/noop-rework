@@ -46,13 +46,14 @@ The reverse-engineering logic is split between a platform-pure Swift package and
 | `Packages/WhoopProtocol/Sources/WhoopProtocol/PostHooks.swift` | Per-type decoders for irregular layouts (raw IMU/optical, type-47 DSP record, events, metadata). |
 | `Packages/WhoopProtocol/Sources/WhoopProtocol/Streams.swift` / `HistoricalStreams.swift` | Parsed frames → durable rows (`HRSample`, `SpO2Sample`, …). |
 | `Packages/WhoopProtocol/Sources/WhoopProtocol/Resources/whoop_protocol.json` | The data-driven schema: packet types, enums, field offsets, sensor scales. |
-| `Strand/BLE/BLEManager.swift` | CoreBluetooth engine: scan → connect → **bond** → subscribe → reassemble → route. |
+| `shared/src/commonMain/kotlin/com/noop/ble/` | Kotlin BLE engine (Kable): scan → connect → **bond** → subscribe → reassemble. |
+| `Strand/BLE/WhoopBleShim.swift` | Swift bridge: consumes the Kotlin frame stream and routes it (live vs backfill). |
 | `Strand/BLE/Commands.swift` | The curated, **safe** command set (`WhoopCommand`) and the frame builder. |
 | `Strand/BLE/FrameRouter.swift` | Pure decode → live UI state (HR, events, double-tap, wrist on/off). |
 
 The `WhoopProtocol` package never imports CoreBluetooth — it exposes UUIDs as plain strings so the
-protocol code runs unchanged in tests and CLI tools. Only `BLEManager` turns those strings into
-`CBUUID`s. The `Strand/` tree (including `Strand/BLE/`) compiles into **both** Apple targets — the
+protocol code runs unchanged in tests and CLI tools. Only the shared Kotlin client (via Kable)
+turns those strings into platform UUIDs. The `Strand/` tree (including `Strand/BLE/`) compiles into **both** Apple targets — the
 macOS app and the `NOOPiOS` iOS target (`project.yml`) — so this CoreBluetooth layer is shared across
 macOS and iOS, not macOS-only.
 
@@ -67,7 +68,7 @@ flows after a quiet bonding step.
 ### The GATT layout (WHOOP 4.0)
 
 The custom service and its characteristics are the authoritative anchors of the whole protocol
-(`BLEManager.swift`):
+(`shared/src/commonMain/kotlin/com/noop/ble/FrameTransport.kt`):
 
 ```text
 Custom service  61080001-8d6d-82b8-614a-1c8cb0f8dcc6
@@ -84,14 +85,14 @@ The two standard services (`180D` heart rate, `180F` battery) are a useful sanit
 `2A37` Heart Rate Measurement characteristic streams HR and R-R intervals at ~1 Hz **without bonding**,
 which made it the reliable baseline while the custom channels were being mapped. NOOP still treats
 `2A37` as the *reliable* HR/R-R source and lets the custom streams supply everything else (see
-`parseStandardHR` in `BLEManager.swift`).
+`Strand/BLE/StandardHeartRate.swift`).
 
 ### The single confirmed-write bond
 
 The custom notify characteristics (`…0003/0004/0005`) stay silent until the link is bonded. The key
 discovery is that **one "with-response" (confirmed) write is enough** to trigger iOS/macOS just-works
 bonding — there is no PIN, no pairing UI. NOOP performs this with a benign `GET_BATTERY_LEVEL`
-(`didDiscoverCharacteristicsFor` in `BLEManager.swift`):
+(the connect handshake in `BleSession.kt`):
 
 ```swift
 // THE BONDING TRICK: one confirmed write triggers just-works bonding.
@@ -153,7 +154,7 @@ byte (and, for historical records, doubles as the **record version** — see §3
 
 BLE delivers frames in MTU-sized fragments. The `Reassembler` (`Framing.swift`) accumulates bytes,
 finds the `0xAA` SOF, reads the `len` field, and only emits a frame once `len + 4` bytes are present.
-`BLEManager.didUpdateValueFor` feeds every custom-channel notification through it before routing.
+`BleSession` (Kotlin) feeds every custom-channel notification through it before routing.
 
 ### WHOOP 5.0 envelope
 
@@ -306,7 +307,7 @@ send(.sendR10R11Realtime, payload: [0x00])   // stop the type-43 realtime flood 
 ```
 
 Because the flood can resume, the backfill idle-watchdog deliberately ignores type-43/40 frames and
-only re-arms on genuine offload frames (`BLEManager.isOffloadFrame` → types 47/48/49/50). With the raw
+only re-arms on genuine offload frames (`WhoopBleShim.isOffloadFrame` → types 47/48/49/50). With the raw
 stream off, NOOP's primary metric source becomes the **historical offload** (next section).
 
 ### On-demand raw capture
@@ -670,7 +671,8 @@ UTC-correct.
 The WHOOP 5 / MG does **not** honour `RUN_HAPTICS_PATTERN`=79 — a real-MG capture showed the strap
 rejecting 79 with `COMMAND_RESPONSE result=0x03`. The 5.0 firmware instead drives haptics with the
 **maverick** opcode **`0x13`** (`RUN_HAPTIC_PATTERN_MAVERICK`=19) — the exact command the official app
-sends, matched byte-for-byte (#48), and shipped in `BLEManager.send()`:
+sends, matched byte-for-byte (#48), and shipped via the Kotlin `CommandChannel` (the 5/MG
+maverick remap lives in `CommandChannel.kt`):
 
 ```text
 puffin cmd 0x13, body = [0x01, effects…, loopControl u16 LE, overallLoop]

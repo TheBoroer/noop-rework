@@ -294,6 +294,17 @@ object CommandPlanner {
             withResponse = true,
         )
     }
+
+    /**
+     * Read back the WHOOP 4.0 advertising name (GET_ADVERTISING_NAME, 76): the Settings rename
+     * card re-reads ~2s after a rename in case the strap applied it without rebooting (legacy
+     * BLEManager.requestAdvertisingName; the connect handshake also reads it once per connect).
+     * 5/MG: null, advertising-name reads are WHOOP 4.0 only.
+     */
+    fun planReadAdvertisingName(family: DeviceFamily): PlannedSend? = when (family) {
+        DeviceFamily.WHOOP4 -> PlannedSend(CommandNumber.GET_ADVERTISING_NAME, byteArrayOf(0x00))
+        DeviceFamily.WHOOP5 -> null
+    }
 }
 
 /**

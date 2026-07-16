@@ -41,9 +41,10 @@ event/data channels; the standard services work even before bonding.
 
 ### WHOOP 4.0 — service `61080001-…`
 
-Defined in `BLEManager.swift` (the on-device, authoritative UUIDs) and mirrored as plain
-strings in `DeviceFamily.swift`. The same `Strand/BLE/` sources (`BLEManager`,
-`StandardHeartRate`, `FrameRouter`) back both Apple-platform targets — macOS and iOS.
+Defined in the shared Kotlin BLE client (`shared/src/commonMain/kotlin/com/noop/ble/` —
+`FrameTransport.kt` / `BleScanner.kt`) and mirrored as plain strings in `DeviceFamily.swift`.
+The Kotlin client plus the `Strand/BLE/` sources (`WhoopBleShim`, `StandardHeartRate`,
+`FrameRouter`) back both Apple-platform targets — macOS and iOS.
 
 | Role | UUID | Direction |
 |------|------|-----------|
@@ -189,11 +190,11 @@ the strap's trim cursor, discarding data that was never durably stored.
 BLE notifications arrive as MTU-sized fragments. `Reassembler` (`Framing.swift`) accumulates
 bytes, finds the `0xAA` SOF, reads the `u16` LE length at `buf[1..3]`, and emits a complete
 frame once `buf.count ≥ length + 4`. Leading garbage before an SOF is discarded; a buffer with
-no SOF is dropped. The app feeds the data/cmd/event notify characteristics through one
-`Reassembler` in `peripheral(_:didUpdateValueFor:error:)`.
+no SOF is dropped. The Kotlin session (`BleSession.kt`) feeds the data/cmd/event notify
+characteristics through one `Reassembler` before routing.
 
 ```swift
-// usage in BLEManager
+// usage (conceptual — reassembly now runs in the Kotlin BleSession)
 for frame in reassembler.feed(bytes) {
     router.handle(frame: frame)   // UI/state
     // … live ingest or backfill routing …
@@ -229,7 +230,7 @@ Source: `enums.PacketType` in `whoop_protocol.json`; resolved by `Schema.typeNam
 | 55 | `RELATIVE_BATTERY_PACK_CONSOLE_LOGS` | |
 | 56 | `PUFFIN_METADATA` | WHOOP 5.0; aliased → `METADATA` |
 
-`isOffloadFrame(_:)` (in `BLEManager`) treats **47/48/49/50** as offload traffic; the live
+`isOffloadFrame(_:family:)` (in `WhoopBleShim+Backfill.swift`) treats **47/48/49/50** as offload traffic; the live
 `REALTIME_DATA`(40)/`REALTIME_RAW_DATA`(43) flood is excluded so it cannot keep the backfill
 idle-watchdog alive.
 
@@ -297,7 +298,7 @@ refusing to stream type-47, so the guard is load-bearing. The one-shot handshake
    required to serve).
 2. `GET_ADVERTISING_NAME_HARVARD` (76).
 3. `SET_CLOCK` (10) — set the strap RTC to UTC; payload is the **8-byte** form
-   `[seconds u32 LE][subseconds u32 LE]` (`BLEManager.setClockPayload()`). A wrong-length
+   `[seconds u32 LE][subseconds u32 LE]` (`BleSession.setClockPayload()` in Kotlin). A wrong-length
    `SET_CLOCK` is ack'd but not latched, leaving the RTC "lost" so the strap won't serve type-47.
 4. `GET_CLOCK` (11) with an **empty** payload (the strap ignores a wrong-length payload). The
    response establishes the device↔wall `ClockRef` correlation used for realtime decode.
@@ -368,7 +369,7 @@ public func frame(seq: UInt8, payload: [UInt8] = [0x00]) -> [UInt8] {
 **Payload builders** in `WhoopCommand`:
 
 - `setAlarmPayload(epochSec:)` → `[0x01] + epoch u32 LE + [0x00, 0x00]` (7 bytes).
-- `BLEManager.setClockPayload(now:)` → `[secs u32 LE][0,0,0,0]` (8 bytes; subseconds in
+- `BleSession.setClockPayload(nowUnixSeconds:)` (Kotlin) → `[secs u32 LE][0,0,0,0]` (8 bytes; subseconds in
   1/32768 s, zero is fine).
 
 > **Note on `ENTER_HIGH_FREQ_SYNC` (96):** current builds do **not** enter high-freq sync; they
@@ -550,7 +551,8 @@ inherit a base layout and override only what changed. The streamed decode that f
 | `Packages/WhoopProtocol/Sources/WhoopProtocol/PostHooks.swift` | per-type irregular-field decoders |
 | `Packages/WhoopProtocol/Sources/WhoopProtocol/HistoricalMeta.swift` | `classifyHistoricalMeta` (START/END/COMPLETE) |
 | `Packages/WhoopProtocol/Sources/WhoopProtocol/Resources/whoop_protocol.json` | canonical enums + packet layouts |
-| `Strand/BLE/BLEManager.swift` | CoreBluetooth transport, bond, connect lifecycle, backfill orchestration |
+| `shared/src/commonMain/kotlin/com/noop/ble/` | Kotlin BLE client (Kable): transport, bond, connect lifecycle, commands |
+| `Strand/BLE/WhoopBleShim.swift` (+ `+Backfill`, `+SalvageProbe`) | Swift bridge to the Kotlin client; backfill orchestration |
 | `Strand/BLE/Commands.swift` | safe `WhoopCommand` set + outbound frame builder |
 | `Strand/BLE/FrameRouter.swift` | decode → `LiveState` (UI) |
 | `Strand/BLE/StandardHeartRate.swift` | `0x2A37` HR/R-R parser |

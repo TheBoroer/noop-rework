@@ -240,8 +240,9 @@ send is the connection log. NOOP keeps one so it can be shared **without** needi
 log doubles as the primary tool for **debugging and protocol development** (see
 `ANDROID.md` → "Debugging the strap connection").
 
-**What it is.** The BLE client (`android/.../ble/WhoopBleClient.kt`,
-`Strand/BLE/BLEManager.swift` on the Swift side — macOS and iOS) keeps an **in-memory
+**What it is.** The BLE client (`android/.../ble/WhoopBleClient.kt` on Android; the shared
+Kotlin client `shared/src/commonMain/kotlin/com/noop/ble/` + `Strand/BLE/WhoopBleShim.swift`
+on macOS and iOS) keeps an **in-memory
 ring buffer** — the last
 2000 log lines on Android — of the connection's control flow: scan results (strap
 advertised name + RSSI), the bond/handshake state machine, command names with their

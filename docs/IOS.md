@@ -179,9 +179,10 @@ the packages like this:
 - `Strand/App/StrandApp.swift` — the `@main` SwiftUI `App`. Declares a `WindowGroup`
   and a `MenuBarExtra` scene.
 - `Strand/App/AppModel.swift` — root `@MainActor` state object. Owns `LiveState`,
-  the `BLEManager`, the `Repository` read-model, the `ProfileStore`, and the
+  the `WhoopBleShim` BLE bridge, the `Repository` read-model, the `ProfileStore`, and the
   `BehaviorStore`.
-- `Strand/BLE/BLEManager.swift` — the CoreBluetooth engine.
+- `Strand/BLE/WhoopBleShim.swift` — bridges the shared Kotlin BLE engine
+  (`shared/src/commonMain/kotlin/com/noop/ble/`, Kable over CoreBluetooth) into `LiveState`.
 - `Strand/Collect/` — the collector, backfiller, clock-correlation, and store paths.
 - `Strand/Data/` — `Repository`, importers, and settings stores.
 - `Strand/Screens/` — the SwiftUI screens (Today, Trends, Sleep, Workouts, etc.).
@@ -216,7 +217,8 @@ both fully supported on iOS.
 
 ## CoreBluetooth on iOS
 
-The BLE engine (`Strand/BLE/BLEManager.swift`) uses **CoreBluetooth**, which is the
+The BLE engine (the shared Kotlin client in `shared/src/commonMain/kotlin/com/noop/ble/`,
+via Kable) uses **CoreBluetooth** on Apple targets, which is the
 same framework on iOS and macOS. The strap interaction — scan by service → connect →
 discover → **bond** (one confirmed write) → subscribe → reassemble fragmented frames →
 route — is identical across platforms.
@@ -229,8 +231,10 @@ the app wraps in `CBUUID`.
 
 ### Background BLE — what's already wired
 
-The engine was written anticipating iOS background collection. `BLEManager` already
-implements **CoreBluetooth state restoration**:
+The legacy Swift engine (`BLEManager`, since replaced by the shared Kotlin client +
+`WhoopBleShim`) was written anticipating iOS background collection and implemented
+**CoreBluetooth state restoration**. Its pattern is kept here as the reference for
+what the iOS target must reproduce:
 
 ```swift
 static let restoreID = "com.openwhoop.ble.central"
@@ -270,24 +274,27 @@ must be created **with** the restoration identifier, and the app must declare th
 Bluetooth background mode:
 
 ```swift
-// iOS-only initializer
+// iOS-only: legacy pattern — with the Kable-based Kotlin client the CBCentralManager
+// is created inside Kable, so the restore identifier must be plumbed through Kable's
+// central-manager configuration instead of constructed by hand:
 central = CBCentralManager(
     delegate: self,
     queue: .main,
-    options: [CBCentralManagerOptionRestoreIdentifierKey: BLEManager.restoreID]
+    options: [CBCentralManagerOptionRestoreIdentifierKey: restoreID]
 )
 ```
 
 | Requirement | iOS action |
 |---|---|
 | Background execution | `UIBackgroundModes` in `Info.plist` includes `bluetooth-central`. |
-| State restoration | Pass `CBCentralManagerOptionRestoreIdentifierKey: BLEManager.restoreID` when constructing the central. `BLEManager.restoreID` already exists. |
+| State restoration | Pass `CBCentralManagerOptionRestoreIdentifierKey` when constructing the central — now requires plumbing a restore identifier through Kable's central configuration in the shared Kotlin client. |
 | Usage description | `NSBluetoothAlwaysUsageDescription` (the macOS target already supplies a copy in its `Info.plist` — reuse and re-word for iOS). |
 | Reconnect on relaunch | Already handled by `willRestoreState` + `centralManagerDidUpdateState`. |
 | App Sandbox / entitlement | iOS does not use `com.apple.security.device.bluetooth` (that is a macOS App Sandbox entitlement); the iOS Bluetooth capability is granted via the usage-description prompt + background mode. |
 
 The keep-alive, liveness watchdog, periodic backfill, and reconnect-on-disconnect
-timers in `BLEManager` are platform-neutral `DispatchSource` timers. Note that iOS
+timers now live in the shared Kotlin client as coroutine loops (platform-neutral by
+construction). Note that iOS
 suspends the app between BLE events, so these timers do **not** run continuously in the
 background the way they do on a Mac that stays awake — on iOS, progress is driven by
 the system waking the app for BLE traffic. The existing logic (rate-limited
@@ -348,8 +355,8 @@ static func runShortcut(_ name: String) {
 
 **The portable actions move to iOS directly:**
 
-- `buzzBack` — sends a haptic command to the strap over BLE; purely `BLEManager`, no
-  platform API. Works on iOS.
+- `buzzBack` — sends a haptic command to the strap over BLE; purely the shared BLE
+  client, no platform API. Works on iOS.
 - `markMoment` — appends a timestamp to `moments` in `AppModel` and persists to
   `UserDefaults`. Works on iOS.
 - `none` — trivially portable.
@@ -440,7 +447,7 @@ StrandiOS/                   # NEW iOS app target
 │   ├── StrandiOSApp.swift          # @main; WindowGroup only (no MenuBarExtra)
 │   └── AppModel+iOS.swift          # iOS BLE options, HealthKit wiring
 ├── BLE/
-│   └── BLEManager+iOS.swift        # central built WITH RestoreIdentifierKey
+│   └── WhoopBleShim+iOS.swift      # iOS-specific shim wiring (restore identifier via Kable)
 ├── Health/
 │   └── HealthKitBridge.swift       # two-way HealthKit (read + write)
 ├── System/

@@ -367,7 +367,8 @@ builder exactly — it is the most-exercised write path.
 
 This is the **trickiest** part of the port — Android's GATT stack is stricter than CoreBluetooth —
 but it is implemented and **validated on a real WHOOP 4.0** (live HR confirmed on 5.0/MG). The
-macOS reference is `Strand/BLE/BLEManager.swift` (CoreBluetooth); the Android equivalent uses
+macOS/iOS reference is the shared Kotlin client (`shared/src/commonMain/kotlin/com/noop/ble/` —
+Kable over CoreBluetooth); the Android equivalent uses
 `BluetoothGatt`. The **sequence is identical**; only the API differs. The notes below document how
 the Android layer mirrors the reference so future changes stay in parity.
 
@@ -384,7 +385,7 @@ the Android layer mirrors the reference so future changes stay in parity.
 | `didUpdateValueFor` delegate | `onCharacteristicChanged` callback |
 | `didWriteValueFor` (confirmed-write = bond) | `onCharacteristicWrite` with `GATT_SUCCESS` |
 
-### The connect → bond → stream sequence (must match `BLEManager`)
+### The connect → bond → stream sequence (must match the shared client's `BleSession`)
 
 1. **Scan** filtered by the family service UUID (`61080001-…` for 4.0, `fd4b0001-…` for 5.0).
 2. **Connect** and **discover services**, then discover the family characteristics.

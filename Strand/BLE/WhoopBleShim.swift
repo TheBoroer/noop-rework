@@ -288,10 +288,48 @@ public final class WhoopBleShim: ObservableObject {
         try await sendCommands([plan])
     }
 
+    /// Rename the strap's BLE advertising name (WHOOP 4.0 only). Kotlin `planRename` owns the
+    /// family/blank refusals for the wire; the guards here keep the legacy UX contract
+    /// (BLEManager.renameStrap): every refusal surfaces WHY on `LiveState.renameStatus`, which
+    /// the Settings strap-name card renders. The result ack still lands via `FrameRouter`
+    /// overwriting `renameStatus`; if the strap reboots to apply, the reconnect handshake
+    /// re-reads the name.
     public func renameStrap(_ rawName: String) async throws {
-        guard let family = connectedFamily,
-              let plan = CommandPlanner.shared.planRename(family: family, rawName: rawName) else { return }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let family = connectedFamily else {
+            state.renameStatus = "Connect and pair your strap first."
+            return
+        }
+        guard family == .whoop4 else {
+            state.renameStatus = "Renaming is WHOOP 4.0 only."
+            state.append(log: "Strap rename: WHOOP 4.0 only, ignored on a 5/MG.")
+            return
+        }
+        guard !name.isEmpty else {
+            state.renameStatus = "Enter a name first."
+            return
+        }
+        guard let plan = CommandPlanner.shared.planRename(family: family, rawName: name) else { return }
+        state.renameStatus = "Renaming…"
         try await sendCommands([plan])
+        state.append(log: "Strap rename: wrote advertising name=\(name.debugDescription)")
+        // Re-read shortly after so the card reflects the change if the strap applies it without
+        // dropping the link; if it reboots instead, the connect handshake re-reads on reconnect.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, let family = self.connectedFamily,
+                  let read = CommandPlanner.shared.planReadAdvertisingName(family: family) else { return }
+            try? await self.sendCommands([read])
+        }
+        // Timeout so the card can't hang on "Renaming…" forever (#428: some WHOOP 4.0 firmware
+        // never returns the SET_ADVERTISING_NAME ack, it just reboots or swallows the command).
+        // A real ack or the reconnect re-read overwrites this the moment it arrives.
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard let self, self.state.renameStatus == "Renaming…" else { return }
+            self.state.renameStatus = "Rename sent - reconnect your strap to confirm the new name."
+            self.state.append(log: "Strap rename: no ack within 8s, firmware may apply it on reboot/reconnect.")
+        }
     }
 
     /// Legacy `BLEManager.externalLog` seam — non-BLE subsystems (HR broadcast, imports) append
