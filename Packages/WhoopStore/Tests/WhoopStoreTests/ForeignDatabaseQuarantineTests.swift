@@ -161,8 +161,9 @@ final class ForeignDatabaseQuarantineTests: XCTestCase {
                        "a fresh Room store opened once the foreign file was quarantined")
         XCTAssertTrue(quarantined(roomPath), "the foreign Room-path file was quarantined")
         XCTAssertTrue(exists(roomPath), "a clean Room store now lives at noop.db")
-        let tables = try await store.tableNames()
-        XCTAssertTrue(tables.contains("grdb_migrations"), "the legacy GRDB pool still migrated normally")
+        // `store.tableNames()` reads the Room `noop.db` since #65 T4, so probe the legacy file directly.
+        XCTAssertTrue(try tableNames(at: legacyPath).contains("grdb_migrations"),
+                      "the legacy GRDB pool still migrated normally")
     }
 
     private func tableNames(at path: String) throws -> Set<String> {

@@ -360,11 +360,11 @@ extension WhoopStore {
     /// original GRDB query. `.room` has no bridge method for an unfiltered scan — Task 3 only exposed
     /// `outboxPending` (unsynced-only, see `OutboxBridge`'s doc comment) — so this falls back to that,
     /// meaning a `.room`-backed store's result here excludes already-synced batches. That gap is
-    /// unexercised today: nothing in this repo ever calls `markRawBatchSynced`/`outboxMarkSynced` in
-    /// production (grep confirms only tests do, and existing tests using this helper — `PruneTests`
-    /// — construct their store via `.inMemory()`, which is always `.legacyGrdb`), so this is a
-    /// documented limitation rather than a live bug. A future Room-backed caller that needs a true
-    /// unfiltered scan will need a new Kotlin/bridge method; out of scope for Task 4 (Swift-only).
+    /// unexercised in production: nothing in this repo ever calls `markRawBatchSynced`/
+    /// `outboxMarkSynced` outside tests (grep confirms). Tests that exercise synced batches
+    /// (`PruneTests`) assert survival via `rawFrames(batchId:)` instead of this pending-only scan.
+    /// A future Room-backed caller that needs a true unfiltered scan will need a new Kotlin/bridge
+    /// method; out of scope for #65 T4 (Swift-only).
     public func allBatchIdsForTest() async throws -> [String] {
         switch backend {
         case .room(let room):

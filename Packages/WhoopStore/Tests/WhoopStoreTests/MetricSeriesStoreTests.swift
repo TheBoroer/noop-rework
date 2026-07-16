@@ -29,7 +29,7 @@ final class MetricSeriesStoreTests: XCTestCase {
     func testExistingTablesStillPresentAfterV9() async throws {
         let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
-        for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
+        for t in ["device", "hrSample", "rrInterval", "event", "battery", "outboxBatch",
                   "sleepSession", "dailyMetric", "journal", "workout", "appleDaily"] {
             XCTAssertTrue(tables.contains(t), "v9 must not drop \(t)")
         }

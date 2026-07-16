@@ -24,8 +24,14 @@ final class PruneTests: XCTestCase {
         let pruned = try await store.pruneRaw(now: 10000, keepWindowSeconds: 1000,
                                               maxUnsyncedBytes: 1_000_000)
         XCTAssertEqual(pruned, 1)                                  // only "aged"
+        // `allBatchIdsForTest()` is pending-only under Room (see its doc comment), so it can't see
+        // the synced-but-kept "fresh" batch. Assert survival via frame reads instead.
         let remaining = try await store.allBatchIdsForTest()
-        XCTAssertEqual(remaining, ["fresh", "unsynced"])
+        XCTAssertEqual(remaining, ["unsynced"], "pending scan: synced batches are invisible")
+        let agedFrames = try await store.rawFrames(batchId: "aged")
+        XCTAssertEqual(agedFrames, [], "aged synced batch was pruned")
+        let freshFrames = try await store.rawFrames(batchId: "fresh")
+        XCTAssertEqual(freshFrames, frames, "recently-synced batch inside the keep window survives")
     }
 
     func testEvictsOldestRawBeyondByteCap() async throws {

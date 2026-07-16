@@ -36,8 +36,8 @@ final class BiometricStreamTests: XCTestCase {
         // Building from a fresh DB runs v1 → v2 → v3 in order; assert old + new coexist.
         let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
-        for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
-                  "cursors", "spo2Sample", "skinTempSample", "respSample", "gravitySample"] {
+        for t in ["device", "hrSample", "rrInterval", "event", "battery", "outboxBatch",
+                  "outboxCursor", "spo2Sample", "skinTempSample", "respSample", "gravitySample"] {
             XCTAssertTrue(tables.contains(t), "missing table \(t)")
         }
     }

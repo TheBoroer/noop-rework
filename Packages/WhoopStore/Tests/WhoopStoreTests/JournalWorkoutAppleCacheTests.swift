@@ -23,7 +23,7 @@ final class JournalWorkoutAppleCacheTests: XCTestCase {
     func testExistingTablesStillPresentAfterV8() async throws {
         let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
-        for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
+        for t in ["device", "hrSample", "rrInterval", "event", "battery", "outboxBatch",
                   "sleepSession", "dailyMetric"] {
             XCTAssertTrue(tables.contains(t), "v8 must not drop \(t)")
         }

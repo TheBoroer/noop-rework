@@ -5,7 +5,7 @@ final class MigrationTests: XCTestCase {
     func testInMemoryRunsMigrations() async throws {
         let store = try await WhoopStore.inMemory()
         let tables = try await store.tableNames()
-        for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch"] {
+        for t in ["device", "hrSample", "rrInterval", "event", "battery", "outboxBatch"] {
             XCTAssertTrue(tables.contains(t), "missing table \(t)")
         }
     }

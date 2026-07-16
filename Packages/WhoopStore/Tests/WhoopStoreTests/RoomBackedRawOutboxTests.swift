@@ -2,8 +2,9 @@ import XCTest
 import WhoopProtocol
 @testable import WhoopStore
 
-/// Phase 2c-2 Task 4 — the Room-backed counterpart to `RawOutboxTests`/`CursorTests` (both of which
-/// stay on `WhoopStore.inMemory()`, always `.legacyGrdb`, and are pinned unchanged by this task). Uses
+/// Phase 2c-2 Task 4 — the Room-backed outbox/cursor suite. (GRDB-removal Task 4: the old GRDB
+/// `RawOutboxTests` twin is deleted — `inMemory()` itself is Room-backed now — and its two
+/// codec-stress cases live at the bottom of this file.) Uses
 /// `WhoopStore.roomBackedForTest()` (a fresh install, no ETL) to exercise the SAME public
 /// `WhoopStore` outbox/cursor methods through the `.room` branch added in this task, proving the
 /// repointed Collector/Backfiller/diagnostics call sites actually reach Room's `outboxBatch` /
@@ -120,5 +121,36 @@ final class RoomBackedRawOutboxTests: XCTestCase {
         // even though its row still physically exists until a `pruneRaw` sweep removes it.
         XCTAssertEqual(stats.rawBatches, 1)
         XCTAssertEqual(stats.rawBytes, meta("a").byteSize)
+    }
+
+    // MARK: - Codec stress (ported from the deleted GRDB `RawOutboxTests`, GRDB-removal Task 4)
+
+    func testRoundTripLargeBatchUnderRoom() async throws {
+        let store = try await WhoopStore.roomBackedForTest()
+        // 200 frames x 24 bytes → packed >> (byteSize + 256) hint; exercises the truncation path.
+        let manyFrames = (0..<200).map { i in [UInt8](repeating: UInt8(i & 0xFF), count: 24) }
+        let byteSize = manyFrames.reduce(0) { $0 + $1.count }
+        let m = RawBatchMeta(batchId: "big", deviceId: "dev1",
+                             clockRef: ClockRef(device: 0, wall: 0),
+                             capturedAt: 1, startTs: 0, endTs: 0,
+                             frameCount: manyFrames.count, byteSize: byteSize)
+        try await store.enqueueRawBatch(m, frames: manyFrames)
+        let gotLarge = try await store.rawFrames(batchId: "big")
+        XCTAssertEqual(gotLarge, manyFrames)
+    }
+
+    func testRoundTripHighlyCompressibleBatchUnderRoom() async throws {
+        let store = try await WhoopStore.roomBackedForTest()
+        // All-zero frames compress to a tiny blob but decompress LARGE — the worst case for
+        // any fixed-size decode buffer heuristic.
+        let zeros = (0..<300).map { _ in [UInt8](repeating: 0, count: 64) }
+        let byteSize = zeros.reduce(0) { $0 + $1.count }
+        let m = RawBatchMeta(batchId: "z", deviceId: "dev1",
+                             clockRef: ClockRef(device: 0, wall: 0),
+                             capturedAt: 1, startTs: 0, endTs: 0,
+                             frameCount: zeros.count, byteSize: byteSize)
+        try await store.enqueueRawBatch(m, frames: zeros)
+        let gotZeros = try await store.rawFrames(batchId: "z")
+        XCTAssertEqual(gotZeros, zeros)
     }
 }

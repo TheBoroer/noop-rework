@@ -80,10 +80,10 @@ final class MigrationOrchestrationTests: XCTestCase {
         // interrupted migration.
         XCTAssertTrue(FileManager.default.fileExists(atPath: roomPath + ".migrated"),
             "a fresh install must write the completion sentinel too")
-        // rawBatch/cursors always live on the legacy GRDB handle, so it must exist too, migrated.
+        // The raw outbox is Room-native (`outboxBatch`) since 2c-2; `tableNames()` reads Room (#65 T4).
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("hrSample"))
-        XCTAssertTrue(tables.contains("rawBatch"))
+        XCTAssertTrue(tables.contains("outboxBatch"))
     }
 
     // MARK: - 2. Legacy-only (ETL runs, with progress)
@@ -210,57 +210,58 @@ final class MigrationOrchestrationTests: XCTestCase {
         try TestSQLite.exec(atPath: path, "UPDATE hrSample SET bpm = 65.5 WHERE deviceId = 'whoop-beta'")
     }
 
-    func testEtlFailureFallsBackToLegacyGrdbWithDiagnosticFlag() async throws {
+    /// Task 5 (#65): a failed ETL no longer falls back to a live `.legacyGrdb` backend — the open
+    /// THROWS `MigrationFailedError` (carrying the table + underlying detail) and leaves neither a
+    /// partial Room file nor a sentinel behind, so the next launch retries the ETL cleanly.
+    func testEtlFailureThrowsMigrationFailedError() async throws {
         let dir = try tempDir()
         let legacyPath = try copyFixture(into: dir)
         try plantNonIntegerBpm(atPath: legacyPath)
         let roomPath = roomPath(for: legacyPath)
 
-        let store = try await WhoopStore(path: legacyPath)
-
-        guard case .legacyGrdb(let reason) = store.storageBackend else {
-            return XCTFail("expected a legacyGrdb fallback, got \(store.storageBackend)")
+        do {
+            _ = try await WhoopStore(path: legacyPath)
+            XCTFail("expected the ETL failure to throw MigrationFailedError")
+        } catch let error as WhoopStore.MigrationFailedError {
+            // The diagnostic detail the old `fallbackReason` string used to carry now rides on
+            // the typed error itself.
+            XCTAssertEqual(error.table, "hrSample")
+            XCTAssertTrue(error.message.contains("65.5"), error.message)
         }
-        let message = try XCTUnwrap(reason, "a real ETL failure must carry a diagnostic reason")
-        XCTAssertTrue(message.contains("hrSample"), message)
-        XCTAssertTrue(message.contains("65.5"), message)
 
         // No partial Room file left behind: the next launch must retry cleanly, not skip past.
         XCTAssertFalse(FileManager.default.fileExists(atPath: roomPath))
         // Fix 1: nor a stale sentinel (there shouldn't be one yet, but this is the invariant that
         // actually matters: no sentinel survives a failed ETL).
         XCTAssertFalse(FileManager.default.fileExists(atPath: roomPath + ".migrated"))
-
-        // The store is still fully functional on the legacy GRDB handle: reads AND writes work.
-        try await store.upsertDevice(id: "still-works", mac: nil, name: "WHOOP")
-        let tables = try await store.tableNames()
-        XCTAssertTrue(tables.contains("hrSample"))
-
-        // Progress was still observable (device, the first table, completes before hrSample fails).
-        let progress = try XCTUnwrap(store.migrationProgress)
-        var values: [Double] = []
-        for await v in progress { values.append(v) }
-        XCTAssertFalse(values.isEmpty, "the device table completes before the hrSample failure")
-        XCTAssertLessThan(values.last ?? 1, 1.0, "a failed ETL must never report full completion")
     }
 
     func testEtlFailureRetriesOnNextLaunch() async throws {
         let dir = try tempDir()
         let legacyPath = try copyFixture(into: dir)
         try plantNonIntegerBpm(atPath: legacyPath)
+        let roomPath = roomPath(for: legacyPath)
 
-        let firstOpen = try await WhoopStore(path: legacyPath)
-        guard case .legacyGrdb = firstOpen.storageBackend else {
-            return XCTFail("precondition: first open must fall back")
+        // First launch: the corrupted legacy file makes the ETL throw.
+        do {
+            _ = try await WhoopStore(path: legacyPath)
+            return XCTFail("precondition: first open must throw")
+        } catch is WhoopStore.MigrationFailedError {}
+
+        // Second launch, same still-corrupted legacy file: must attempt the ETL again and throw
+        // again — not silently stay on a stale "Room exists" shortcut.
+        do {
+            _ = try await WhoopStore(path: legacyPath)
+            return XCTFail("expected the retry to throw again while the file stays corrupt")
+        } catch let error as WhoopStore.MigrationFailedError {
+            XCTAssertEqual(error.table, "hrSample", "the retry must re-run the ETL to the same failure")
         }
 
-        // Second launch, same still-corrupted legacy file: must attempt the ETL again (a fresh
-        // `migrationProgress`, not `nil`), not silently stay on a stale "Room exists" shortcut.
-        let secondOpen = try await WhoopStore(path: legacyPath)
-        XCTAssertNotNil(secondOpen.migrationProgress, "a retried launch must attempt the ETL again")
-        guard case .legacyGrdb(let reason) = secondOpen.storageBackend else {
-            return XCTFail("expected the retry to fall back again while the file stays corrupt")
-        }
-        XCTAssertNotNil(reason)
+        // Repair the corruption: the NEXT launch's retry must complete the cutover to Room.
+        try TestSQLite.exec(atPath: legacyPath, "UPDATE hrSample SET bpm = 65 WHERE deviceId = 'whoop-beta'")
+        let thirdOpen = try await WhoopStore(path: legacyPath)
+        XCTAssertEqual(thirdOpen.storageBackend, .room, "a repaired file must migrate on retry")
+        XCTAssertNotNil(thirdOpen.migrationProgress, "the successful retry ran a real ETL")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: roomPath))
     }
 }

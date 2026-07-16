@@ -85,6 +85,19 @@ public actor WhoopStore {
         }
     }
 
+    /// The one-time GRDB→Room ETL failed partway. Task 5 (#65): `detectMigrateOpen` no longer
+    /// falls back to a live `.legacyGrdb` backend on ETL failure — it deletes the partial Room
+    /// file (so the NEXT launch retries the ETL cleanly) and throws this instead. Carries the
+    /// same table/message detail the old `fallbackReason` string used to smuggle out through
+    /// `StorageBackend.legacyGrdb`.
+    public struct MigrationFailedError: Error, CustomStringConvertible, Equatable {
+        /// Table the ETL was copying when it failed.
+        public let table: String
+        /// Underlying failure detail from `GrdbMigrator`.
+        public let message: String
+        public var description: String { "GRDB→Room migration failed at \(table): \(message)" }
+    }
+
     /// Public diagnostic surface (Settings / support screens, and this init's own tests): which
     /// backend actually ended up live, and why. `nonisolated`: decided once, at init, and never
     /// changes afterward, so callers can read it without an `await`.
@@ -140,8 +153,9 @@ public actor WhoopStore {
     /// Open (creating if needed) a database at `path` and run migrations, then detect-migrate-open
     /// the shared Room store alongside it (Task 3): a fresh install and a both-files-present launch
     /// both open Room directly (no re-ETL); a legacy-only launch runs the one-time ETL (progress on
-    /// `migrationProgress`); an ETL failure falls back to `.legacyGrdb` rather than throwing, so the
-    /// store is always usable once this returns. Uses a `DatabasePool` for the legacy handle, which
+    /// `migrationProgress`); an ETL failure deletes the partial Room file and THROWS
+    /// `MigrationFailedError` (Task 5, #65) — the next launch retries the ETL cleanly; there is no
+    /// live `.legacyGrdb` fallback anymore. Uses a `DatabasePool` for the legacy handle, which
     /// enables WAL automatically, plus a 5-second busy timeout so two handles to the same file
     /// (BLEManager + MetricsRepository) don't deadlock on write contention.
     ///
@@ -220,10 +234,8 @@ public actor WhoopStore {
         // type-check here. This slice is never linked or run; return the always-open legacy GRDB
         // backend so the package compiles for `generic/platform=iOS Simulator`. The arm64 slices carry
         // the real detect-migrate-open cutover.
-        _ = (roomPath, legacyExistedBefore, roomExistedBefore, sentinelExistedBefore)
-        return OpenResult(dbWriter: legacyPool, backend: .legacyGrdb,
-                          storageBackend: .legacyGrdb(fallbackReason: "unbuilt on x86_64 iOS Simulator"),
-                          migrationProgress: nil)
+        _ = (roomPath, legacyExistedBefore, roomExistedBefore, sentinelExistedBefore, legacyPool)
+        throw RoomBackendUnavailableError()
         #else
 
         if roomExistedBefore && sentinelExistedBefore {
@@ -296,11 +308,12 @@ public actor WhoopStore {
             // neither "Room file" nor "sentinel" (the legacy-only branch above) and retry cleanly,
             // not "Room exists, migrated" (which would skip straight past the retry with a
             // half-populated store).
+            //
+            // Task 5 (#65): no `.legacyGrdb` fallback anymore — a failed ETL now surfaces as a
+            // thrown error and the caller decides what to do (the app shows the failure; the next
+            // launch retries the ETL because neither Room file nor sentinel survives).
             WhoopStore.deletePartialRoomDatabase(at: roomPath)
-            let reason = "\(failure.table): \(failure.message)"
-            return OpenResult(dbWriter: legacyPool, backend: .legacyGrdb,
-                               storageBackend: .legacyGrdb(fallbackReason: reason),
-                               migrationProgress: progressStream)
+            throw MigrationFailedError(table: failure.table, message: failure.message)
         }
         #endif
     }
@@ -507,21 +520,26 @@ public actor WhoopStore {
                            atomically: true, encoding: .utf8)
     }
 
-    /// An in-memory store (migrations applied). For tests. Always `.legacyGrdb`: there is no file
-    /// path to derive a Room sibling from, and every existing test exercising the GRDB data methods
-    /// expects them to keep running unchanged against this queue.
+    /// A fresh test store (GRDB-removal Task 4). The name is historical: shared Room is file-only
+    /// (`whoopDatabase(path:)` — no `:memory:` mode exists), so this now opens a REAL store in a
+    /// unique `temporaryDirectory` subdir and takes the fresh-install branch of `detectMigrateOpen`
+    /// (empty dir → no legacy file, no Room file → shared Room opens directly, no ETL). Kept under
+    /// the old name so the ~30 test files calling it stay unchanged; it is byte-for-byte the store
+    /// production opens on first launch.
     ///
-    /// Backed by a `DatabaseQueue`, not a `DatabasePool`: GRDB has no in-memory `DatabasePool`
-    /// (a Pool needs a real file so its reader connections can open WAL snapshots of it). A
-    /// `DatabaseQueue` is also a `DatabaseWriter`, so this is API-identical; only the concurrency
-    /// differs, which an in-memory test store doesn't exercise. The production `init(path:)` path
-    /// is the one that gets the Pool (#755). Tests that need real read/write concurrency open a
-    /// file-backed Pool directly.
+    /// Guarded: throws `RoomBackendUnavailableError` if the open somehow fell back to legacy (only
+    /// possible on the phantom x86_64 iOS-Simulator slice — an empty dir cannot fail an ETL it
+    /// never runs), so no test can silently exercise GRDB thinking it covers Room.
+    ///
+    /// Contract change vs. the old GRDB `DatabaseQueue()` version: the store is file-backed, so
+    /// `databaseFileSizeBytes()` is non-nil and `tableNames()` reports the Room schema.
     public static func inMemory() async throws -> WhoopStore {
-        let dbWriter = try DatabaseQueue()
-        try WhoopStore.makeMigrator().migrate(dbWriter)
-        return WhoopStore(dbWriter: dbWriter, backend: .legacyGrdb,
-                           storageBackend: .legacyGrdb(fallbackReason: nil), migrationProgress: nil)
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noop-inmemory-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let store = try await WhoopStore(path: dir.appendingPathComponent("whoop.sqlite").path)
+        guard store.storageBackend == .room else { throw RoomBackendUnavailableError() }
+        return store
     }
 
     // MARK: - Synchronous GRDB helpers
@@ -575,8 +593,19 @@ public actor WhoopStore {
     /// component can stay non-zero while a reader connection holds an open snapshot, so a `checkpointWAL`
     /// may not fully truncate it; this total stays correct (it always includes the sidecars) but can
     /// read a little higher than the old single-connection `DatabaseQueue` did right after a checkpoint.
+    ///
+    /// Backend-aware (GRDB-removal Task 4): a Room-backed store totals the live Room `noop.db` (+
+    /// sidecars) — the file the diagnostics screen is actually asking about — not the vestigial
+    /// legacy pool's file. Test stores are file-backed since Task 4, so this no longer returns nil
+    /// for them; `nil` now only means the files could not be stat'ed at all.
     public func databaseFileSizeBytes() async -> Int64? {
-        let base = dbWriter.path
+        let base: String
+        switch backend {
+        case .room:
+            base = WhoopStore.roomPath(forLegacyPath: dbWriter.path)
+        case .legacyGrdb:
+            base = dbWriter.path
+        }
         guard base != ":memory:", !base.isEmpty else { return nil }
         let fm = FileManager.default
         var total: Int64 = 0
@@ -593,10 +622,21 @@ public actor WhoopStore {
 
     // MARK: - Introspection (used by tests)
 
+    /// Backend-aware (GRDB-removal Task 4): a Room-backed store reports the live Room `noop.db`
+    /// schema (read via the raw-SQLite probe, Task 2 — the Kotlin handle exposes no sqlite_master
+    /// surface), not the vestigial legacy pool's. Tests asserting the legacy table-set against an
+    /// `inMemory()` store see the Room schema now.
     public func tableNames() async throws -> Set<String> {
-        try syncRead { db in
-            try Set(String.fetchAll(db,
+        switch backend {
+        case .room:
+            return try Set(RawSQLite.queryStrings(
+                atPath: WhoopStore.roomPath(forLegacyPath: dbWriter.path),
                 sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
+        case .legacyGrdb:
+            return try syncRead { db in
+                try Set(String.fetchAll(db,
+                    sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
+            }
         }
     }
 

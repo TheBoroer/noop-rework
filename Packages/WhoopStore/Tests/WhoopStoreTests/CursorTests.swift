@@ -6,7 +6,9 @@ final class CursorTests: XCTestCase {
         let store = try await WhoopStore.inMemory()
         let tables = try await store.tableNames()
         let pkCols = try await store.primaryKeyColumns("cursors")
-        XCTAssertTrue(tables.contains("cursors"))
+        // `tableNames()` is Room-backed since #65 T4; the Room cursor table is `outboxCursor`.
+        // The legacy GRDB handle still migrates its `cursors` table — the PK probe below reads it.
+        XCTAssertTrue(tables.contains("outboxCursor"))
         XCTAssertEqual(pkCols, ["name"])
     }
     func testCursorRoundTrips() async throws {

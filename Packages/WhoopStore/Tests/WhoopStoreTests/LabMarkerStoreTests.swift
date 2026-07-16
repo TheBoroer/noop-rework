@@ -33,7 +33,7 @@ final class LabMarkerStoreTests: XCTestCase {
     func testV17IsAdditive() async throws {
         let store = try await WhoopStore.roomBackedForTest()
         let tables = try await store.tableNames()
-        for t in ["device", "hrSample", "rrInterval", "event", "battery", "rawBatch",
+        for t in ["device", "hrSample", "rrInterval", "event", "battery", "outboxBatch",
                   "sleepSession", "dailyMetric", "journal", "workout", "appleDaily",
                   "metricSeries", "pairedDevice", "dayOwnership"] {
             XCTAssertTrue(tables.contains(t), "v17 must not drop \(t)")
