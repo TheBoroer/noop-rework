@@ -430,21 +430,17 @@ public actor WhoopStore {
     static func quarantineIncompatibleDatabase(at path: String, expecting expected: ExpectedSchema) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: path) else { return }
-        let names: Set<String>
-        do {
-            // Read-ONLY probe of sqlite_master (a raw queue does NOT run migrations): a read-only open
-            // never creates -wal/-shm siblings or flips the journal mode, so probing a valid Room file
-            // here can't disturb it. If the probe can't open (locked, or a WAL file with no readable
-            // -shm), bail and let the real open + migrator deal with it.
-            var config = Configuration()
-            config.readonly = true
-            let probe = try DatabaseQueue(path: path, configuration: config)
-            names = try probe.read { db in
-                try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
-            }
-        } catch {
+        // Read-ONLY probe of sqlite_master over the system SQLite (RawSQLite, #65 T2 — no GRDB,
+        // and a raw probe never runs migrations): a read-only open never creates -wal/-shm
+        // siblings or flips the journal mode, so probing a valid Room file here can't disturb it.
+        // If the probe can't open (locked, or a WAL file with no readable -shm), bail and let the
+        // real open + migrator deal with it.
+        guard let rows = try? RawSQLite.queryStrings(
+            atPath: path, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ) else {
             return // unreadable/locked → let the real open + migrator deal with it
         }
+        let names = Set(rows)
         let isForeign = !names.contains(expected.nativeMarker) && WhoopStore.holdsData(names)
         guard isForeign else { return }
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")

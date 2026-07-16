@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 
 /// SQLite-level integrity verification for the backup/restore pipeline (#1014 defence-in-depth).
 ///
@@ -26,17 +25,15 @@ public enum DatabaseIntegrity {
     /// Returns `nil` when the file is healthy, otherwise SQLite's first complaint (or the open/query
     /// error) as a short human-readable string for the caller's honest failure message. Read-only by
     /// construction: the probed file — a staged backup, or the live store just after a swap — is
-    /// never mutated, and a read-only connection can sit beside the app's open GRDB pool (WAL allows
-    /// concurrent readers; a checkpointed backup file has no WAL at all).
+    /// never mutated, and a read-only connection can sit beside the app's open store (WAL allows
+    /// concurrent readers; a checkpointed backup file has no WAL at all). Runs on the system
+    /// SQLite (`RawSQLite`, #65 T2) — no GRDB.
     public static func quickCheckFailure(atPath path: String) -> String? {
         guard FileManager.default.fileExists(atPath: path) else {
             return "no database file at that path"
         }
         func quickCheckRows(readonly: Bool) throws -> [String] {
-            var config = Configuration()
-            config.readonly = readonly
-            let dbQueue = try DatabaseQueue(path: path, configuration: config)
-            return try dbQueue.read { db in try String.fetchAll(db, sql: "PRAGMA quick_check(1)") }
+            try RawSQLite.queryStrings(atPath: path, sql: "PRAGMA quick_check(1)", readonly: readonly)
         }
         do {
             // Read-only first — never mutates the probed file, and sits safely beside the app's open pool.
