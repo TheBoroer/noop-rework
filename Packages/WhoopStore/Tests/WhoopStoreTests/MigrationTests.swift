@@ -11,12 +11,20 @@ final class MigrationTests: XCTestCase {
     }
 
     func testFileInitRunsMigrations() async throws {
-        let path = NSTemporaryDirectory() + "whoopstore-\(UUID().uuidString).sqlite"
-        defer { try? FileManager.default.removeItem(atPath: path) }
+        // Room-only since #65: the store lives at a sibling `noop.db`; the legacy
+        // `.sqlite` path is an identity only — no GRDB pool creates a file there.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("whoopstore-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("whoop.sqlite").path
         let store = try await WhoopStore(path: path)
         let tables = try await store.tableNames()
         XCTAssertTrue(tables.contains("hrSample"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent("noop.db").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path),
+                       "no legacy GRDB pool creates the .sqlite file anymore")
     }
 
     func testHrSamplePrimaryKeyIsDeviceIdTs() async throws {

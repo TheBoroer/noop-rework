@@ -5,9 +5,9 @@ final class CursorTests: XCTestCase {
     func testV2CreatesCursorsTable() async throws {
         let store = try await WhoopStore.inMemory()
         let tables = try await store.tableNames()
-        let pkCols = try await store.primaryKeyColumns("cursors")
-        // `tableNames()` is Room-backed since #65 T4; the Room cursor table is `outboxCursor`.
-        // The legacy GRDB handle still migrates its `cursors` table — the PK probe below reads it.
+        let pkCols = try await store.primaryKeyColumns("outboxCursor")
+        // Room-only since #65: the cursor table is `outboxCursor` (PK: single TEXT `name`).
+        // The legacy GRDB `cursors` table no longer exists — nothing migrates it.
         XCTAssertTrue(tables.contains("outboxCursor"))
         XCTAssertEqual(pkCols, ["name"])
     }
