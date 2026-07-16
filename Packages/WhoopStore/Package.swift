@@ -8,10 +8,6 @@ let package = Package(
     dependencies: [
         .package(path: "../WhoopProtocol"),
         .package(path: "../OuraProtocol"),
-        // Supply-chain: pinned EXACT (not `from:`) so a clean resolve can't auto-pull a newer —
-        // potentially compromised — upstream release. Must match the same exact version in the
-        // other Packages/*/Package.swift and project.yml, or SPM resolution fails. Bump deliberately.
-        .package(url: "https://github.com/groue/GRDB.swift.git", exact: "6.29.3"),
     ],
     targets: [
         .target(
@@ -20,7 +16,6 @@ let package = Package(
                 "WhoopProtocol",
                 "OuraProtocol",
                 .product(name: "Shared", package: "WhoopProtocol"),
-                .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
         .testTarget(
