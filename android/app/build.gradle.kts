@@ -23,8 +23,8 @@ android {
         applicationId = "com.noop.whoop.rework"
         minSdk = 26
         targetSdk = 34
-        versionCode = 270
-        versionName = "8.5.2"
+        versionCode = 1
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -125,6 +125,16 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+}
+
+// Hold androidx.core to the last SDK-34-compatible release. AGP 8.5.2 caps compileSdk at 34,
+// but transitive graphs (compose 1.6.8 / activity 1.9.0 / health-connect alpha07) drift core up
+// to 1.15.0, which demands compileSdk 35 and fails the build. The direct dependency below already
+// pins 1.13.1; forcing it holds the whole graph there until AGP + compileSdk move to 35 together.
+configurations.all {
+    resolutionStrategy {
+        force("androidx.core:core:1.13.1", "androidx.core:core-ktx:1.13.1")
     }
 }
 
