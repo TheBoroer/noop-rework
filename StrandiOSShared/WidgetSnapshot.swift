@@ -40,7 +40,7 @@ public struct WidgetSnapshot: Codable, Equatable {
     /// each carry the key in their generated Info.plist).
     public static let suiteName: String = {
         Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String
-            ?? "group.com.noopapp.noop"
+            ?? "group.com.noop.whoop.rework"
     }()
     public static let storageKey = "noop.widget.snapshot"
 

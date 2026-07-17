@@ -20,7 +20,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.noop.whoop"
+        applicationId = "com.noop.whoop.rework"
         minSdk = 26
         targetSdk = 34
         versionCode = 270
@@ -78,7 +78,7 @@ android {
                 signingConfigs.getByName("debug")
             // Fork staging release: built with -PstagingRelease (the fork testing-build CI only), the
             // release APK gets its own id/name so it installs BESIDE both the official app and the
-            // .debug staging build. A real release (no property) keeps the true com.noop.whoop id.
+            // .debug staging build. A real release (no property) keeps the true com.noop.whoop.rework id.
             if (project.hasProperty("stagingRelease")) {
                 applicationIdSuffix = ".staging"
                 versionNameSuffix = "-staging"
@@ -87,8 +87,8 @@ android {
     }
 
     // Two clearly-distinct apps that install side-by-side:
-    //   • full → "NOOP"      (com.noop.whoop)     — the real app, starts empty, pair a strap / import.
-    //   • demo → "NOOP Demo"  (com.noop.whoop.demo) — preloaded with 120 days of synthetic data and
+    //   • full → "NOOP"      (com.noop.whoop.rework)     — the real app, starts empty, pair a strap / import.
+    //   • demo → "NOOP Demo"  (com.noop.whoop.rework.demo) — preloaded with 120 days of synthetic data and
     //                          a visible DEMO badge, so anyone can explore every screen with no strap.
     // Build e.g. ./gradlew assembleFullRelease assembleDemoRelease.
     flavorDimensions += "tier"

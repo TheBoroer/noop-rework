@@ -40,7 +40,7 @@ enum ScheduledDebugExport {
 
     /// iOS BGTask identifier. Must also appear in the iOS target's `BGTaskSchedulerPermittedIdentifiers`
     /// (Info.plist) and be registered at launch for `submit` to succeed — wired in the app entry point.
-    static let bgTaskIdentifier = "com.noopapp.noop.debugexport"
+    static let bgTaskIdentifier = "com.noop.whoop.rework.debugexport"
 
     static var isEnabled: Bool { UserDefaults.standard.bool(forKey: K.enabled) }
 

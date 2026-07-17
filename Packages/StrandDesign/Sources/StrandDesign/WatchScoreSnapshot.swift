@@ -75,7 +75,7 @@ public struct WatchScoreSnapshot: Codable, Equatable, Sendable {
     // reads the last known value immediately.
 
     /// The shared app group both the watch app and its complication read the snapshot from.
-    public static let appGroupId = "group.com.noopapp.noop"
+    public static let appGroupId = "group.com.noop.whoop.rework"
     /// The UserDefaults key the latest snapshot is stored under in the shared app group.
     public static let storageKey = "latestWatchSnapshot"
 
