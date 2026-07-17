@@ -30,6 +30,33 @@ class RegistryDayOwnerSourceTest {
         override suspend fun activeDeviceId() =
             devices.values.firstOrNull { it.status == DeviceStatus.active.name }?.id
         override suspend fun upsertPairedDevice(row: PairedDeviceRow) { devices[row.id] = row }
+        override suspend fun upsertPairedDevicePreservingAddedAt(
+            id: String,
+            brand: String,
+            model: String,
+            nickname: String?,
+            peripheralId: String?,
+            sourceKind: String,
+            capabilities: String,
+            status: String,
+            addedAt: Long,
+            lastSeenAt: Long,
+        ) {
+            // Mirrors the DAO's ON CONFLICT(id) DO UPDATE: SET list omits addedAt, so an existing
+            // row keeps its original addedAt (the :addedAt arg only applies on fresh insert).
+            devices[id] = PairedDeviceRow(
+                id = id,
+                brand = brand,
+                model = model,
+                nickname = nickname,
+                peripheralId = peripheralId,
+                sourceKind = sourceKind,
+                capabilities = capabilities,
+                status = status,
+                addedAt = devices[id]?.addedAt ?: addedAt,
+                lastSeenAt = lastSeenAt,
+            )
+        }
         override suspend fun demoteActive() {
             for ((id, r) in devices) if (r.status == DeviceStatus.active.name)
                 devices[id] = r.copy(status = DeviceStatus.paired.name)
