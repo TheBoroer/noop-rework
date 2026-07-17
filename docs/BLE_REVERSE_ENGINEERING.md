@@ -760,8 +760,8 @@ The decoder is **data-driven**: most of the protocol lives in
 4. **New historical record version** — add a key under `HISTORICAL_DATA.versions` (the version is
    `frame[5]`); use `"ref"` to reuse another version's layout, or give it its own `fields`.
 5. **New durable row** — define the struct in `Streams.swift`, add it to the `Streams` aggregate, and
-   emit it from `extractStreams` / `extractHistoricalStreams`. The GRDB persistence layer lives in
-   the `WhoopStore` package.
+   emit it from `extractStreams` / `extractHistoricalStreams`. The persistence layer lives in
+   the `WhoopStore` package (backed by the shared Kotlin Room database).
 6. **New command** — add a case to `WhoopCommand` in `Commands.swift` with its on-wire raw value.
    Keep the [safety rule](#safety) below.
 

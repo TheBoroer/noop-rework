@@ -133,7 +133,7 @@ extension WhoopStore {
             #else
             let rows = try await roomDb.whoopDao().batterySamples(
                 deviceId: deviceId, from: Int64(from), to: Int64(to), limit: Int32(limit))
-            // The GRDB read selects only ts/soc/mv (charging stays nil on the returned struct);
+            // The retired GRDB read selected only ts/soc/mv (charging stays nil on the returned struct);
             // this branch maps the same three fields so the two backends match byte-for-byte.
             return rows.map {
                 WhoopProtocol.BatterySample(ts: Int($0.ts),

@@ -10,9 +10,8 @@ import Shared
 // point of the cutover). Now a thin `Sendable` struct wrapping the `WhoopStore` actor itself: every
 // method is `async` and routes through a matching `extension WhoopStore` method below, which switches
 // on `backend` exactly like every other delegated store (LiveSessionStore.swift is the canonical
-// reference; Task 4/5). The legacy branch keeps the original synchronous GRDB SQL verbatim (via
-// `syncRead`/`syncWrite`); the Room branch calls `roomDb.whoopDao()` directly, the same surface every
-// prior delegated store uses.
+// reference; Task 4/5). Since the GRDB removal (#65 Task 6) the only backend is Room: each method
+// calls `roomDb.whoopDao()` directly, the same surface every prior delegated store uses.
 //
 // I1 (at most one `.active`) and the 17-table `deleteAllData` fan-out both need one atomic transaction
 // across two-plus DAO calls. Rather than bridge Kotlin's `DeviceRegistry` façade class from Swift (its

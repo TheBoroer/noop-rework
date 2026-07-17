@@ -111,7 +111,7 @@ extension WhoopStore {
             #if targetEnvironment(simulator) && arch(x86_64)
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
-            // Byte-for-byte with the GRDB CASE-WHEN upsert below: Kotlin's
+            // Byte-for-byte with the retired GRDB CASE-WHEN upsert: Kotlin's
             // upsertSleepSessionPreservingEdit runs the IDENTICAL ON CONFLICT DO UPDATE SQL
             // (endTs/stagesJSON/startTsAdjusted preserved when the existing row is userEdited,
             // userEdited itself never cleared here; the dedicated edit path is applySleepEdit).
@@ -200,7 +200,7 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // insertSleepSession is @Insert(onConflict = IGNORE): rowid -1 means an existing row at
-            // this natural key blocked the insert, matching GRDB's ON CONFLICT DO NOTHING above.
+            // this natural key blocked the insert, matching the retired GRDB ON CONFLICT DO NOTHING.
             let rowid = try await roomDb.whoopDao().insertSleepSession(row: Shared.SleepSession(
                 deviceId: deviceId, startTs: Int64(startTs), endTs: Int64(endTs),
                 efficiency: efficiency.map { KotlinDouble(double: $0) },
@@ -319,7 +319,7 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // Chunking stays the caller's responsibility per the Kotlin doc comment; the SQLite bound-
-            // parameter cap the GRDB IN-clause loop guards against applies underneath Room too.
+            // parameter cap the retired GRDB IN-clause loop guarded against applies underneath Room too.
             let dao = roomDb.whoopDao()
             var out: [Int: [Double]] = [:]
             let uniq = Array(Set(sessionStarts))
@@ -391,8 +391,8 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // Plain REPLACE-shaped upsert (no CASE-WHEN field preservation, unlike sleep/workout/labMarker),
-            // so every row always affects exactly one row: return the input count, matching the GRDB
-            // per-row changesCount tally below.
+            // so every row always affects exactly one row: return the input count, matching the
+            // per-row changesCount tally of the retired GRDB branch.
             try await roomDb.whoopDao().upsertDailyMetrics(rows: days.map { d in
                 Shared.DailyMetric(
                     deviceId: deviceId, day: d.day,

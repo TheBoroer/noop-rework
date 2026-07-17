@@ -186,9 +186,9 @@ public actor WhoopStore {
         #if targetEnvironment(simulator) && arch(x86_64)
         // Phantom x86_64 iOS-Simulator slice (see RoomBackendUnavailableError): Shared has no such
         // slice, so the Room/ETL machinery below (whoopDatabase / onEnum / suspend DAO calls) cannot
-        // type-check here. This slice is never linked or run; return the always-open legacy GRDB
-        // backend so the package compiles for `generic/platform=iOS Simulator`. The arm64 slices carry
-        // the real detect-migrate-open cutover.
+        // type-check here. This slice is never linked or run; throw so the package compiles for
+        // `generic/platform=iOS Simulator`. The arm64 slices carry the real detect-migrate-open
+        // cutover.
         _ = (roomPath, legacyExistedBefore, roomExistedBefore, sentinelExistedBefore)
         throw RoomBackendUnavailableError()
         #else
@@ -507,9 +507,8 @@ public actor WhoopStore {
 
     /// Fully checkpoint the WAL into the main database file and truncate the -wal file, so the single
     /// file carries all committed data (the -wal/-shm siblings can then be ignored). Used before a
-    /// file-level backup. Backend-aware (Phase 2c-1 Task 7): a Room-backed store checkpoints the live
-    /// Room `noop.db` (which is what the export now zips) through its own writer connection; a legacy
-    /// GRDB store checkpoints the GRDB pool as before. Runs outside a transaction — `wal_checkpoint`
+    /// file-level backup. Checkpoints the live Room `noop.db` (which is what the export zips)
+    /// through the store's own writer connection. Runs outside a transaction — `wal_checkpoint`
     /// must. Best-effort: throws on a hard SQLite error so callers can fall back to a plain copy.
     public func checkpointWAL() async throws {
         switch backend {

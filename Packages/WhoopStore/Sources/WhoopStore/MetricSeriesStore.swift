@@ -8,7 +8,7 @@ import Shared
 // metric — whatever its origin — can be projected into this one table and read back uniformly by
 // key, so the explorer can list/compare metrics without knowing each source's schema.
 // Mirrors the established pattern exactly: Codable struct, idempotent ON CONFLICT upsert keyed by
-// natural key, range-read accessors, all GRDB work via the actor's syncWrite/syncRead helpers.
+// natural key, range-read accessors, all database work via the actor's syncWrite/syncRead helpers.
 
 /// One point in the long-format metric store. Natural key (deviceId, day, key).
 public struct MetricPoint: Equatable, Codable, Sendable {
@@ -35,7 +35,7 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // @Upsert on the natural key (deviceId, day, key): every row is guaranteed to touch
-            // exactly one, matching GRDB's accumulated changesCount above.
+            // exactly one, matching the accumulated changesCount the retired GRDB upsert produced.
             try await roomDb.whoopDao().upsertMetricSeries(rows: rows.map { r in
                 Shared.MetricSeriesRow(deviceId: deviceId, day: r.day, key: r.key, value: r.value)
             })

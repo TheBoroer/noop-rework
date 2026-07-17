@@ -3,7 +3,7 @@ import Shared
 
 // MARK: - v8 cache: journal entries, workouts, and Apple-Health daily aggregates
 // Mirrors the MetricsCache pattern: Codable structs, idempotent ON CONFLICT upserts keyed by
-// natural key, and range-read accessors. All write/read GRDB work runs via the actor's
+// natural key, and range-read accessors. All write/read database work runs via the actor's
 // syncWrite/syncRead helpers (off the main thread).
 
 /// One journal answer. Natural key (deviceId, day, question).
@@ -82,7 +82,7 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // @Upsert on the natural key (deviceId, day, question): every row is guaranteed to touch
-            // exactly one, matching GRDB's accumulated changesCount above.
+            // exactly one, matching the accumulated changesCount the retired GRDB upsert produced.
             try await roomDb.whoopDao().upsertJournal(rows: rows.map { r in
                 Shared.JournalEntry(deviceId: deviceId, day: r.day, question: r.question,
                                      answeredYes: r.answeredYes, notes: r.notes,
@@ -122,8 +122,8 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // Kotlin's replaceJournalRange is a @Transaction wrapper (delete [from, to] then upsert
-            // rows) mirroring this exact GRDB sequence; it returns Unit, so report rows upserted, same
-            // as the GRDB branch's `n` (which never counted the delete's changesCount either).
+            // rows) mirroring the retired GRDB sequence exactly; it returns Unit, so report rows
+            // upserted, same as the GRDB branch's `n` (which never counted the delete's changesCount).
             try await roomDb.whoopDao().replaceJournalRange(
                 deviceId: deviceId, from: from, to: to,
                 rows: rows.map { r in
@@ -147,7 +147,7 @@ extension WhoopStore {
             // upsertWorkoutPreservingRoute, NOT the plain @Upsert: Swift's WorkoutRow has no
             // routePolyline field, so the plain @Upsert (a REPLACE) would clobber a GPS route Android
             // already recorded for this workout. This per-row @Query omits routePolyline from both the
-            // INSERT column list and the ON CONFLICT SET clause, byte-identical to the GRDB SQL below.
+            // INSERT column list and the ON CONFLICT SET clause, byte-identical to the retired GRDB SQL.
             // Every call touches exactly one row (insert or update, no DO NOTHING branch), matching
             // what GRDB's accumulated changesCount would have summed to.
             let dao = roomDb.whoopDao()
@@ -193,7 +193,7 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // @Upsert on the natural key (deviceId, day): every row is guaranteed to touch exactly
-            // one, matching GRDB's accumulated changesCount above.
+            // one, matching the accumulated changesCount the retired GRDB upsert produced.
             try await roomDb.whoopDao().upsertAppleDaily(rows: rows.map { r in
                 Shared.AppleDaily(
                     deviceId: deviceId, day: r.day,

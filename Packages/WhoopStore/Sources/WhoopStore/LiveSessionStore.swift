@@ -3,10 +3,10 @@ import Shared
 
 // MARK: - v22 store: Live Sessions
 //
-// LiveSessionStore.swift — GRDB CRUD over the `liveSession` table (migration v22), the durable record
+// LiveSessionStore.swift — CRUD over the `liveSession` table (migration v22), the durable record
 // behind the Live Sessions look-back summary + streak. Mirrors the established idiom exactly: a plain
 // Codable row struct, raw `Row` fetch + manual decode, idempotent upsert keyed by the natural key
-// (deviceId, startTs), all GRDB work via the actor's `syncWrite` / `syncRead` helpers.
+// (deviceId, startTs), all database work via the actor's `syncWrite` / `syncRead` helpers.
 //
 // Design contract: docs/superpowers/specs/2026-07-04-live-sessions-design.md.
 
@@ -48,7 +48,7 @@ extension WhoopStore {
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
             // @Upsert on the natural key (deviceId, startTs): a single row is always touched,
-            // matching the GRDB branch's single-row changesCount below.
+            // matching the single-row changesCount of the retired GRDB branch.
             try await roomDb.whoopDao().upsertLiveSession(row: Shared.LiveSessionRow(
                 deviceId: deviceId, startTs: Int64(r.startTs),
                 endTs: r.endTs.map { KotlinLong(longLong: Int64($0)) },

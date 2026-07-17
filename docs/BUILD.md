@@ -40,7 +40,7 @@ Strand/
 ├── StrandiOSWidgets/           # iOS WidgetKit + Live Activity extension
 ├── Packages/
 │   ├── WhoopProtocol/          # BLE frame parsing, CRC, command/event/packet decode
-│   ├── WhoopStore/             # GRDB/SQLite persistence (migrations, streams, caches)
+│   ├── WhoopStore/             # Room/SQLite persistence (streams, caches; shared Kotlin schema)
 │   ├── StrandAnalytics/        # HRV / recovery / strain / sleep / correlation math
 │   ├── StrandImport/           # WHOOP CSV + Apple Health importers
 │   └── StrandDesign/           # SwiftUI design system (palette, components, charts)
@@ -59,7 +59,7 @@ Any framework-specific code is guarded with `#if canImport(AppKit) / #elseif can
 | Package          | Platforms                | Key dependencies                          | Responsibility |
 |------------------|--------------------------|-------------------------------------------|----------------|
 | `WhoopProtocol`  | iOS 16+, macOS 13+       | none (bundles `Resources/whoop_protocol.json`) | BLE framing, CRC, command/event/packet decode — the reverse-engineering core |
-| `WhoopStore`     | iOS 16+, macOS 13+       | `WhoopProtocol`, `GRDB.swift` (≥ 6.0.0)   | SQLite persistence, migrations, decoded streams, metric caches |
+| `WhoopStore`     | iOS 16+, macOS 13+       | `WhoopProtocol`, `OuraProtocol` (Room schema via shared KMP framework)   | SQLite persistence, migrations, decoded streams, metric caches |
 | `StrandAnalytics`| macOS 13+, iOS 16+       | `WhoopProtocol`, `WhoopStore`             | HRV / recovery / strain / sleep / correlation math |
 | `StrandImport`   | macOS 13+, iOS 16+       | `WhoopProtocol`, `WhoopStore`, `ZIPFoundation` (≥ 0.9.0) | WHOOP CSV + Apple Health (`export.xml`, streaming) importers |
 | `StrandDesign`   | macOS 13+, iOS 16+       | none                                      | SwiftUI design system: palette, components, charts |
@@ -135,7 +135,7 @@ Notes on the build:
   `com.noopapp.noop`, with display name `NOOP`.
 - `CODE_SIGNING_ALLOWED=NO` skips signing for a fast local compile-and-verify loop. To produce a
   runnable `.app` you instead want an **ad-hoc-signed** build (see below).
-- SPM resolves `GRDB.swift` and `ZIPFoundation` on first build into `build/SourcePackages/`.
+- SPM resolves `GRDB.swift` (legacy-import/read-only packages) and `ZIPFoundation` on first build into `build/SourcePackages/`.
 
 ### 3. The ad-hoc-signed `NOOP.app`
 
@@ -328,7 +328,7 @@ NOOP builds on prior community reverse-engineering and interoperability work:
   packages are adapted from this work.
 - **`b-nnett/goose`** — WHOOP 5.0 / MG BLE protocol (service family `fd4b0001-…`, CRC16-Modbus
   header) that the WHOOP-5 decode path is ported from.
-- **`groue/GRDB.swift`** — SQLite persistence.
+- **`groue/GRDB.swift`** — SQLite access for `StrandImport`/`NoopLocalAccess`; the main store is the shared Room database.
 - **`weichsel/ZIPFoundation`** — zip handling for Apple Health exports.
 
 See [`ATTRIBUTION.md`](../ATTRIBUTION.md) for full detail.

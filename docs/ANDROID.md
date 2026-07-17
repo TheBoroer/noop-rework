@@ -60,7 +60,7 @@ re-implements the same observable behavior in idiomatic Kotlin:
 | Swift package (reference) | Android counterpart | Status |
 | --- | --- | --- |
 | `WhoopProtocol` — BLE framing, CRC, command/event/packet decode | `com.noop.protocol` (Kotlin) | shipped — framing/CRC, `parseFrame`, enums |
-| `WhoopStore` — GRDB/SQLite persistence | `com.noop.data` (Room) | shipped — entities, DAOs, database |
+| `WhoopStore` — Room/SQLite persistence | `com.noop.data` (Room) | shipped — entities, DAOs, database (shared with Apple) |
 | `StrandAnalytics` — HRV / recovery / strain / sleep math | `com.noop.analytics` | shipped — RMSSD / zones / illness-watch + scorers |
 | `StrandImport` — WHOOP CSV + Apple Health importers | `com.noop.data` / `com.noop.ingest` importers | shipped — WHOOP CSV, Apple Health, Health Connect, raw `capture.json` (see [Raw capture import](#raw-capture-import-capturejson)) |
 | `StrandDesign` — SwiftUI design system | Jetpack Compose theme | shipped — `Theme.NOOP` tokens + components |
@@ -68,9 +68,10 @@ re-implements the same observable behavior in idiomatic Kotlin:
 
 The single source of truth that **both** platforms must agree on is the protocol schema resource
 `Packages/WhoopProtocol/Sources/WhoopProtocol/Resources/whoop_protocol.json` (top-level keys
-`version`, `enums`, `envelope`, `packets`) and the SQLite schema defined by the GRDB migrations in
-`Packages/WhoopStore/Sources/WhoopStore/Database.swift`. Port against those files, not against
-memory.
+`version`, `enums`, `envelope`, `packets`) and the SQLite schema defined by the Room
+entities and migrations in `com.noop.data` (`data/Entities.kt` + the Room `@Database`; the retired
+Swift GRDB `Database.swift` is gone — its final schema is frozen in the WhoopStore test fixtures).
+Port against those files, not against memory.
 
 ---
 
@@ -142,7 +143,8 @@ This section maps the surface so contributors know where each piece lives.
   reassembly; `protocol/ParseFrame.kt` — schema-driven `parseFrame` (4.0) / `parseFrame(family:)`
   (5.0); `protocol/Schema.kt` + the bundled `whoop_protocol.json` asset; `protocol/DeviceFamily.kt`
   (service/char UUIDs, CLIENT_HELLO); `protocol/Commands.kt` (the curated, safe `WhoopCommand`).
-- `data/Entities.kt` — Room `@Entity` classes mirroring the GRDB schema: `DeviceRow`, `HrSample`,
+- `data/Entities.kt` — Room `@Entity` classes carrying the canonical schema (originally mirrored
+  from the retired Swift GRDB schema): `DeviceRow`, `HrSample`,
   `RrInterval`, `EventRow`, `BatterySample`, `Spo2Sample`, `SkinTempSample`, `RespSample`,
   `GravitySample`, `DailyMetric`, `SleepSession`, `MetricSeriesRow` — with DAOs and the
   `@Database`. Natural/composite keys match the Swift `ON CONFLICT … DO NOTHING` upserts (use
@@ -461,9 +463,11 @@ does not contain — and why logcat is opt-in — is covered in `PRIVACY_SECURIT
 
 ## Storage with Room
 
-`com.noop.data.Entities.kt` mirrors the GRDB schema from
-`Packages/WhoopStore/Sources/WhoopStore/Database.swift`, with DAOs and the `@Database` in place. The
-storage layer holds these invariants — preserve them when extending it:
+`com.noop.data.Entities.kt` is the canonical schema for **both** platforms (since the #65 GRDB
+removal the Apple `WhoopStore` opens this same Room database through the shared framework; the
+retired Swift GRDB `Database.swift` it originally mirrored is gone, its final schema frozen as the
+fixtures under `Packages/WhoopStore/Tests/WhoopStoreTests/Fixtures/`). The storage layer holds
+these invariants — preserve them when extending it:
 
 - **Composite natural keys preserved exactly** so `OnConflictStrategy.IGNORE` reproduces the Swift
   `ON CONFLICT(...) DO NOTHING` dedupe:
@@ -488,16 +492,15 @@ storage layer holds these invariants — preserve them when extending it:
 - **`payloadJSON` is deterministic sorted-keys JSON** (the parsed event fields minus
   `event`/`event_timestamp`). Match `StreamStore.encodePayload` so event rows are byte-identical
   across platforms.
-- **Schema version parity.** The GRDB migrations run `v1`…`v9`. The entities already carry forward
-  later additions (e.g. `synced` flags, `battery.charging` from v6, the v7 in-sleep aggregates
-  `spo2Pct`/`skinTempDevC`/`respRateBpm`, and the v9 `metricSeries`). The Room `@Database` carries a
-  matching `version` and migrations to reach the same logical schema; Room generates the SQL, so
-  verify the emitted `CREATE TABLE`/index against `Database.swift` when you change it rather than
-  assuming.
+- **Schema version parity.** The retired GRDB migrations ran `v1`…`v9`; the entities carry all of
+  it forward (e.g. `synced` flags, `battery.charging` from v6, the v7 in-sleep aggregates
+  `spo2Pct`/`skinTempDevC`/`respRateBpm`, and the v9 `metricSeries`) plus everything added since.
+  Room generates the SQL, so when you change the schema verify the emitted `CREATE TABLE`/index
+  against the frozen legacy fixtures (and the `GrdbMigrator` table specs) rather than assuming.
 
-A few Swift tables are not yet mirrored as Room entities (`rawBatch`, `cursors`, `journal`,
-`workout`, `appleDaily`) — add them as the corresponding collector / journal / workout features are
-ported.
+Every live table is a Room entity today — `journal`, `workout`, `appleDaily`, `liveSession` and
+friends included; the legacy `rawBatch`/`cursors` outbox tables were superseded by
+`outboxBatch`/`outboxCursor` (`data/OutboxEntities.kt`).
 
 The database is created **without** an `INTERNET` permission and lives entirely in the app's private
 storage; nothing is uploaded.
@@ -654,9 +657,9 @@ should be re-verified against a real build, a real device, and a real strap befo
 
 **Storage parity (JVM/instrumented)**
 
-- [x] Room-generated `CREATE TABLE`/index SQL matches `Database.swift` for every ported table
-      (column names, types, composite PKs, the `metricSeries` index).
-- [x] `OnConflictStrategy.IGNORE` dedupes on the natural keys exactly like the GRDB upserts.
+- [x] Room-generated `CREATE TABLE`/index SQL matches the retired GRDB `Database.swift` schema for
+      every ported table (column names, types, composite PKs, the `metricSeries` index).
+- [x] `OnConflictStrategy.IGNORE` dedupes on the natural keys exactly like the retired GRDB upserts.
 - [x] `payloadJSON` for a decoded event equals the Swift `StreamStore.encodePayload` output
       (sorted keys, `event`/`event_timestamp` removed).
 

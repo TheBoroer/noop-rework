@@ -59,11 +59,11 @@ Android), described in §1.1a. The package manifests reference dependency *downl
 that Swift Package Manager resolves at build time, never at runtime:
 
 ```
-Packages/WhoopStore/Package.swift   → https://github.com/groue/GRDB.swift.git
+Packages/StrandImport/Package.swift → https://github.com/groue/GRDB.swift.git
 Packages/StrandImport/Package.swift → https://github.com/weichsel/ZIPFoundation.git
 ```
 
-GRDB.swift is the SQLite layer; ZIPFoundation is the archive reader used by the
+GRDB.swift is the SQLite reader for the legacy-import/read-only packages; ZIPFoundation is the archive reader used by the
 importers. Neither opens a socket.
 
 ### 1.1a The AI Coach (optional, off by default, bring your own key)
@@ -160,7 +160,7 @@ NOOP's own store — but it never leaves your **device**, and never touches the 
 
 ### 2.1 Where the data lives
 
-All durable data is stored in a single GRDB/SQLite database. The Swift apps (macOS and
+All durable data is stored in a single Room/SQLite database (shared Kotlin schema). The Swift apps (macOS and
 iOS, which share the `WhoopStore` package) open it at (`Strand/Collect/StorePaths.swift`):
 
 ```
@@ -171,7 +171,7 @@ Because the app is sandboxed, `<Application Support>` resolves **inside the app'
 sandbox container**, not the user's global `~/Library/Application Support`. Other
 apps cannot read it through normal filesystem access. (On Android the equivalent store
 is a Room/SQLite database in the app's private storage; the rest of this section
-describes the GRDB/SQLite store shared by the macOS and iOS apps.)
+describes the Room/SQLite store shared by the macOS and iOS apps.)
 
 The schema is defined by a versioned `DatabaseMigrator` in
 `Packages/WhoopStore/Sources/WhoopStore/Database.swift` (currently schema version 9).
@@ -210,11 +210,11 @@ What this does **not** protect against: an attacker with your unlocked, logged-i
 session, or a backup/Time Machine copy of the container made while FileVault is
 unlocked. The data is plaintext SQLite once the volume is mounted.
 
-> **Option: SQLCipher.** GRDB supports SQLCipher (an encrypted SQLite build) as a
-> drop-in. Wiring NOOP's `DatabaseQueue` to a SQLCipher build with a
+> **Option: SQLCipher.** SQLCipher (an encrypted SQLite build) with a
 > Keychain-derived key would give at-rest encryption independent of FileVault. This
-> is not enabled in the current build, but the persistence layer is small and
-> centralized (one `WhoopStore.init(path:)`), so it is a contained change.
+> is not enabled in the current build; since the store is the shared Kotlin Room
+> database it would be wired at the SQLite-driver level, and the persistence layer
+> is small and centralized enough that it remains a contained change.
 
 ### 2.3 Data minimization & pruning
 
@@ -492,7 +492,7 @@ hardware the user owns, used for interoperability:
 - **`b-nnett/goose`** — the WHOOP 5.0 protocol (the `fd4b0001-…` service family, the
   CRC16-Modbus header, and the "puffin" packet types) the v5 decode path is ported
   from.
-- **`groue/GRDB.swift`** — the SQLite persistence layer.
+- **`groue/GRDB.swift`** — SQLite access for the legacy-import/read-only packages.
 - **`weichsel/ZIPFoundation`** — the archive reader used by the importers.
 
 See `ATTRIBUTION.md` and `DISCLAIMER.md` for the full attribution and good-faith

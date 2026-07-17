@@ -82,7 +82,7 @@ Strand/
 ├── Packages/
 │   ├── WhoopProtocol/          # BLE frame parsing, CRC, command/event/packet decode
 │   │                           #   (also builds the `whoop-decode` CLI — runs on Linux)
-│   ├── WhoopStore/             # GRDB/SQLite persistence (migrations, streams, caches)
+│   ├── WhoopStore/             # Room/SQLite persistence (streams, caches; shared Kotlin schema)
 │   ├── StrandAnalytics/        # HRV / recovery / strain / sleep / correlation math
 │   ├── StrandImport/           # WHOOP CSV + Apple Health importers
 │   └── StrandDesign/           # SwiftUI design system (palette, components, charts)
@@ -99,7 +99,7 @@ Strand/
 | If your change is about… | It belongs in… | Notes |
 |---|---|---|
 | Decoding strap bytes, CRC, framing, packet/event types | `Packages/WhoopProtocol` | **Platform-pure — no CoreBluetooth.** Runs in tests/CLI unchanged. |
-| Persisting decoded data, migrations, caches, reads | `Packages/WhoopStore` | GRDB/SQLite only. |
+| Persisting decoded data, migrations, caches, reads | `Packages/WhoopStore` | Room/SQLite via the shared Kotlin `com.noop.data` schema. |
 | Computing recovery / strain / HRV / sleep / correlations | `Packages/StrandAnalytics` | Pure, database-free analyzers. |
 | Parsing WHOOP CSV or Apple Health `export.xml` | `Packages/StrandImport` | Header-name-driven CSV; streaming SAX XML. |
 | Colors, fonts, motion, cards, charts | `Packages/StrandDesign` | No external UI deps; bridges AppKit/UIKit. |
@@ -207,7 +207,8 @@ personal build. See [`BUILD.md`](BUILD.md) for the signed-bundle recipe and pair
 - `xcodegen generate` has been run if you added or removed files, **but do not commit
   `Strand.xcodeproj/`** — it's gitignored and regenerated from `project.yml`.
 - No new third-party dependency unless it's discussed first. Today the only ones are **GRDB.swift**
-  (SQLite) and **ZIPFoundation** (export unzip), both via SwiftPM.
+  (SQLite — legacy-import/read-only packages only) and **ZIPFoundation** (export unzip), both via
+  SwiftPM.
 
 ---
 
@@ -440,11 +441,12 @@ Only after re-reading [The BLE safety contract](#the-ble-safety-contract-read-th
 
 ### Add a database column or table
 
-Schema lives in `Packages/WhoopStore/Sources/WhoopStore/Database.swift` as a **versioned GRDB
-`DatabaseMigrator`** (currently through `v9`).
+Schema lives in the shared Kotlin Room database (`shared/src/commonMain/kotlin/com/noop/data/` —
+`Entities.kt` plus the Room `@Database` and its migrations), opened by all platforms.
 
 - **Never edit an existing migration.** They've already run on users' on-device databases. Add a
-  **new** `migrator.registerMigration("vN") { db in … }` block.
+  **new** `object : Migration(N, N+1) { … }` in `WhoopDatabase.kt` (and bump the Room `@Database`
+  version).
 - The early migrations create the durable decoded-stream tables (`hrSample`, `rrInterval`,
   `spo2Sample`, `skinTempSample`, `respSample`, the raw outbox) keyed by `(deviceId, ts)`; later ones
   add metric caches (`sleepSession`, `dailyMetric`, `metricSeries`), cursors, and more. Follow the

@@ -40,15 +40,15 @@ extension WhoopStore {
         now: Int = Int(Date().timeIntervalSince1970),
         todayLocalDayKey: String = WhoopStore.localDayKey(Date())
     ) async throws -> TimestampHealResult {
-        // Backend-aware (#65 T3): a `.room`-backed store MUST heal the live Room `noop.db`, not the
-        // vestigial GRDB pool this actor still carries during the migration window — before this
-        // dispatch the heal always ran the GRDB SQL, so on a Room store it "succeeded" against the
-        // wrong (empty) database and the polluted rows survived every launch (the heal-wrong-DB bug).
+        // #65 T3: heals the live Room `noop.db`. Historical note: during the migration window this
+        // actor carried a vestigial GRDB pool and the heal always ran the GRDB SQL, so on a
+        // Room store it "succeeded" against the wrong (empty) database and the polluted rows
+        // survived every launch (the heal-wrong-DB bug) — the backend switch here fixed that.
         // Routes through the shared Kotlin `WhoopRepository.healImplausibleTimestamps` (the Android
         // heal), constructed per call over the live handle exactly like `OutboxBridge` — nothing is
         // stored. Bounds are the same WhoopProtocol ingest-gate constants both sides re-export.
         // One deliberate nuance: the Kotlin heal derives the far-past floor day (`minDay`) in the
-        // LOCAL calendar (Android parity) where the GRDB path uses a UTC day key — both are the same
+        // LOCAL calendar (Android parity) where the retired GRDB path used a UTC day key — both are the same
         // 2023-11 sentinel ±1 day, and the floor only gates already-implausible `-noop` rows.
         switch backend {
         case .room(let room):

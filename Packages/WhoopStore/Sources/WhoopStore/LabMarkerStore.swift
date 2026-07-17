@@ -15,7 +15,7 @@ import Shared
 //
 // Mirrors the established `MetricSeriesStore` / `DeviceRegistryStore` idiom precisely:
 // a plain Codable row struct, raw `Row` fetch + manual decode, idempotent upserts keyed
-// by the natural key, all GRDB work via the actor's `syncWrite` / `syncRead` helpers.
+// by the natural key, all database work via the actor's `syncWrite` / `syncRead` helpers.
 //
 // NON-CLINICAL: stores ONLY user-entered values + an OPTIONAL user-entered
 // `referenceText` (their own report's range, verbatim). No reference-range tables, no

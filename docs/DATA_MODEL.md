@@ -36,7 +36,7 @@ and the migration history that produced the current schema.
 > `docs/superpowers/plans/phase1-baseline.md` for the backend state machine and the full backup matrix.
 
 The persistence layer is the `WhoopStore` Swift package
-(`Packages/WhoopStore`), built on [GRDB](https://github.com/groue/GRDB.swift) over SQLite. Like
+(`Packages/WhoopStore`), built on the shared Kotlin Room database over SQLite. Like
 every package in the repo, it declares both platforms — `.iOS(.v16)` and `.macOS(.v13)`
 (`Packages/WhoopStore/Package.swift`) — and is UI-framework agnostic, so the same schema and
 storage code back both the macOS app and the iOS app (the latter build-from-source only — see
@@ -79,7 +79,7 @@ single `DatabaseQueue` and applies these PRAGMAs before any query runs:
 | `temp_store` | `MEMORY` | In-memory temp tables. |
 | `busyMode` | `.timeout(5)` | 5-second busy timeout under write contention. |
 
-`WhoopStore` is an `actor`: all GRDB calls run on the actor's serial executor (off the main
+`WhoopStore` is an `actor`: all database calls run on the actor's serial executor (off the main
 thread) through the `syncRead` / `syncWrite` helpers. The reported schema version is
 `WhoopStoreInfo.schemaVersion = 9`.
 

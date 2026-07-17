@@ -27,7 +27,7 @@ interoperability work:
 - **`b-nnett/goose`** — the WHOOP 5.0 / MG protocol work (the `fd4b0001-…`
   service family, CRC16-Modbus header, `CLIENT_HELLO`, and the "puffin" packet
   types) that the WHOOP 5.0 paths are ported from.
-- **`groue/GRDB.swift`** — SQLite persistence used by `WhoopStore`.
+- **`groue/GRDB.swift`** — SQLite access used by the legacy-import/read-only packages; `WhoopStore` persists through the shared Kotlin Room database.
 
 ---
 
@@ -36,7 +36,7 @@ interoperability work:
 | Package | Purpose | Pure / portable? | UI deps | External deps |
 |---|---|---|---|---|
 | **WhoopProtocol** | BLE frame parsing, CRC, command/event/packet decode (the reverse-engineering core) | ✅ Pure Foundation | none | none |
-| **WhoopStore** | GRDB/SQLite persistence: migrations, decoded streams, raw outbox, metric caches | ✅ Pure (server-free) | none | GRDB |
+| **WhoopStore** | Room/SQLite persistence: decoded streams, raw outbox, metric caches | ✅ Pure (server-free) | none | Shared KMP framework |
 | **StrandAnalytics** | HRV / recovery / strain / sleep / correlation math | ✅ Pure, deterministic | none | (WhoopProtocol, WhoopStore types) |
 | **StrandImport** | WHOOP CSV + Apple Health (`export.xml`, streaming) importers | ✅ Pure Foundation/XML | none | ZIPFoundation |
 | **StrandDesign** | SwiftUI design system (palette, components, charts) | SwiftUI only | SwiftUI | none |
@@ -53,7 +53,7 @@ unavoidable, guarded with `#if canImport(UIKit)` / `#if canImport(AppKit)`.
 ```
 WhoopProtocol  (no internal deps)
       │
-      ├──────────────► WhoopStore        (+ GRDB)
+      ├──────────────► WhoopStore        (+ Shared KMP)
       │                     │
       ▼                     ▼
 StrandAnalytics ◄───────────┘            (depends on WhoopProtocol + WhoopStore types)
@@ -204,7 +204,7 @@ print("HR samples:", streams.hr.count, "R-R intervals:", streams.rr.count)
 
 ## WhoopStore
 
-On-device persistence built on **GRDB/SQLite**. Decoded streams are durable;
+On-device persistence built on **Room/SQLite** (shared Kotlin database). Decoded streams are durable;
 raw frames are a transient, compressed, prunable outbox. The store is an
 `actor`, so its API is `async` and all `DatabaseQueue` work runs off the main
 thread on the actor's serial executor.
@@ -219,7 +219,7 @@ thread on the actor's serial executor.
 // Package.swift
 dependencies: [
     .package(path: "../WhoopProtocol"),
-    .package(url: "https://github.com/groue/GRDB.swift.git", from: "6.0.0"),
+    .package(path: "../OuraProtocol"),
 ],
 targets: [
     .target(name: "MyTarget", dependencies: [
@@ -555,7 +555,7 @@ struct RecoveryHeader: View {
 ## Reuse notes
 
 - **Pick only what you need.** `WhoopProtocol` is self-contained (no
-  dependencies); `WhoopStore` adds GRDB; `StrandImport` adds ZIPFoundation;
+  dependencies); `WhoopStore` adds `OuraProtocol`; `StrandImport` adds ZIPFoundation and GRDB;
   `StrandAnalytics` consumes the first two's types but does no I/O. A headless
   tool can decode and analyze WHOOP data with no SwiftUI involved at all.
 - **Bring your own transport.** The protocol library never opens a Bluetooth

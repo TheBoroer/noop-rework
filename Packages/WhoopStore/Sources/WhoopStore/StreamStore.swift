@@ -20,7 +20,7 @@ extension WhoopStore {
             #if targetEnvironment(simulator) && arch(x86_64)
             _ = roomDb; throw WhoopStore.RoomBackendUnavailableError()
             #else
-            // Byte-for-byte with the GRDB `ON CONFLICT(id) DO UPDATE SET mac, name, lastSeen`: mirror
+            // Byte-for-byte with the retired GRDB `ON CONFLICT(id) DO UPDATE SET mac, name, lastSeen`: mirror
             // WhoopRepository.upsertDevice, read the existing row and PRESERVE its firstSeen on update
             // (the @Insert(REPLACE) upsert would otherwise reset it), while mac/name/lastSeen take the
             // new values. A first insert stamps firstSeen = lastSeen = now.
@@ -62,11 +62,11 @@ extension WhoopStore {
         rowids.reduce(0) { $0 + ($1.int64Value == -1 ? 0 : 1) }
     }
 
-    /// Room write funnel (room backend): the byte-for-byte twin of `insertViaGrdb`. Each stream maps to
+    /// Room write funnel (room backend): byte-for-byte twin of the retired GRDB `insertViaGrdb`. Each stream maps to
     /// its Room entity and goes through the matching `@Insert(onConflict = IGNORE)` DAO method, the same
     /// natural-key dedupe as GRDB's `ON CONFLICT(...) DO NOTHING`. The four counted streams (hr/rr/events/
     /// battery) plus spo2/skinTemp/resp/gravity return their actually-inserted count; steps/sleepState/
-    /// ppgHr are persist-only, exactly as in the GRDB path. Empty sub-lists issue no DAO call. `event`
+    /// ppgHr are persist-only, exactly as in the retired GRDB path. Empty sub-lists issue no DAO call. `event`
     /// payloads use the SAME deterministic `encodePayload` so the stored JSON is byte-identical.
     private func insertViaRoom(_ streams: WhoopProtocol.Streams, deviceId: String, room: WhoopDatabase)
         async throws -> (hr: Int, rr: Int, events: Int, battery: Int,
@@ -136,7 +136,7 @@ extension WhoopStore {
             }
             grav = WhoopStore.insertedCount(try await dao.insertGravity(rows: rows))
         }
-        // Persist-only streams (not surfaced in the 8-field tuple), exactly as the GRDB path leaves them.
+        // Persist-only streams (not surfaced in the 8-field tuple), exactly as the retired GRDB path left them.
         if !streams.steps.isEmpty {
             let rows = streams.steps.map { s in
                 Shared.StepSample(deviceId: deviceId, ts: Int64(s.ts), counter: Int32(s.counter),
@@ -310,10 +310,10 @@ extension WhoopStore {
         return url
     }
 
-    /// Format an Int-valued GRDB column (blank for NULL) without the "Optional(...)" wrapper text.
+    /// Format an Int-valued column (blank for NULL) without the "Optional(...)" wrapper text.
     private static func intStr(_ v: Int?) -> String { v.map(String.init) ?? "" }
 
-    /// Format a Double-valued GRDB column (blank for NULL). Plain decimal, `String(Double)` is
+    /// Format a Double-valued column (blank for NULL). Plain decimal, `String(Double)` is
     /// round-trippable and locale-independent, which the comma-delimited CSV needs.
     private static func dblStr(_ v: Double?) -> String { v.map { String($0) } ?? "" }
 

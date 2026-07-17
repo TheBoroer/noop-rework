@@ -26,7 +26,7 @@ NOOP is built on community interoperability and protocol-documentation work, wit
 | --- | --- |
 | [`johnmiddleton12/my-whoop`](https://github.com/johnmiddleton12/my-whoop) | WHOOP 4.0 BLE protocol — framing, commands, decoding |
 | [`b-nnett/goose`](https://github.com/b-nnett/goose) | WHOOP 5.0 / MG BLE protocol |
-| [`groue/GRDB.swift`](https://github.com/groue/GRDB.swift) | On-device SQLite persistence |
+| [`groue/GRDB.swift`](https://github.com/groue/GRDB.swift) | SQLite access for the legacy-import/read-only packages (main store: shared Room database) |
 
 ---
 
@@ -529,5 +529,5 @@ feed, refresh battery, scan/reconnect, or disconnect.
 - **Offline by design.** NOOP talks to your strap directly over Bluetooth Low Energy — there is
   no server in the middle. No account, no sync, no cloud.
 - **On-device storage.** All history (imported and live-captured) is stored locally in SQLite
-  via GRDB.
+  via the shared Room database.
 - **Your data is yours.** Imports happen once and stay on this Mac; nothing is uploaded.

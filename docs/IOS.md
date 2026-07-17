@@ -130,7 +130,7 @@ declares both platforms in its manifest:
 | Package | Role | Platforms declared | iOS-relevant notes |
 |---|---|---|---|
 | `WhoopProtocol` | BLE frame parsing, CRC, command/event/packet decode — the reverse-engineering core | `.iOS(.v16)`, `.macOS(.v13)` | Platform-pure. **Never imports CoreBluetooth or any UI framework.** Exposes GATT UUIDs as plain *strings* (see `DeviceFamily.swift`); the app wraps them in `CBUUID`. |
-| `WhoopStore` | GRDB/SQLite persistence (migrations, decoded streams, metric caches) | `.iOS(.v16)`, `.macOS(.v13)` | Depends on `WhoopProtocol` + GRDB.swift `6.0.0+`. GRDB supports iOS first-class. |
+| `WhoopStore` | Room/SQLite persistence (decoded streams, metric caches; shared Kotlin schema) | `.iOS(.v16)`, `.macOS(.v13)` | Depends on `WhoopProtocol` + the shared KMP framework (Kotlin Room). |
 | `StrandAnalytics` | HRV / recovery / strain / sleep / correlation math | `.macOS(.v13)`, `.iOS(.v16)` | Pure computation; no platform APIs. |
 | `StrandImport` | WHOOP CSV + Apple Health (`export.xml`, streaming) importers | `.macOS(.v13)`, `.iOS(.v16)` | Depends on `WhoopProtocol`, `WhoopStore`, ZIPFoundation `0.9.0+`. Uses a streaming `XMLParser` (SAX), so it stays memory-bounded even on iOS for multi-hundred-MB exports. |
 | `StrandDesign` | SwiftUI design system (palette, components, charts) | `.macOS(.v13)`, `.iOS(.v16)` | The one package with a platform branch: `Palette.swift` resolves `Color` → sRGB components via `NSColor` under `#if canImport(AppKit)` and `UIColor` under `#elseif canImport(UIKit)`. |
