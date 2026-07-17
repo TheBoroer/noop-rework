@@ -99,6 +99,7 @@ import com.noop.analytics.Zones
 import com.noop.ble.PuffinExperiment
 import com.noop.ble.AndroidWhoopModel
 import com.noop.data.DataBackup
+import com.noop.data.ImportService
 import com.noop.ingest.RawSensorExport
 import com.noop.ingest.WhoopCsvExporter
 import com.noop.update.UpdateCheck
@@ -540,9 +541,11 @@ fun SettingsScreen(
     ) { uri ->
         if (uri == null) { backupBusy = false; return@rememberLauncherForActivityResult }
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
+            // ImportService: runs on a service-owned scope under a dataSync FGS so backgrounding
+            // the app can't freeze/kill a half-applied restore (screen scope only awaits the result).
+            val result = ImportService.run(context, "Restoring backup") {
                 DataBackup.importFrom(context, uri)
-            }
+            }.await()
             backupBusy = false
             when (result) {
                 is DataBackup.ImportResult.NeedsRestart -> Toast.makeText(

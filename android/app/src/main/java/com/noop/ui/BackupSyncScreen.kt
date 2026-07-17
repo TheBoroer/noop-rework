@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.noop.data.DataBackup
+import com.noop.data.ImportService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -85,7 +86,9 @@ fun BackupSyncScreen() {
         busy = true
         restoreError = null
         scope.launch {
-            val r = withContext(Dispatchers.IO) { DataBackup.importFrom(context, uri) }
+            // ImportService: runs on a service-owned scope under a dataSync FGS so backgrounding
+            // the app can't freeze/kill a half-applied restore (screen scope only awaits the result).
+            val r = ImportService.run(context, "Restoring backup") { DataBackup.importFrom(context, uri) }.await()
             busy = false
             when (r) {
                 is DataBackup.ImportResult.NeedsRestart -> {

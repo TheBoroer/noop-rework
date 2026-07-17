@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.ble.AndroidWhoopModel
+import com.noop.data.ImportService
 import com.noop.data.ImportSummary
 import com.noop.ingest.AppleHealthImporter
 import com.noop.ingest.HealthConnectImporter
@@ -766,9 +767,11 @@ private fun ImportStep(viewModel: AppViewModel) {
         busy = true
         status = "Importing…"
         scope.launch {
-            val summary = withContext(Dispatchers.IO) {
+            // ImportService: work runs on a service-owned scope under a dataSync FGS, so switching
+            // apps / sleeping the screen can't freeze the import; this scope only awaits the result.
+            val summary = ImportService.run(context, "Importing data") {
                 runCatching { block() }.getOrElse { ImportSummary.failure("Import", it.message ?: "failed") }
-            }
+            }.await()
             // Import & Data Ingest test mode (Test Centre): emit the parser / per-stage / day-delta trace,
             // tagged IMPORT, iff the mode is on. Gated zero-cost when off; shared with the Data Sources flow.
             emitImportTrace(context, viewModel, summary)

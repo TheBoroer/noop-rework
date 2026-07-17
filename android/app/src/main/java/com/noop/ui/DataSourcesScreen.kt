@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import com.noop.data.DataBackup
+import com.noop.data.ImportService
 import com.noop.data.ImportSummary
 import com.noop.ingest.AppleHealthImporter
 import com.noop.ingest.HealthConnectImporter
@@ -188,7 +189,9 @@ fun DataSourcesScreen(vm: AppViewModel) {
         busy = true
         backupError = null
         scope.launch {
-            val result = withContext(Dispatchers.IO) { DataBackup.importFrom(context, uri) }
+            // ImportService: runs on a service-owned scope under a dataSync FGS so backgrounding
+            // the app can't freeze/kill a half-applied restore (screen scope only awaits the result).
+            val result = ImportService.run(context, "Restoring backup") { DataBackup.importFrom(context, uri) }.await()
             busy = false
             when (result) {
                 is DataBackup.ImportResult.NeedsRestart -> {
@@ -231,9 +234,11 @@ fun DataSourcesScreen(vm: AppViewModel) {
     fun runImport(block: suspend () -> ImportSummary) {
         busy = true
         scope.launch {
-            val summary = withContext(Dispatchers.IO) {
+            // ImportService: work runs on a service-owned scope under a dataSync FGS, so switching
+            // apps / sleeping the screen can't freeze the import; this scope only awaits the result.
+            val summary = ImportService.run(context, "Importing data") {
                 runCatching { block() }.getOrElse { ImportSummary.failure("Import", it.message ?: "failed") }
-            }
+            }.await()
             // Mirror the import into the SAME exported strap log the WHOOP path uses (issue #421 parity),
             // so a tester's file import is captured in a shared debug bundle. On success: brand label +
             // per-table COUNTS only (e.g. "dailyMetric=120, sleepSession=88"). On a zero-row/failed import:
