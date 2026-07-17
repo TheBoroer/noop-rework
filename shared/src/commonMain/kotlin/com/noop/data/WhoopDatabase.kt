@@ -64,7 +64,7 @@ import kotlin.time.ExperimentalTime
         OutboxBatchRow::class,
         OutboxCursorRow::class,
     ],
-    version = 18,
+    version = WhoopDatabase.SCHEMA_VERSION,
     exportSchema = false,
 )
 @ConstructedBy(WhoopDatabaseConstructor::class)
@@ -89,6 +89,14 @@ abstract class WhoopDatabase : RoomDatabase() {
 
     companion object {
         const val DB_NAME = "noop_whoop.db"
+
+        /**
+         * Room schema version (SQLite `user_version` of the live file). Single source of truth:
+         * the `@Database` annotation reads it, and [BackupRestore] refuses to swap in a backup
+         * whose `user_version` is HIGHER — Room has no downgrade path, so restoring a
+         * newer-schema file would crash-loop the app on every launch after the import.
+         */
+        const val SCHEMA_VERSION = 18
 
         /**
          * Process-wide singleton. Safe to call from any thread. The real factory (singleton state,

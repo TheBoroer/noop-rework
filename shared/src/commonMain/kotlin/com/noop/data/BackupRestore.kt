@@ -152,6 +152,11 @@ object BackupRestore {
 
         fun cleanStaged() {
             fs.delete(stagedDb, mustExist = false)
+            // The read-write quick_check fallback can materialise WAL sidecars beside the staged
+            // copy during open-time recovery; without this they outlive the import (seen on-device
+            // as orphaned `import-extract.sqlite-shm`/`-wal`).
+            fs.delete("$stagedDb-wal".toPath(), mustExist = false)
+            fs.delete("$stagedDb-shm".toPath(), mustExist = false)
             fs.delete(stagedSettings, mustExist = false)
         }
 
@@ -214,6 +219,21 @@ object BackupRestore {
             return RestoreResult.Failed(
                 "This backup file is damaged and can't be restored (SQLite reports: $complaint). " +
                     "Your current data is untouched. Try an earlier backup file."
+            )
+        }
+
+        // 3d. Schema-version gate: a backup written by a NEWER schema (SQLite `user_version`
+        //     above ours) passes every gate above — it IS a healthy this-app database — but Room
+        //     has no downgrade path, so swapping it in would crash-loop the app on every launch
+        //     after the import (Room throws from onDowngrade at open time, AFTER the restore
+        //     already reported success). Refuse the swap while the live DB is still untouched.
+        val backupVersion = sqliteUserVersion(fs, stagedDb)
+        if (backupVersion != null && backupVersion > WhoopDatabase.SCHEMA_VERSION) {
+            cleanStaged()
+            return RestoreResult.Failed(
+                "This backup was created by a newer version of the app (database schema " +
+                    "$backupVersion; this version understands up to ${WhoopDatabase.SCHEMA_VERSION}). " +
+                    "Update the app, then import it again. Your current data is untouched."
             )
         }
 
@@ -282,9 +302,24 @@ object BackupRestore {
         }
 
         fs.delete(rollbackFile, mustExist = false)
-        fs.delete(stagedDb, mustExist = false)
+        cleanStaged()
         return RestoreResult.NeedsReopen
     }
+
+    /**
+     * The SQLite `user_version` of the file at [path] (Room stores its schema version there),
+     * read straight from the file header (big-endian u32 at byte offset 60) without opening
+     * SQLite. Header-only is authoritative here: the staged file is a standalone checkpointed
+     * copy with no `-wal` sidecar that could hold a newer header page. Null when the header
+     * can't be read (short file, I/O error) — the caller treats that as "no verdict", exactly
+     * like the other probes, because quick_check already vouched for the file's integrity.
+     */
+    internal fun sqliteUserVersion(fs: FileSystem, path: Path): Int? = runCatching {
+        fs.source(path).buffer().use { source ->
+            source.skip(60)
+            source.readInt()
+        }
+    }.getOrNull()
 
     /** True when the file at [path] begins with the SQLite 3 magic. */
     private fun hasSqliteMagic(fs: FileSystem, path: Path): Boolean = runCatching {

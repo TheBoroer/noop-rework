@@ -8,6 +8,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import okio.Path.Companion.toPath
 import okio.buffer
+import okio.openZip
 import okio.use
 
 /**
@@ -89,6 +90,73 @@ class BackupRestoreTest {
             result,
         )
         assertFalse(fs.exists(livePath))
+    }
+
+    @Test
+    fun sqliteUserVersionReadsHeaderField() {
+        val fs = platformFileSystem()
+        val work = tempWorkDir().toPath()
+        // A synthetic header: SQLite stores `user_version` as a big-endian u32 at byte offset 60.
+        val file = work / "header-only.sqlite"
+        fs.write(file) {
+            write(ByteArray(60)) // offsets 0..59, content irrelevant to the reader
+            writeInt(20)
+        }
+        assertEquals(20, BackupRestore.sqliteUserVersion(fs, file))
+        // Short file (no complete header) -> no verdict, never a throw.
+        val short = work / "short.sqlite"
+        fs.write(short) { write(ByteArray(32)) }
+        assertEquals(null, BackupRestore.sqliteUserVersion(fs, short))
+    }
+
+    /**
+     * Regression: a healthy backup written by a NEWER schema passed every gate (magic, origin,
+     * quick_check), swapped in, and then crash-looped the app at every launch — Room throws from
+     * onDowngrade at open time, AFTER the restore already reported success, and the rollback
+     * snapshot is gone by then. The version gate (step 3d) must refuse the swap while the live
+     * DB is still untouched.
+     */
+    @Test
+    fun restoreRefusesNewerSchemaBackupBeforeTouchingLiveDb() = runTest {
+        if (!canRunFullRestore) return@runTest // JVM target: see class KDoc; proven on iosSimulatorArm64
+        val fs = platformFileSystem()
+        val work = tempWorkDir().toPath()
+
+        // Build the fixture: the real v17 backup's SQLite with its `user_version` header field
+        // patched one above the app's schema. Still a byte-for-byte healthy this-app database,
+        // so every gate before 3d accepts it.
+        val newerVersion = WhoopDatabase.SCHEMA_VERSION + 1
+        val patched = work / "newer-schema.sqlite"
+        val zipFs = fs.openZip(fixture)
+        val bytes = zipFs.source(BackupRestore.ZIP_ENTRY_NAME.toPath()).buffer().use { it.readByteArray() }
+        bytes[60] = (newerVersion ushr 24).toByte()
+        bytes[61] = (newerVersion ushr 16).toByte()
+        bytes[62] = (newerVersion ushr 8).toByte()
+        bytes[63] = newerVersion.toByte()
+        fs.write(patched) { write(bytes) }
+        assertEquals(newerVersion, BackupRestore.sqliteUserVersion(fs, patched))
+
+        // A live DB with sentinel content that the refused restore must not touch.
+        val livePath = work / "restored.sqlite"
+        fs.write(livePath) { writeUtf8("sentinel live db") }
+
+        var appliedSettings: String? = null
+        val result = BackupRestore.restore(fs, patched, livePath) { json -> appliedSettings = json }
+        assertEquals(
+            BackupRestore.RestoreResult.Failed(
+                "This backup was created by a newer version of the app (database schema " +
+                    "$newerVersion; this version understands up to ${WhoopDatabase.SCHEMA_VERSION}). " +
+                    "Update the app, then import it again. Your current data is untouched."
+            ),
+            result,
+        )
+        // Live file untouched, settings hook never fired, staging fully cleaned up.
+        assertEquals("sentinel live db", fs.read(livePath) { readUtf8() })
+        assertEquals(null, appliedSettings)
+        assertFalse(fs.exists(work / "import-extract.sqlite"))
+        assertFalse(fs.exists(work / "import-extract.sqlite-wal"))
+        assertFalse(fs.exists(work / "import-extract.sqlite-shm"))
+        assertFalse(fs.exists(work / "restored.sqlite.import-bak"))
     }
 
     /** THE milestone: Android schema-v17 backup -> shared engine -> shared Room -> rows read back. */
