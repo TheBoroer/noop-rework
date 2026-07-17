@@ -66,6 +66,22 @@ data class PpgHrSample(
     val synced: Int = 0,
 )
 
+/**
+ * One raw optical PPG waveform window from the WHOOP 5/MG v26 record: the strap's green-LED
+ * samples for the window starting at [ts], packed as a little-endian sample blob exactly as
+ * captured off the BLE frame. Kept separate from [PpgHrSample] (the DERIVED bpm estimate) so the
+ * raw signal survives re-analysis with a better estimator. PK (deviceId, ts) = one window per
+ * second per strap. v19_20 migration; SQL shape pinned by [WhoopDatabase.PPG_WAVEFORM_CREATE_SQL]
+ * and must stay byte-identical to the legacy app's `PPG_WAVEFORM_MIGRATION_SQL` (extracted from
+ * the shipped APK) so a legacy v20 backup restores into a bit-identical schema.
+ */
+@Entity(tableName = "ppgWaveformSample", primaryKeys = ["deviceId", "ts"])
+data class PpgWaveformSample(
+    val deviceId: String,
+    val ts: Long,
+    val samples: ByteArray,
+)
+
 /** One downsampled HR point, the bucket's start (unix seconds) + the mean bpm over it. Query
  *  result of [WhoopDao.hrBuckets], not a table. Mirrors the macOS `HRBucket`. */
 data class HrBucket(

@@ -32,8 +32,10 @@ import kotlin.time.ExperimentalTime
  * schema-pinning SQL constants live in commonMain. The Android open path (the process-wide singleton,
  * the [CorruptionPreservingOpenHelperFactory] wiring and the fresh-install seed callback) stays in
  * androidMain (WhoopDatabase.android.kt); iOS builds with the bundled driver (WhoopDatabase.ios.kt).
- * The @Database annotation, entity list and version are UNCHANGED from the androidMain original, so
- * Room's generated schema (and its identity hash) are byte-identical.
+ * The @Database annotation and entity list track the legacy app's schema exactly; as of the
+ * v19+v20 port (task #89) the version is 20 and includes [PpgWaveformSample], with the migration
+ * SQL byte-identical to the shipped legacy APK's, so Room's generated schema (and its identity
+ * hash) stay interchangeable with a legacy v20 database.
  */
 @Database(
     entities = [
@@ -63,6 +65,7 @@ import kotlin.time.ExperimentalTime
         LiveSessionRow::class,
         OutboxBatchRow::class,
         OutboxCursorRow::class,
+        PpgWaveformSample::class,
     ],
     version = WhoopDatabase.SCHEMA_VERSION,
     exportSchema = false,
@@ -96,7 +99,7 @@ abstract class WhoopDatabase : RoomDatabase() {
          * whose `user_version` is HIGHER — Room has no downgrade path, so restoring a
          * newer-schema file would crash-loop the app on every launch after the import.
          */
-        const val SCHEMA_VERSION = 18
+        const val SCHEMA_VERSION = 20
 
         /**
          * Process-wide singleton. Safe to call from any thread. The real factory (singleton state,
@@ -531,6 +534,43 @@ abstract class WhoopDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v18 -> v19: data-only heal, no schema change. Early builds wrote `efficiency` as a
+         * percentage (0..100) where later code expects a fraction (0..1); any row above 1.5 is
+         * unambiguously a percent and gets divided down. Statements are byte-identical to the
+         * legacy app's `EFFICIENCY_HEAL_MIGRATION_SQL` (extracted from the shipped APK's
+         * MIGRATION_18_19), so a legacy DB upgraded here lands in exactly the state the old app
+         * would have produced. Idempotent: healed values are <= 1.5 and never match again.
+         */
+        internal val EFFICIENCY_HEAL_MIGRATION_SQL = listOf(
+            "UPDATE `sleepSession` SET `efficiency` = `efficiency` / 100.0 WHERE `efficiency` > 1.5",
+            "UPDATE `dailyMetric` SET `efficiency` = `efficiency` / 100.0 WHERE `efficiency` > 1.5",
+        )
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in EFFICIENCY_HEAL_MIGRATION_SQL) connection.execSQL(stmt)
+            }
+        }
+
+        /**
+         * v19 -> v20: the raw PPG waveform table ([PpgWaveformSample]). SQL is byte-identical to
+         * the legacy app's `PPG_WAVEFORM_MIGRATION_SQL` (extracted from the shipped APK's
+         * MIGRATION_19_20) AND to Room's generated schema for the entity, so both the in-place
+         * upgrade and a restored legacy v20 backup validate against the same identity hash.
+         */
+        internal val PPG_WAVEFORM_CREATE_SQL =
+            "CREATE TABLE IF NOT EXISTS `ppgWaveformSample` (`deviceId` TEXT NOT NULL, " +
+                "`ts` INTEGER NOT NULL, `samples` BLOB NOT NULL, PRIMARY KEY(`deviceId`, `ts`))"
+
+        internal val PPG_WAVEFORM_MIGRATION_SQL: List<String> = listOf(PPG_WAVEFORM_CREATE_SQL)
+
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(connection: SQLiteConnection) {
+                for (stmt in PPG_WAVEFORM_MIGRATION_SQL) connection.execSQL(stmt)
+            }
+        }
+
         /** Every migration, in order, for the Android upgrade path (WhoopDatabase.android.kt registers
          *  them). iOS builds fresh at the current version (no in-place upgrade), matching GRDB. */
         internal val ALL_MIGRATIONS: Array<Migration> = arrayOf(
@@ -538,6 +578,7 @@ abstract class WhoopDatabase : RoomDatabase() {
             MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
             MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
             MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18,
+            MIGRATION_18_19, MIGRATION_19_20,
         )
     }
 }
