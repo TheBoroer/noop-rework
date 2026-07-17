@@ -148,7 +148,7 @@ class ReportCompletenessParityTest {
         // gated on any-mode-on), yet a Connection-active report still needs the CONNECTION killer token to
         // read PRESENT. Prove the universal-tagged line carries that exact token, so promoting clockDrift to
         // universal does NOT break the Connection completeness check. This is the cross-lane seam (the emit
-        // is in WhoopBleClient; the guard is here), so we assert the two agree on the literal token.
+        // is in AndroidWhoopBleClient; the guard is here), so we assert the two agree on the literal token.
         val line = ConnectionTrace.clockDriftLine(
             oldestUnix = 1_700_000_000L, newestUnix = 1_700_100_000L, wallNowUnix = 1_700_100_030L,
         )

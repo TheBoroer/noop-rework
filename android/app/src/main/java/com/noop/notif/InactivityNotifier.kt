@@ -16,7 +16,7 @@ import com.noop.ui.appLaunchIntent
  * #577 — posts the inactivity (sedentary) wrist nudge as a real system notification, mirroring the iOS
  * `AppModel.postInactivity`. A pocketed phone can't show the strap buzz on screen the way the Mac does,
  * so a wrist buzz the user might miss is ALSO surfaced as a local notification. Called from
- * `WhoopBleClient.maybeBuzzInactivity` right after the buzz fires.
+ * `AndroidWhoopBleClient.maybeBuzzInactivity` right after the buzz fires.
  *
  * Gated on the SAME wrist-alerts master ([NotifPrefs.MASTER]) the SedentaryDetector reads, so turning
  * wrist alerts off silences this too — belt-and-suspenders, since the engine's `mayBuzz` already checks

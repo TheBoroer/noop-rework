@@ -100,7 +100,7 @@ object AndroidDiagnostics {
                 efficiency = session.efficiency ?: 0.0, stages = emptyList(),
                 restingHR = session.restingHr, avgHRV = session.avgHrv,
             )
-            val family = if (com.noop.ui.NoopPrefs.lastDevice(context)?.second == com.noop.ble.WhoopModel.WHOOP5_MG)
+            val family = if (com.noop.ui.NoopPrefs.lastDevice(context)?.second == com.noop.ble.AndroidWhoopModel.WHOOP5_MG)
                 com.noop.protocol.DeviceFamily.WHOOP5 else com.noop.protocol.DeviceFamily.WHOOP4
             add(com.noop.analytics.AnalyticsEngine.skinTempFunnel(listOf(det), hr, skin, family).summary)
         }.onFailure { add("(funnels unavailable: ${it.message})") }
@@ -164,7 +164,7 @@ object AndroidDiagnostics {
 
     /** Alarm state for the debug export: the configured wake + the last arm's sent-vs-strap-reports (#34), so
      *  a "didn't buzz" report shows whether the strap accepted the time. Reads persisted prefs (written by
-     *  WhoopBleClient.armStrapAlarm + the GET_ALARM_TIME readback). Best-effort. */
+     *  AndroidWhoopBleClient.armStrapAlarm + the GET_ALARM_TIME readback). Best-effort. */
     fun alarmLines(context: Context): List<String> = buildList {
         add("─".repeat(40))
         add("Alarm")
@@ -174,7 +174,7 @@ object AndroidDiagnostics {
             val mins = com.noop.ui.NoopPrefs.smartAlarmMinutes(context)
             add("Enabled: ${if (on) "yes" else "no"} · set ${"%02d:%02d".format(mins / 60, mins % 60)}")
             // #3: model + the 5/MG experimental gate (a 5/MG firmware alarm is NOT armed unless it's on).
-            if (com.noop.ui.NoopPrefs.lastDevice(context)?.second == com.noop.ble.WhoopModel.WHOOP5_MG) {
+            if (com.noop.ui.NoopPrefs.lastDevice(context)?.second == com.noop.ble.AndroidWhoopModel.WHOOP5_MG) {
                 val exp = com.noop.ble.PuffinExperiment.from(context).isEnabled
                 add("Model: WHOOP 5.0/MG · experimental: ${if (exp) "on" else "off → firmware alarm NOT armed"}")
             } else {

@@ -5,7 +5,7 @@ package com.noop.ble
  * (`min(60, 3 * 2^(n-1))`, BLEManager.swift didFailToConnect, #414). A strap that's genuinely out
  * of range must not hammer BLE with a fixed-3s rescan loop; the delay grows 3 → 6 → 12 → 24 → 48 →
  * 60s and then holds at the 60s ceiling. Pure + side-effect-free so it's unit-testable in isolation
- * from the GATT machinery; [WhoopBleClient] owns the attempt counter and resets it on a real connect.
+ * from the GATT machinery; [AndroidWhoopBleClient] owns the attempt counter and resets it on a real connect.
  *
  * Reimplemented under NoopApp from the upstream reconnect-backoff adoption (credit: ryanbr, #48).
  */

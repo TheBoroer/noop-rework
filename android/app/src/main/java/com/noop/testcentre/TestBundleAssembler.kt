@@ -10,7 +10,7 @@ import com.noop.ble.redactStrapLogPii
  * Twin of the Swift TestBundleAssembler: gathers the bundle files, re-runs the redaction pass over EVERY
  * file, applies the 20 MB cap, and hands the entries to LogExport.exportBundle.
  *
- * The CRITICAL fix (spec section 5.3): today only the WhoopBleClient.log() sink scrubs, so a serial
+ * The CRITICAL fix (spec section 5.3): today only the AndroidWhoopBleClient.log() sink scrubs, so a serial
  * embedded in raw-capture console text would ship unredacted. We re-run the file-scope redactStrapLogPii
  * over every entry here, the single scrub point, and stamp meta.redaction = "v2".
  */

@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pins the #364 historical-sync auto-continue decision ([WhoopBleClient.shouldAutoContinue]). The real
+ * Pins the #364 historical-sync auto-continue decision ([AndroidWhoopBleClient.shouldAutoContinue]). The real
  * bug: the strap offloads OLDEST-first at ~60s/session with a 15-min floor and NO auto-continue, so on a
  * deep backlog each connection drains only the oldest pass then waits — "last night" can take many
  * connections to reach even while the strap stays connected. The predicate decides whether a session that
@@ -30,7 +30,7 @@ class BackfillContinuationTest {
     @Test
     fun continues_whenConnectedBehindAndAdvancing() {
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 86_400L,   // a full day behind
@@ -45,7 +45,7 @@ class BackfillContinuationTest {
     @Test
     fun stops_whenDisconnected() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = false,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 86_400L,
@@ -60,7 +60,7 @@ class BackfillContinuationTest {
     @Test
     fun stops_whenCaughtUp() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 120L,      // 2 min behind, under the 5-min gap
@@ -75,7 +75,7 @@ class BackfillContinuationTest {
     @Test
     fun gapBoundary_isNotBehind() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 300L,      // exactly the 300s gap
@@ -86,7 +86,7 @@ class BackfillContinuationTest {
             ),
         )
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 301L,
@@ -102,7 +102,7 @@ class BackfillContinuationTest {
     @Test
     fun stops_whenTrimFrozen() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 86_400L,
@@ -116,9 +116,9 @@ class BackfillContinuationTest {
     /** Hard per-connection cap: at/above the cap we stop and let the 900s timer take over. */
     @Test
     fun stops_atCap() {
-        val cap = WhoopBleClient.MAX_AUTO_CONTINUES
+        val cap = AndroidWhoopBleClient.MAX_AUTO_CONTINUES
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 86_400L,
@@ -128,7 +128,7 @@ class BackfillContinuationTest {
             ),
         )
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 86_400L,
@@ -143,7 +143,7 @@ class BackfillContinuationTest {
     @Test
     fun stops_whenRangeUnknown() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = null,
                 ourFrontierTs = 1_700_000_000L,
@@ -153,7 +153,7 @@ class BackfillContinuationTest {
             ),
         )
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = null,
@@ -170,7 +170,7 @@ class BackfillContinuationTest {
     @Test
     fun continues_whenNewestStaleButRowsFlowing() {
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_700_000_000L,             // stale range answer…
                 ourFrontierTs = 1_800_000_000L,             // …reads as behind our real frontier
@@ -187,7 +187,7 @@ class BackfillContinuationTest {
     @Test
     fun stops_whenNewestStaleAndNoRows() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_700_000_000L,
                 ourFrontierTs = 1_800_000_000L,
@@ -203,7 +203,7 @@ class BackfillContinuationTest {
     @Test
     fun continues_whenRangeUnknownButRowsFlowing() {
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = null,
                 ourFrontierTs = 1_800_000_000L,
@@ -220,7 +220,7 @@ class BackfillContinuationTest {
     @Test
     fun rowsFallback_stillRespectsHardGuards() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_700_000_000L,
                 ourFrontierTs = 1_800_000_000L,
@@ -231,18 +231,18 @@ class BackfillContinuationTest {
             ),
         )
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_700_000_000L,
                 ourFrontierTs = 1_800_000_000L,
                 wallNowUnix = wallNow,
                 lastTrimAdvanced = true,
-                consecutiveCount = WhoopBleClient.MAX_AUTO_CONTINUES,   // cap wins
+                consecutiveCount = AndroidWhoopBleClient.MAX_AUTO_CONTINUES,   // cap wins
                 rowsPersistedThisSession = 240,
             ),
         )
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = false,                     // dropped link wins
                 strapNewestTs = 1_700_000_000L,
                 ourFrontierTs = 1_800_000_000L,
@@ -261,7 +261,7 @@ class BackfillContinuationTest {
         var frontier = strapNewest - 7L * 86_400L   // a week behind
         var count = 0
         var passes = 0
-        while (WhoopBleClient.shouldAutoContinue(
+        while (AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = strapNewest,
                 ourFrontierTs = frontier,
@@ -273,9 +273,9 @@ class BackfillContinuationTest {
             frontier += 86_400L
             count += 1
             passes += 1
-            assertTrue("auto-continue must be bounded", passes <= WhoopBleClient.MAX_AUTO_CONTINUES + 1)
+            assertTrue("auto-continue must be bounded", passes <= AndroidWhoopBleClient.MAX_AUTO_CONTINUES + 1)
         }
-        assertEquals(WhoopBleClient.MAX_AUTO_CONTINUES, count)
+        assertEquals(AndroidWhoopBleClient.MAX_AUTO_CONTINUES, count)
     }
 
     // #25 — HISTORY_COMPLETE-sliced offloads
@@ -289,7 +289,7 @@ class BackfillContinuationTest {
     @Test
     fun smallHistoryComplete_stillBehind_continues() {
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 6L * 3600L,   // still 6 h behind after this slice
@@ -307,7 +307,7 @@ class BackfillContinuationTest {
     @Test
     fun finalHistoryComplete_caughtUp_stops() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 60L,          // within the 5-min gap ⇒ caught up
@@ -329,7 +329,7 @@ class BackfillContinuationTest {
     fun historyCompleteSlices_areCapped_notRunaway() {
         var count = 0
         var continued = 0
-        while (WhoopBleClient.shouldAutoContinue(
+        while (AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = 1_800_000_000L,
                 ourFrontierTs = 1_800_000_000L - 7L * 86_400L, // never catches up — frontier stays far behind
@@ -341,9 +341,9 @@ class BackfillContinuationTest {
         ) {
             count += 1
             continued += 1
-            assertTrue("HISTORY_COMPLETE slices must be capped, not spin forever", continued <= WhoopBleClient.MAX_AUTO_CONTINUES + 1)
+            assertTrue("HISTORY_COMPLETE slices must be capped, not spin forever", continued <= AndroidWhoopBleClient.MAX_AUTO_CONTINUES + 1)
         }
-        assertEquals(WhoopBleClient.MAX_AUTO_CONTINUES, count)
+        assertEquals(AndroidWhoopBleClient.MAX_AUTO_CONTINUES, count)
     }
 
     // #928: strap clock set in the FUTURE
@@ -356,7 +356,7 @@ class BackfillContinuationTest {
     @Test
     fun futureClockNewest_excluded_stopsEmptySpin() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = wallNow + 30L * 86_400L,   // strap clock a month ahead of the wall
                 ourFrontierTs = wallNow - 600L,            // we're genuinely caught up to 10 min ago
@@ -378,7 +378,7 @@ class BackfillContinuationTest {
     @Test
     fun futureClockNewest_stopsEvenOnRealRows() {
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = wallNow + 30L * 86_400L,   // future-dated answer (strap clock a month ahead)
                 ourFrontierTs = wallNow - 600L,
@@ -399,7 +399,7 @@ class BackfillContinuationTest {
         for (rows in listOf(18_497, 850, 13_212, 1_729, 92_676)) {
             assertFalse(
                 "a future-dated range must never re-kick, even with $rows rows persisted",
-                WhoopBleClient.shouldAutoContinue(
+                AndroidWhoopBleClient.shouldAutoContinue(
                     stillConnected = true,
                     strapNewestTs = wallNow + 158L * 86_400L,   // ~158 days ahead, the reporter's strap
                     ourFrontierTs = wallNow - 600L,
@@ -417,9 +417,9 @@ class BackfillContinuationTest {
      *  ahead is plausible skew (strictly-greater trips it); one second past is future-dated. */
     @Test
     fun isFutureDatedNewest_boundary() {
-        assertFalse(WhoopBleClient.isFutureDatedNewest(null, wallNow))
-        assertFalse(WhoopBleClient.isFutureDatedNewest(wallNow + 48L * 3600L, wallNow))
-        assertTrue(WhoopBleClient.isFutureDatedNewest(wallNow + 48L * 3600L + 1L, wallNow))
+        assertFalse(AndroidWhoopBleClient.isFutureDatedNewest(null, wallNow))
+        assertFalse(AndroidWhoopBleClient.isFutureDatedNewest(wallNow + 48L * 3600L, wallNow))
+        assertTrue(AndroidWhoopBleClient.isFutureDatedNewest(wallNow + 48L * 3600L + 1L, wallNow))
     }
 
     /** #928 boundary: exactly 48 h ahead is still plausible (the guard is strictly-greater, absorbing
@@ -428,7 +428,7 @@ class BackfillContinuationTest {
     fun futureSkewBoundary() {
         // Exactly at the skew cap: still trusted, and far ahead of the frontier ⇒ continue.
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = wallNow + 48L * 3600L,
                 ourFrontierTs = wallNow - 86_400L,
@@ -439,7 +439,7 @@ class BackfillContinuationTest {
         )
         // One second past the cap: excluded, and an empty session must not continue.
         assertFalse(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = wallNow + 48L * 3600L + 1L,
                 ourFrontierTs = wallNow - 86_400L,
@@ -456,7 +456,7 @@ class BackfillContinuationTest {
     @Test
     fun mildFutureSkew_stillTrusted() {
         assertTrue(
-            WhoopBleClient.shouldAutoContinue(
+            AndroidWhoopBleClient.shouldAutoContinue(
                 stillConnected = true,
                 strapNewestTs = wallNow + 3600L,           // an hour ahead: plausible skew, not a broken clock
                 ourFrontierTs = wallNow - 86_400L,         // a real day of backlog

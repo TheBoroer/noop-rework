@@ -10,21 +10,21 @@ import org.junit.Test
 /**
  * Crash-safety + stale-connection policy for #314 (Pixel 7, Bluetooth turned off mid-link).
  *
- * Two coupled Android-only defects were fixed in [WhoopBleClient]:
+ * Two coupled Android-only defects were fixed in [AndroidWhoopBleClient]:
  *   1. STALE-CONNECTED — turning the OS Bluetooth radio off never tore down the orphaned GATT, so the
  *      UI kept showing live HR/buzz/sync that wasn't real. A new ACTION_STATE_CHANGED receiver in
- *      WhoopConnectionService now calls [WhoopBleClient.onBluetoothRadioOff], which runs the full
+ *      WhoopConnectionService now calls [AndroidWhoopBleClient.onBluetoothRadioOff], which runs the full
  *      teardown and publishes connected = false.
  *   2. CRASH — the raw `writeCharacteristic` (and the other GATT calls) had no try/catch, so once the
  *      binder died they threw `DeadObjectException` (an unchecked RuntimeException) and crashed the app
  *      on the next buzz/write. Every raw GATT call is now wrapped in `safeGatt`, whose catch policy is
- *      single-sourced in [WhoopBleClient.shouldTeardownOnGattThrow] and which routes into the existing
+ *      single-sourced in [AndroidWhoopBleClient.shouldTeardownOnGattThrow] and which routes into the existing
  *      disconnect/teardown path.
  *
  * INFRA NOTE: the full instance-level behaviour (a real `drainWriteQueue` against a stubbed GATT whose
  * `writeCharacteristic` throws → `writeInFlight` reset, queue drained, `state.connected == false`,
  * scheduled retries cancelled, and a subsequent buzz hitting the not-connected guard) cannot be
- * exercised here: [WhoopBleClient]'s constructor builds a `Handler(Looper.getMainLooper())` and calls
+ * exercised here: [AndroidWhoopBleClient]'s constructor builds a `Handler(Looper.getMainLooper())` and calls
  * `context.getSystemService(...)`, both of which throw under the unit harness's stub `android.jar`
  * (the project ships NO Robolectric — see app/build.gradle.kts: only junit + kotlinx-coroutines-test +
  * real org.json/kxml2). The production code is structured for that test the moment a Robolectric/
@@ -40,27 +40,27 @@ class GattCrashSafetyTest {
     @Test
     fun deadObjectException_triggersTeardown() {
         // THE #314 crash: the binder died, writeCharacteristic threw DeadObjectException. Must tear down.
-        assertTrue(WhoopBleClient.shouldTeardownOnGattThrow(DeadObjectException()))
+        assertTrue(AndroidWhoopBleClient.shouldTeardownOnGattThrow(DeadObjectException()))
     }
 
     @Test
     fun illegalStateException_triggersTeardown() {
         // Adapter/stack in a bad state once Bluetooth is going down.
-        assertTrue(WhoopBleClient.shouldTeardownOnGattThrow(IllegalStateException("adapter off")))
+        assertTrue(AndroidWhoopBleClient.shouldTeardownOnGattThrow(IllegalStateException("adapter off")))
     }
 
     @Test
     fun securityException_triggersTeardown() {
         // BLUETOOTH_CONNECT permission revoked mid-link.
-        assertTrue(WhoopBleClient.shouldTeardownOnGattThrow(SecurityException("permission revoked")))
+        assertTrue(AndroidWhoopBleClient.shouldTeardownOnGattThrow(SecurityException("permission revoked")))
     }
 
     @Test
     fun anyOtherThrowable_triggersTeardown() {
         // There is no recoverable GATT throw: continuing to drive a throwing binder is never correct,
         // so the safe response is always teardown rather than crash.
-        assertTrue(WhoopBleClient.shouldTeardownOnGattThrow(RuntimeException("unexpected")))
-        assertTrue(WhoopBleClient.shouldTeardownOnGattThrow(NullPointerException()))
+        assertTrue(AndroidWhoopBleClient.shouldTeardownOnGattThrow(RuntimeException("unexpected")))
+        assertTrue(AndroidWhoopBleClient.shouldTeardownOnGattThrow(NullPointerException()))
     }
 
     // --- Stale-connection: teardown publishes a genuinely disconnected LiveState --------------------
@@ -82,7 +82,7 @@ class GattCrashSafetyTest {
             syncChunksThisSession = 12,
         )
 
-        val after = WhoopBleClient.disconnectedLiveState(live)
+        val after = AndroidWhoopBleClient.disconnectedLiveState(live)
 
         // The single most important assertion (the user-visible bug): the UI must read DISCONNECTED.
         assertFalse("link must read disconnected after teardown", after.connected)
@@ -103,8 +103,8 @@ class GattCrashSafetyTest {
     fun teardown_isIdempotent_onAnAlreadyDisconnectedState() {
         // Calling the teardown transition again (e.g. STATE_TURNING_OFF then STATE_OFF both arrive)
         // must stay disconnected — no flip back to connected.
-        val once = WhoopBleClient.disconnectedLiveState(LiveState(connected = true, heartRate = 80))
-        val twice = WhoopBleClient.disconnectedLiveState(once)
+        val once = AndroidWhoopBleClient.disconnectedLiveState(LiveState(connected = true, heartRate = 80))
+        val twice = AndroidWhoopBleClient.disconnectedLiveState(once)
         assertFalse(twice.connected)
         assertNull(twice.heartRate)
     }
@@ -118,10 +118,10 @@ class GattCrashSafetyTest {
         // canRequestSync is the offload twin of that guard and is the pure predicate available here:
         // every kick/sync path is gated on `connected`, so once teardown sets connected = false, no
         // command path fires. (The send() guard itself needs a live instance — see the infra note.)
-        val afterTeardown = WhoopBleClient.disconnectedLiveState(LiveState(connected = true, bonded = true))
+        val afterTeardown = AndroidWhoopBleClient.disconnectedLiveState(LiveState(connected = true, bonded = true))
         assertFalse(
             "no sync/command may fire once the radio-off teardown set connected = false",
-            WhoopBleClient.canRequestSync(
+            AndroidWhoopBleClient.canRequestSync(
                 connected = afterTeardown.connected,
                 bonded = afterTeardown.bonded,
                 backfilling = afterTeardown.backfilling,

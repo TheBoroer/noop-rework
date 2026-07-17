@@ -52,7 +52,7 @@ import kotlin.math.roundToInt
  * Android tears a process down shortly after its last Activity goes away, which is exactly why
  * people on Reddit saw the strap disconnect the moment they closed NOOP. A started foreground
  * service — with an ongoing notification — keeps the process (and therefore the
- * [com.noop.NoopApplication]-owned [WhoopBleClient] and its GATT link) resident, so heart rate
+ * [com.noop.NoopApplication]-owned [AndroidWhoopBleClient] and its GATT link) resident, so heart rate
  * keeps streaming and offloads keep landing in the background.
  *
  * It does **not** own or drive the connection: it simply holds the process up and mirrors the
@@ -120,7 +120,7 @@ class WhoopConnectionService : Service() {
     /**
      * Watches the OS Bluetooth radio so turning it off immediately tears down NOOP's orphaned GATT
      * link (#314). Without this there is no ACTION_STATE_CHANGED listener at all, so the radio going off
-     * never reaches [WhoopBleClient] — the link stays "connected", the UI keeps showing live HR/buzz/sync
+     * never reaches [AndroidWhoopBleClient] — the link stays "connected", the UI keeps showing live HR/buzz/sync
      * that isn't real, and the next write crashes on a dead binder (iOS/macOS are immune because
      * CoreBluetooth's send() is state-guarded). Registered while the FGS is alive (it is the long-lived
      * owner of the connection) and unregistered in [onDestroy]. STATE_TURNING_OFF/OFF → teardown +

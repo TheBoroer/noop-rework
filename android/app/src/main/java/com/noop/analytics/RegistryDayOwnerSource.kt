@@ -1,6 +1,6 @@
 package com.noop.analytics
 
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import com.noop.data.DeviceRegistry
 import com.noop.data.DeviceStatus
 import com.noop.data.SourceKind
@@ -52,7 +52,7 @@ class RegistryDayOwnerSource(private val registry: DeviceRegistry) : Intelligenc
     // prior /100 behaviour). Mirrors the Swift IntelligenceEngine.skinTempFamily(forOwner:devices:).
     override suspend fun skinTempFamily(deviceId: String): DeviceFamily {
         val model = registry.all().firstOrNull { it.id == deviceId }?.model
-        return if (WhoopModel.entries.firstOrNull { it.displayName == model } == WhoopModel.WHOOP4)
+        return if (AndroidWhoopModel.entries.firstOrNull { it.displayName == model } == AndroidWhoopModel.WHOOP4)
             DeviceFamily.WHOOP4 else DeviceFamily.WHOOP5
     }
 }

@@ -27,7 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.noop.analytics.HrvAnalyzer
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import com.noop.protocol.DeviceFamily
 import com.noop.protocol.skinTempCelsius
 import kotlinx.coroutines.Dispatchers
@@ -357,7 +357,7 @@ private suspend fun readTimeline(
             // everything else → WHOOP5 (the prior /100 behaviour). Mirrors Swift Repository.timelineRawMetric.
             val model = runCatching { vm.pairedDevices() }.getOrDefault(emptyList())
                 .firstOrNull { it.id == deviceId }?.model
-            val family = if (WhoopModel.entries.firstOrNull { it.displayName == model } == WhoopModel.WHOOP4)
+            val family = if (AndroidWhoopModel.entries.firstOrNull { it.displayName == model } == AndroidWhoopModel.WHOOP4)
                 DeviceFamily.WHOOP4 else DeviceFamily.WHOOP5
             runCatching { repo.skinTempSamples(deviceId, from, to, 200_000) }.getOrDefault(emptyList())
                 .map { TimelinePoint(it.ts, skinTempCelsius(it.raw, family)) }

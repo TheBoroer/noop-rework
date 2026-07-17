@@ -97,7 +97,7 @@ import com.noop.BuildConfig
 import com.noop.analytics.Baselines
 import com.noop.analytics.Zones
 import com.noop.ble.PuffinExperiment
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import com.noop.data.DataBackup
 import com.noop.ingest.RawSensorExport
 import com.noop.ingest.WhoopCsvExporter
@@ -389,7 +389,7 @@ fun SettingsScreen(
     // so a confident 4.0 owner never sees 5/MG controls that can't touch their strap (#22). The model
     // preference DEFAULTS to WHOOP4, so we deliberately do NOT hide on the raw default alone — the same
     // "noop.selectedWhoopModel" key is rewritten to the family that actually advertised when a strap
-    // connects (WhoopBleClient.persistSelectedModel, PR#195), so a real 5/MG owner who never opened the
+    // connects (AndroidWhoopBleClient.persistSelectedModel, PR#195), so a real 5/MG owner who never opened the
     // model picker still flips this true once their strap is discovered. We also show it whenever a 5/MG
     // is live-detected this session. Hide only when the user is confidently on a 4.0 (pref says WHOOP4
     // AND nothing 5/MG is connected). Mirrors the macOS SettingsView `showFiveMGControls` gate.
@@ -397,7 +397,7 @@ fun SettingsScreen(
         context.getSharedPreferences(NoopPrefs.NAME, Context.MODE_PRIVATE)
             .getString("noop.selectedWhoopModel", null)
     }
-    val showFiveMGControls = selectedModelName == WhoopModel.WHOOP5_MG.name || live.whoop5Detected
+    val showFiveMGControls = selectedModelName == AndroidWhoopModel.WHOOP5_MG.name || live.whoop5Detected
 
     // "Keep connected in the background" — drives WhoopConnectionService (foreground service). Default
     // on. SharedPreferences isn't reactive, so the Switch mirrors into a local state.
@@ -1329,7 +1329,7 @@ fun SettingsScreen(
                 // Diagnostics: "Debug logging" mirrors the strap log to logcat (adb). Default OFF — a
                 // normal user never needs to write the connection log to the system log; the in-app log
                 // (and the "Share strap log" export below) work regardless. Developers flip this on to
-                // watch the connection live over `adb logcat -s WhoopBleClient`.
+                // watch the connection live over `adb logcat -s AndroidWhoopBleClient`.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,

@@ -9,10 +9,10 @@ import org.junit.Test
  * Pure-predicate tests for two BLE-lane changes that can't exercise a live GATT stack (no Robolectric —
  * see [GattCrashSafetyTest]):
  *
- *   - PR #568 (charging bolt): [WhoopBleClient.shouldApplyChargingFromBatteryEvent] — a LIVE BATTERY_LEVEL
+ *   - PR #568 (charging bolt): [AndroidWhoopBleClient.shouldApplyChargingFromBatteryEvent] — a LIVE BATTERY_LEVEL
  *     event drives the charging pill; a historical one replayed mid-backfill does not. The old 45 s
  *     event-timestamp freshness gate is gone.
- *   - H3 / #520 (device-remove release): [WhoopBleClient.releasedLiveState] — releasing a strap clears the
+ *   - H3 / #520 (device-remove release): [AndroidWhoopBleClient.releasedLiveState] — releasing a strap clears the
  *     live link + every stale readout so a removed band can't keep showing live HR / a bond / a charge.
  */
 class ChargingAndReleaseTest {
@@ -20,11 +20,11 @@ class ChargingAndReleaseTest {
     // --- PR #568: charging-from-battery-event gate -----------------------------------------------------
 
     @Test fun liveBatteryEvent_appliesCharging() {
-        assertTrue(WhoopBleClient.shouldApplyChargingFromBatteryEvent(replayedOffload = false))
+        assertTrue(AndroidWhoopBleClient.shouldApplyChargingFromBatteryEvent(replayedOffload = false))
     }
 
     @Test fun replayedHistoricalBatteryEvent_doesNotApplyCharging() {
-        assertFalse(WhoopBleClient.shouldApplyChargingFromBatteryEvent(replayedOffload = true))
+        assertFalse(AndroidWhoopBleClient.shouldApplyChargingFromBatteryEvent(replayedOffload = true))
     }
 
     // --- H3 / #520: released LiveState -----------------------------------------------------------------
@@ -36,7 +36,7 @@ class ChargingAndReleaseTest {
             charging = true, pairingHint = "still bonded to the official app",
             scanning = true, statusNote = "Searching…",
         )
-        val released = WhoopBleClient.releasedLiveState(live)
+        val released = AndroidWhoopBleClient.releasedLiveState(live)
         assertFalse(released.connected)
         assertFalse(released.bonded)
         assertFalse(released.encryptedBond)
@@ -51,7 +51,7 @@ class ChargingAndReleaseTest {
 
     @Test fun releasedState_isIdempotentFromAnAlreadyDownState() {
         val down = LiveState()
-        val released = WhoopBleClient.releasedLiveState(down)
+        val released = AndroidWhoopBleClient.releasedLiveState(down)
         assertFalse(released.connected)
         assertNull(released.heartRate)
         assertNull(released.charging)

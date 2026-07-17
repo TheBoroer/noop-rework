@@ -28,7 +28,7 @@ import kotlinx.coroutines.sync.withLock
  * This coordinator is a deliberate NO-OP whenever the active device is the WHOOP (id "my-whoop", any
  * `brand == "WHOOP"` row, OR an unknown id). That is the default state and EVERY state where no generic
  * strap is paired: WHOOP is active, the coordinator does nothing, and the existing WHOOP flow
- * ([WhoopBleClient.connect] via [AppViewModel.connect]) runs exactly as it does today. It only ever
+ * ([AndroidWhoopBleClient.connect] via [AppViewModel.connect]) runs exactly as it does today. It only ever
  * *acts* when the active device is a NON-WHOOP generic HR strap:
  *
  *   • switching TO a generic strap → [stopWhoop] (WHOOP's existing disconnect), then start the isolated
@@ -37,7 +37,7 @@ import kotlinx.coroutines.sync.withLock
  *     entry) — but only if we had actually been on a strap, so a plain launch with WHOOP active does NOT
  *     re-trigger a redundant WHOOP scan.
  *
- * It never imports or references [WhoopBleClient] internals: the WHOOP start/stop are injected closures
+ * It never imports or references [AndroidWhoopBleClient] internals: the WHOOP start/stop are injected closures
  * from the composition root, so the two BLE flows stay fully decoupled (mirrors [StandardHrSource]'s
  * isolation). Live HR from a strap is pushed through [liveSink]; the app wires that to the SAME live
  * state the UI observes (e.g. `ble::publishExternalLiveHr`).
@@ -65,13 +65,13 @@ class SourceCoordinator(
     private val stopWhoop: () -> Unit,
     /**
      * Pin the WHOOP connection to ONE strap by its persisted `peripheralId` (the MAC address), or null to
-     * clear the pin back to "connect to the first WHOOP found". Wraps [WhoopBleClient.preferredAddress].
+     * clear the pin back to "connect to the first WHOOP found". Wraps [AndroidWhoopBleClient.preferredAddress].
      * Called only on a WHOOP transition; nil on the legacy "my-whoop" path (unchanged). Default no-op keeps
      * the existing `SourceCoordinator(...)` call sites compiling unchanged. (MW-2/MW-3)
      */
     private val setWhoopPreferredAddress: (String?) -> Unit = {},
     /**
-     * Re-point which device id live WHOOP samples store under. Wraps [WhoopBleClient.setActiveDeviceId].
+     * Re-point which device id live WHOOP samples store under. Wraps [AndroidWhoopBleClient.setActiveDeviceId].
      * Called ONLY when the active WHOOP is NOT the seeded "my-whoop" — the single-WHOOP path never invokes
      * it, so the id stays "my-whoop". Default no-op keeps existing call sites compiling unchanged. (MW-3)
      */
@@ -85,7 +85,7 @@ class SourceCoordinator(
      *  registered-but-mismatched strap). */
     private val log: (String) -> Unit = { Log.i("SourceCoordinator", it) },
     /** Diagnostic sink for the ISOLATED generic-HR source's connect lifecycle. Wired at the composition
-     *  root to [WhoopBleClient.externalLog] so generic-HR lines land in the SAME in-app strap log the user
+     *  root to [AndroidWhoopBleClient.externalLog] so generic-HR lines land in the SAME in-app strap log the user
      *  exports (issue #421 — the Polar/Wahoo/Coospo/Garmin-HRM path was previously invisible). Passed into
      *  [StandardHrSource] as its `log`; kept SEPARATE from [log] above (which defaults to logcat and only
      *  carries the multi-WHOOP adoption notice). Default no-op keeps existing call sites compiling. */
@@ -172,7 +172,7 @@ class SourceCoordinator(
      */
     fun start() {
         scope.launch {
-            val id = registry.activeDeviceId() ?: WhoopBleClient.DEFAULT_DEVICE_ID
+            val id = registry.activeDeviceId() ?: AndroidWhoopBleClient.DEFAULT_DEVICE_ID
             reconcileLock.withLock { reconcile(id) }
         }
     }
@@ -308,7 +308,7 @@ class SourceCoordinator(
      */
     private fun pointWhoop(id: String, peripheralId: String?) {
         setWhoopPreferredAddress(peripheralId)
-        if (id != WhoopBleClient.DEFAULT_DEVICE_ID) {
+        if (id != AndroidWhoopBleClient.DEFAULT_DEVICE_ID) {
             setWhoopActiveDeviceId(id)
         }
         activeWhoopId = id
@@ -452,14 +452,14 @@ class SourceCoordinator(
          * Mirrors Swift `SourceCoordinator.isWhoop`.
          */
         fun isWhoop(id: String, devices: List<PairedDeviceRow>): Boolean {
-            if (id == WhoopBleClient.DEFAULT_DEVICE_ID) return true
+            if (id == AndroidWhoopBleClient.DEFAULT_DEVICE_ID) return true
             val device = devices.firstOrNull { it.id == id } ?: return true
             return isWhoop(device)
         }
 
         /** A device is WHOOP when its id is "my-whoop" or its brand is "WHOOP" (the seeded row's brand). */
         fun isWhoop(device: PairedDeviceRow): Boolean =
-            device.id == WhoopBleClient.DEFAULT_DEVICE_ID ||
+            device.id == AndroidWhoopBleClient.DEFAULT_DEVICE_ID ||
                 device.brand.equals("WHOOP", ignoreCase = true)
     }
 }

@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap
  * hardware-verified here. It NEVER fabricates data: if it can't read a real HR it stays at "—".
  *
  * WHOOP-FIRST ISOLATION (identical to [StandardHrSource]): own scan + [BluetoothGatt], never touches
- * [WhoopBleClient]. Shared surfaces are injected closures: [liveSink], [persist], [log], [onBattery].
+ * [AndroidWhoopBleClient]. Shared surfaces are injected closures: [liveSink], [persist], [log], [onBattery].
  *
  * HR strategy, honest at each step:
  *   1. Prefer the STANDARD SIG Heart Rate Service (0x180D / 0x2A37) — newer bands expose it; identical to
@@ -47,7 +47,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   3. If NEITHER is readable (the band needs the Huami auth pairing we don't implement), publish an
  *      HONEST message via [needsPairing] and stay disconnected from data — never fake a reading.
  *
- * Android runtime-permission notes (same contract as [WhoopBleClient]/[StandardHrSource]): the caller
+ * Android runtime-permission notes (same contract as [AndroidWhoopBleClient]/[StandardHrSource]): the caller
  * must hold BLUETOOTH_SCAN + BLUETOOTH_CONNECT before [scan]/[connect].
  */
 @SuppressLint("MissingPermission")

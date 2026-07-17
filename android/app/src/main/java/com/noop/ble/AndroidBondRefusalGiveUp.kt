@@ -1,7 +1,7 @@
 package com.noop.ble
 
 /**
- * Mirror of the Swift `BondRefusalGiveUp` (Strand/BLE/BLEManager.swift).
+ * Mirror of the Swift `AndroidBondRefusalGiveUp` (Strand/BLE/BLEManager.swift).
  *
  * #747 / #750: decides when a strap that keeps REFUSING the encrypted bond
  * (INSUFFICIENT_AUTHENTICATION/_ENCRYPTION, no genuine bond in between) has refused enough times that
@@ -18,7 +18,7 @@ package com.noop.ble
  * The streak accumulates across the reconnect loop (a disconnect does NOT reset it) and is cleared only by
  * a genuine bond or an explicit user reconnect, exactly like the client's existing [bondRefusalStreak].
  */
-class BondRefusalGiveUp(
+class AndroidBondRefusalGiveUp(
     /**
      * Consecutive bond refusals before we pause auto-reconnect + write the epitaph. 5 (not 2, where the
      * pairing HINT already shows): the hint asks the user to act; we give them several reconnect cycles to
@@ -60,7 +60,7 @@ class BondRefusalGiveUp(
          * #750: the one-line bond-refusal EPITAPH. Records the streak + an OPAQUE install-local id only,
          * never a MAC or serial. [opaqueId] should be a short token derived from the per-install local
          * device id, which carries no PII. Pure so a fixture pins it. No em-dash (project rule).
-         * Byte-identical to the Swift `BondRefusalGiveUp.epitaphLine`.
+         * Byte-identical to the Swift `AndroidBondRefusalGiveUp.epitaphLine`.
          */
         fun epitaphLine(refusals: Int, opaqueId: String): String =
             "Bond epitaph: the strap [$opaqueId] refused the encrypted bond ${refusals}x in a row with no " +
@@ -70,7 +70,7 @@ class BondRefusalGiveUp(
 
         /**
          * #747: the honest user-facing hint shown when auto-reconnect pauses. Tells them WHY it stopped and
-         * how to get going again. Pure; no em-dash. Byte-identical to the Swift `BondRefusalGiveUp.pausedHint`.
+         * how to get going again. Pure; no em-dash. Byte-identical to the Swift `AndroidBondRefusalGiveUp.pausedHint`.
          */
         fun pausedHint(): String =
             "NOOP stopped retrying because your strap keeps refusing to pair. It is likely still held by the " +

@@ -39,7 +39,7 @@ class LiveSessionRunner(
     private val scope: CoroutineScope,
     /** Most-recent live bpm, or null when none is current — [com.noop.ble.LiveState.heartRate]. */
     private val readBpm: () -> Int?,
-    /** Fire one hardware buzz with the given stacked-loop count — [com.noop.ble.WhoopBleClient.buzz]. */
+    /** Fire one hardware buzz with the given stacked-loop count — [com.noop.ble.AndroidWhoopBleClient.buzz]. */
     private val buzz: (Int) -> Unit,
     /** Upsert the session row (start + end) — [com.noop.data.WhoopRepository.upsertLiveSession]. */
     private val persist: suspend (LiveSessionRow) -> Unit,
@@ -119,7 +119,7 @@ class LiveSessionRunner(
         endedAutomatically = auto
         tickJob?.cancel(); tickJob = null
         // Stop scheduling NEW pulses; a hardware buzz already in flight can't be recalled (see
-        // WhoopBleClient.stopHaptics) and a cue walk is under ~4s, so cutting the schedule is enough.
+        // AndroidWhoopBleClient.stopHaptics) and a cue walk is under ~4s, so cutting the schedule is enough.
         walkJob?.cancel(); walkJob = null
         realtimeHr(false)
         endTs = nowEpochSec()

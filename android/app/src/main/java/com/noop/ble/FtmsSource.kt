@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
  * characteristics (Treadmill 0x2ACD, Indoor Bike 0x2AD2, Rower 0x2AD1, Cross Trainer 0x2ACE).
  *
  * Faithful Kotlin twin of Strand/BLE/FTMSSource.swift. WHOOP-FIRST ISOLATION (identical to
- * [StandardHrSource]): own scan + [BluetoothGatt], never touches [WhoopBleClient]. The shared surfaces
+ * [StandardHrSource]): own scan + [BluetoothGatt], never touches [AndroidWhoopBleClient]. The shared surfaces
  * are injected closures: [liveSink] (machine HR → the live UI + the existing live-workout recorder),
  * [onBattery] (the machine's 0x180F battery), [log] (the exportable strap log). The pure FTMS field
  * decode lives in [FitnessMachine] so it's JVM-unit-tested away from android.bluetooth.
@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap
  * ([AppViewModel.startWorkout]/[endWorkout] → StrainScorer → Effort). The machine metrics (speed,
  * cadence, power, distance, energy) are surfaced live via [latest] and logged.
  *
- * Android runtime-permission notes (same contract as [WhoopBleClient]/[StandardHrSource]): the caller
+ * Android runtime-permission notes (same contract as [AndroidWhoopBleClient]/[StandardHrSource]): the caller
  * must hold BLUETOOTH_SCAN + BLUETOOTH_CONNECT before [scan]/[connect].
  */
 @SuppressLint("MissingPermission")

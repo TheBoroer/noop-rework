@@ -4,7 +4,7 @@ package com.noop.ui
  * A process-wide, time-bounded ring buffer of strap-log lines for the SCHEDULED debug export (#510,
  * maddognik).
  *
- * WHY this is separate from [com.noop.ble.WhoopBleClient]'s own `logBuffer`: that one lives on the live
+ * WHY this is separate from [com.noop.ble.AndroidWhoopBleClient]'s own `logBuffer`: that one lives on the live
  * BLE client instance, which is owned by the ViewModel / foreground service and is NOT reachable from a
  * background [androidx.work.Worker] running hours later (possibly after the client was torn down). The
  * scheduled daily export needs its OWN durable, independently-addressable tail of the log, so [LogExport]
@@ -89,6 +89,6 @@ object StrapLogBuffer {
     /** ~24h rolling window. */
     const val RETENTION_MS: Long = 24L * 60L * 60L * 1000L
 
-    /** Hard line cap, mirroring WhoopBleClient.LOG_BUFFER_MAX so the two logs hold a comparable tail. */
+    /** Hard line cap, mirroring AndroidWhoopBleClient.LOG_BUFFER_MAX so the two logs hold a comparable tail. */
     const val MAX_LINES = 5000
 }

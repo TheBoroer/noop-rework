@@ -57,8 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.ble.OuraLiveSource
 import com.noop.ble.StandardHrSource
-import com.noop.ble.WhoopBleClient
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopBleClient
+import com.noop.ble.AndroidWhoopModel
 import com.noop.data.DeviceStatus
 import com.noop.data.PairedDeviceRow
 import com.noop.data.SourceKind
@@ -91,10 +91,10 @@ private enum class DeviceType {
     Amazfit, MiBand, Garmin, Oura;
 
     val isWhoop: Boolean get() = this == Whoop4 || this == Whoop5MG
-    val whoopModel: WhoopModel?
+    val whoopModel: AndroidWhoopModel?
         get() = when (this) {
-            Whoop4 -> WhoopModel.WHOOP4
-            Whoop5MG -> WhoopModel.WHOOP5_MG
+            Whoop4 -> AndroidWhoopModel.WHOOP4
+            Whoop5MG -> AndroidWhoopModel.WHOOP5_MG
             else -> null
         }
 
@@ -159,7 +159,7 @@ fun AddDeviceWizard(
     var ouraConfirmAdopt by remember { mutableStateOf(false) }
 
     // The chosen strap, in whichever shape its path produces.
-    var pickedWhoop by remember { mutableStateOf<WhoopBleClient.DiscoveredWhoop?>(null) }
+    var pickedWhoop by remember { mutableStateOf<AndroidWhoopBleClient.DiscoveredWhoop?>(null) }
     var pickedStrap by remember { mutableStateOf<StandardHrSource.DiscoveredStrap?>(null) }
     var pickedMachine by remember { mutableStateOf<com.noop.ble.FtmsSource.DiscoveredMachine?>(null) }
     var pickedHuami by remember { mutableStateOf<com.noop.ble.HuamiHrSource.DiscoveredDevice?>(null) }
@@ -181,7 +181,7 @@ fun AddDeviceWizard(
 
     fun startScan(t: DeviceType) {
         when {
-            t.isWhoop -> viewModel.presentWhoopScan(t.whoopModel ?: WhoopModel.WHOOP4)
+            t.isWhoop -> viewModel.presentWhoopScan(t.whoopModel ?: AndroidWhoopModel.WHOOP4)
             t == DeviceType.GymEquipment -> ftmsScanner.scan()
             t == DeviceType.Amazfit || t == DeviceType.MiBand -> huamiScanner.scan()
             t == DeviceType.Oura -> ouraScanner.scan()
@@ -265,7 +265,7 @@ fun AddDeviceWizard(
             pw != null && type?.whoopModel != null -> {
                 // WHOOP: full capability set; id namespaced by address; model "4.0" / "5.0 MG".
                 val wm = type!!.whoopModel!!
-                val modelLabel = if (wm == WhoopModel.WHOOP4) "4.0" else "5.0 MG"
+                val modelLabel = if (wm == AndroidWhoopModel.WHOOP4) "4.0" else "5.0 MG"
                 PairedDeviceRow(
                     id = "whoop-${pw.address}",
                     brand = "WHOOP",
@@ -505,7 +505,7 @@ fun AddDeviceWizard(
                                     viewModel.stopWhoopScan()
                                     step = WizardStep.Confirm
                                 },
-                                onRescan = { viewModel.presentWhoopScan(t.whoopModel ?: WhoopModel.WHOOP4) },
+                                onRescan = { viewModel.presentWhoopScan(t.whoopModel ?: AndroidWhoopModel.WHOOP4) },
                             )
                             t == DeviceType.GymEquipment -> FtmsPickStep(
                                 scanner = ftmsScanner,
@@ -950,7 +950,7 @@ private val ouraPrepInstructions: List<String> = listOf(
 @Composable
 private fun WhoopPickStep(
     viewModel: AppViewModel,
-    onSelect: (WhoopBleClient.DiscoveredWhoop) -> Unit,
+    onSelect: (AndroidWhoopBleClient.DiscoveredWhoop) -> Unit,
     onRescan: () -> Unit,
 ) {
     val found by viewModel.discoveredWhoops.collectAsStateWithLifecycle()

@@ -13,7 +13,7 @@ import java.io.File
  * Shares the strap connection log as a plain-text file so users can attach it to a bug report.
  *
  * Android's `Log.d` output isn't reachable without adb, which is why people on issues #17/#18
- * couldn't share what was happening on their strap. [com.noop.ble.WhoopBleClient] now keeps an
+ * couldn't share what was happening on their strap. [com.noop.ble.AndroidWhoopBleClient] now keeps an
  * in-memory ring buffer (`exportLogText()`); this writes it to a cache file and fires a share sheet.
  */
 object LogExport {
@@ -142,8 +142,8 @@ object LogExport {
             // The raw 5/MG capture (JSONL of every backfilled frame) copied alongside as a matching `.bin`
             // so the scheduled drop is a self-contained pair, mirroring the interactive shareRawAndLog. Only
             // present when a 5/MG owner has the opt-in capture on and a history sync has run.
-            val main = File(context.filesDir, com.noop.ble.WhoopBleClient.WHOOP5_CAPTURE_FILE)
-            val prev = File(context.filesDir, "${com.noop.ble.WhoopBleClient.WHOOP5_CAPTURE_FILE}.1")
+            val main = File(context.filesDir, com.noop.ble.AndroidWhoopBleClient.WHOOP5_CAPTURE_FILE)
+            val prev = File(context.filesDir, "${com.noop.ble.AndroidWhoopBleClient.WHOOP5_CAPTURE_FILE}.1")
             if (main.exists() || prev.exists()) {
                 val rawFile = File(dir, rawCaptureFilename(nowMs))
                 rawFile.outputStream().bufferedWriter().use { w ->
@@ -194,8 +194,8 @@ object LogExport {
      * share and the "raw + log" matched-pair export so both emit the SAME content.
      */
     private fun writeCaptureFile(context: Context): File? {
-        val main = File(context.filesDir, com.noop.ble.WhoopBleClient.WHOOP5_CAPTURE_FILE)
-        val prev = File(context.filesDir, "${com.noop.ble.WhoopBleClient.WHOOP5_CAPTURE_FILE}.1")
+        val main = File(context.filesDir, com.noop.ble.AndroidWhoopBleClient.WHOOP5_CAPTURE_FILE)
+        val prev = File(context.filesDir, "${com.noop.ble.AndroidWhoopBleClient.WHOOP5_CAPTURE_FILE}.1")
         if (!main.exists() && !prev.exists()) return null
         val header = buildString {
             appendLine("# NOOP 5/MG raw backfill capture (JSONL; one frame per line)")

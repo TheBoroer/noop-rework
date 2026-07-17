@@ -5,25 +5,25 @@ package com.noop.ble
  * more time before the link is bounced, and a strap whose handshake never completes stops bouncing after
  * a capped number of tries instead of looping forever.
  *
- * The failure this fixes is DISTINCT from the #617 [PostBondTimeoutLoopDetector] loop: #617 is a strap
+ * The failure this fixes is DISTINCT from the #617 [AndroidPostBondTimeoutLoopDetector] loop: #617 is a strap
  * that DOES reach a genuine encrypted bond and then drops ~1s later with a real GATT_CONN_TIMEOUT (status
  * 0x08). #971 is the handshake never LANDING inside the fixed 7s window at all — the CCCD subscribe +
  * confirmed bond write is slow on some phone/strap pairings, the #50 watchdog fires mid-handshake and
  * bounces the link with `gatt.disconnect()`, which the stack reports as GATT_CONN_TERMINATE_LOCAL_HOST
  * (status 22 / 0x16, a LOCAL-host terminate, NOT the 0x08 the #617 detector keys on). Because
- * STATE_CONNECTED is reached every cycle, [WhoopBleClient.resetReconnectBackoff] zeroes the reconnect
+ * STATE_CONNECTED is reached every cycle, [AndroidWhoopBleClient.resetReconnectBackoff] zeroes the reconnect
  * backoff on each pass, so the bond phase itself never backs off — bond → 7s → bounce → reconnect →
  * bond → 7s → bounce, indefinitely, and the user never sees a re-pair guide.
  *
  * The fix has three parts, all decided here so they're unit-testable without a BLE seam (same shape as
- * [PostBondTimeoutLoopDetector] / [BondRefusalGiveUp]):
+ * [AndroidPostBondTimeoutLoopDetector] / [AndroidBondRefusalGiveUp]):
  *
  *  1. ESCALATE the watchdog window per consecutive bounce ([windowMsForAttempt]) so a slow-but-healthy
  *     handshake that just needs 9-10s gets it on the second/third try instead of being bounced forever at
  *     a too-tight 7s. Capped so a truly dead handshake can't wait minutes.
  *  2. COUNT consecutive bounces ([recordBounce]); the streak survives the intermediate STATE_CONNECTED
  *     (unlike the reconnect backoff), and is cleared only by a genuine bond ([reset]) or an explicit user
- *     reconnect — exactly like [bondRefusalStreak] / [BondRefusalGiveUp].
+ *     reconnect — exactly like [bondRefusalStreak] / [AndroidBondRefusalGiveUp].
  *  3. GIVE UP after [giveUpThreshold] bounces ([shouldGiveUp]): stop bouncing, surface the EXISTING
  *     re-pair guide and pause auto-reconnect (reusing the #747/#844 pause machinery), so a strap that
  *     genuinely can't finish the handshake stops draining the battery.

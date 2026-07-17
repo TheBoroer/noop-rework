@@ -11,7 +11,7 @@ import org.junit.Test
  * case onBondWatchdog's recordBounce (which only counts its OWN localTerminate/0x16 bounce) never runs, and
  * the #617 loop detector skips it (never bonded, and status != GATT_CONN_TIMEOUT). Neither give-up counter
  * advanced, while STATE_CONNECTED zeroed the reconnect backoff every cycle — an unbounded connect/subscribe/
- * drop loop that drained the battery. [WhoopBleClient.shouldCountNeverBondedSelfDrop] is the pure gate that
+ * drop loop that drained the battery. [AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop] is the pure gate that
  * feeds exactly (and only) that drop into the shared [BondWatchdogBackoff] give-up counter.
  *
  * The gate is deliberately narrow so a HEALTHY connect (didBond == true) and every other disconnect class is
@@ -25,7 +25,7 @@ class NeverBondedSelfDropGiveUpTest {
     /** The #982 case: connected, subscribed, never bonded, involuntary status-0 self-drop, first time. */
     @Test fun countsTheNeverBondedSelfDrop() {
         assertTrue(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
             )
@@ -36,7 +36,7 @@ class NeverBondedSelfDropGiveUpTest {
      *  is unchanged, so we don't manufacture a give-up on a normal transient post-bond drop. */
     @Test fun bondedDropIsNotCounted() {
         assertFalse(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = true, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
             )
@@ -46,7 +46,7 @@ class NeverBondedSelfDropGiveUpTest {
     /** A connect that never reached STATE_CONNECTED (failedConnect) is a different path — not counted. */
     @Test fun failedConnectIsNotCounted() {
         assertFalse(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = false, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
             )
@@ -56,7 +56,7 @@ class NeverBondedSelfDropGiveUpTest {
     /** A user-/app-initiated disconnect must never accrue toward the give-up. */
     @Test fun intentionalDisconnectIsNotCounted() {
         assertFalse(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = true,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
             )
@@ -66,7 +66,7 @@ class NeverBondedSelfDropGiveUpTest {
     /** The stale-direct-bond fallback already has its own scan-recovery path (#78); don't double-handle it. */
     @Test fun staleDirectBondIsNotCounted() {
         assertFalse(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = true, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
             )
@@ -77,7 +77,7 @@ class NeverBondedSelfDropGiveUpTest {
      *  onBondWatchdog — excluding it here is what stops a single cycle being double-counted. */
     @Test fun ownLocalTerminateBounceIsNotDoubleCounted() {
         assertFalse(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_LOCAL_TERMINATE, alreadyPausedForBondLoop = false,
             )
@@ -87,7 +87,7 @@ class NeverBondedSelfDropGiveUpTest {
     /** Once we've already paused for the bond loop, stop counting — the guide is up and reconnect is off. */
     @Test fun alreadyPausedIsNotCounted() {
         assertFalse(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = true,
             )
@@ -100,7 +100,7 @@ class NeverBondedSelfDropGiveUpTest {
         val backoff = BondWatchdogBackoff(giveUpThreshold = 4)
         // Mirror the handleDisconnect call: only recordBounce when the gate passes.
         fun cycle(): Boolean {
-            val gate = WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            val gate = AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = backoff.shouldGiveUp(),
             )
@@ -121,7 +121,7 @@ class NeverBondedSelfDropGiveUpTest {
         // cycle 1: our watchdog fired first (localTerminate) -> counted by the watchdog, gate excludes it.
         assertFalse(
             "self-drop gate excludes the watchdog's own localTerminate",
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_LOCAL_TERMINATE, alreadyPausedForBondLoop = false,
             )
@@ -130,7 +130,7 @@ class NeverBondedSelfDropGiveUpTest {
         // cycles 2-4: the strap self-drops (status 0) before the watchdog — the gate counts these.
         repeat(2) {
             assertTrue(
-                WhoopBleClient.shouldCountNeverBondedSelfDrop(
+                AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                     wasConnected = true, didBond = false, intentionalDisconnect = false,
                     staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
                 )
@@ -139,7 +139,7 @@ class NeverBondedSelfDropGiveUpTest {
         }
         // the 4th total bounce (2 watchdog-style + this self-drop) crosses the shared threshold.
         assertTrue(
-            WhoopBleClient.shouldCountNeverBondedSelfDrop(
+            AndroidWhoopBleClient.shouldCountNeverBondedSelfDrop(
                 wasConnected = true, didBond = false, intentionalDisconnect = false,
                 staleDirectBond = false, status = STATUS_SELF_DROP, alreadyPausedForBondLoop = false,
             )

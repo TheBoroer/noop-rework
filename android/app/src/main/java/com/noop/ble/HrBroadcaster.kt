@@ -46,7 +46,7 @@ import java.util.concurrent.ConcurrentHashMap
  * only runs while the user has the "Broadcast heart rate" toggle on (persisted by NoopPrefs).
  *
  * WHOOP-FIRST ISOLATION: this class runs its OWN advertiser + GATT server and never imports, calls, or
- * shares state with [WhoopBleClient] / [StandardHrSource] / [SourceCoordinator]. It is a pure CONSUMER of
+ * shares state with [AndroidWhoopBleClient] / [StandardHrSource] / [SourceCoordinator]. It is a pure CONSUMER of
  * whatever live HR the app already has — the input arrives via [update]. It writes nothing back into the
  * WHOOP path, so the strap connection, scoring, and history offload cannot regress. The pure 0x2A37
  * measurement *encoder* is [measurement], unit-tested away from android.bluetooth.

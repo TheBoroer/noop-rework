@@ -3,8 +3,8 @@ package com.noop
 import android.app.Application
 import android.util.Log
 import com.noop.ble.SourceCoordinator
-import com.noop.ble.WhoopBleClient
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopBleClient
+import com.noop.ble.AndroidWhoopModel
 import com.noop.data.DeviceRegistry
 import com.noop.data.WhoopDatabase
 import com.noop.data.WhoopRepository
@@ -17,7 +17,7 @@ import kotlinx.coroutines.runBlocking
  * NOOP is a fully on-device WHOOP companion: it connects to the strap over BLE and persists
  * everything locally via Room. There is no network layer (the opt-in AI Coach aside).
  *
- * The data layer ([WhoopRepository]) and the BLE client ([WhoopBleClient]) are owned **here**, at the
+ * The data layer ([WhoopRepository]) and the BLE client ([AndroidWhoopBleClient]) are owned **here**, at the
  * process level, rather than by the Activity-scoped AppViewModel. That is what lets a connection keep
  * streaming when the app is backgrounded or closed: [com.noop.ble.WhoopConnectionService] holds the
  * process up with a foreground notification, and both it and the UI share this one BLE client. The
@@ -50,14 +50,14 @@ class NoopApplication : Application() {
     val activeDeviceId: String by lazy {
         runCatching { runBlocking { deviceRegistry.activeDeviceId() } }
             .onFailure { Log.w("NoopApplication", "activeDeviceId resolve failed; using fallback", it) }
-            .getOrNull() ?: WhoopBleClient.DEFAULT_DEVICE_ID
+            .getOrNull() ?: AndroidWhoopBleClient.DEFAULT_DEVICE_ID
     }
 
     /** Process-wide BLE client. Owns the GATT connection and outlives any single Activity/ViewModel. */
-    val ble: WhoopBleClient by lazy {
-        WhoopBleClient(applicationContext, repository = repository, deviceId = activeDeviceId).apply {
+    val ble: AndroidWhoopBleClient by lazy {
+        AndroidWhoopBleClient(applicationContext, repository = repository, deviceId = activeDeviceId).apply {
             // Apply the persisted "Debug logging" preference at the composition root so the low-level
-            // client never has to read the UI/prefs layer. Default OFF — see WhoopBleClient.debugLogcat.
+            // client never has to read the UI/prefs layer. Default OFF — see AndroidWhoopBleClient.debugLogcat.
             debugLogcat = NoopPrefs.debugLogging(applicationContext)
         }
     }
@@ -68,13 +68,13 @@ class NoopApplication : Application() {
      * single-WHOOP install), so the existing WHOOP flow is untouched. Only when a non-WHOOP generic HR
      * strap becomes active does it pause WHOOP and run the isolated [com.noop.ble.StandardHrSource].
      *
-     * Wired to the EXISTING [ble] entry points via closures — it never touches [WhoopBleClient]
+     * Wired to the EXISTING [ble] entry points via closures — it never touches [AndroidWhoopBleClient]
      * internals. Strap live HR is pushed into the same [ble] state flow the UI observes via
-     * [WhoopBleClient.publishExternalLiveHr]. [SourceCoordinator.start] reconciles once against the
+     * [AndroidWhoopBleClient.publishExternalLiveHr]. [SourceCoordinator.start] reconciles once against the
      * current active id at launch (a no-op for a single-WHOOP install); the Devices screen (next task)
      * calls [SourceCoordinator.onActiveDeviceChanged] after a setActive.
      *
-     * Multi-WHOOP identity adoption: AppViewModel's init collects [WhoopBleClient.connectedPeripheralAddress]
+     * Multi-WHOOP identity adoption: AppViewModel's init collects [AndroidWhoopBleClient.connectedPeripheralAddress]
      * (distinctUntilChanged) into [SourceCoordinator.connectedPeripheralChanged] — the Kotlin analogue of
      * macOS wiring `BLEManager.connectedPeripheralUUID` into the coordinator's adoption sink. Kept beside
      * the other `ble`-flow collectors there (this Application owns no CoroutineScope of its own).
@@ -85,7 +85,7 @@ class NoopApplication : Application() {
             registry = deviceRegistry,
             repository = repository,
             liveSink = { hr, rr -> ble.publishExternalLiveHr(hr, rr) },
-            // #74: reconnect on the PERSISTED family, not the WhoopModel.WHOOP4 default - otherwise a
+            // #74: reconnect on the PERSISTED family, not the AndroidWhoopModel.WHOOP4 default - otherwise a
             // 5/MG WHOOP->WHOOP switch rescans the wrong service and misses the 5/MG direct-bond fast
             // path (status=133 on an OS-bonded strap). Mirrors macOS AppModel.scan() reading the persisted
             // "selectedWhoopModel". Same-strap switches now adopt in place (no reconnect) via the
@@ -105,12 +105,12 @@ class NoopApplication : Application() {
         )
     }
 
-    /** The WHOOP family last seen advertising, persisted by [WhoopBleClient.persistSelectedModel] under
-     *  "noop.selectedWhoopModel" in the shared noop_prefs store. Defaults to [WhoopModel.WHOOP4] when
+    /** The WHOOP family last seen advertising, persisted by [AndroidWhoopBleClient.persistSelectedModel] under
+     *  "noop.selectedWhoopModel" in the shared noop_prefs store. Defaults to [AndroidWhoopModel.WHOOP4] when
      *  unset or unparseable (the historical connect() default), so a fresh install is unchanged. Used to
      *  reconnect on the right service after a WHOOP->WHOOP switch (#74). */
-    private fun persistedWhoopModel(): WhoopModel =
+    private fun persistedWhoopModel(): AndroidWhoopModel =
         NoopPrefs.of(this).getString("noop.selectedWhoopModel", null)
-            ?.let { runCatching { WhoopModel.valueOf(it) }.getOrNull() }
-            ?: WhoopModel.WHOOP4
+            ?.let { runCatching { AndroidWhoopModel.valueOf(it) }.getOrNull() }
+            ?: AndroidWhoopModel.WHOOP4
 }

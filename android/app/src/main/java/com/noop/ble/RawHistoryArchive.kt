@@ -13,7 +13,7 @@ import java.io.FileOutputStream
  * WHY this exists: the strap FREES history once the phone acks its trim cursor. If a chunk's records
  * can't be decoded (CRC failure, or an unmapped firmware layout the v24 plausibility gate rejects),
  * acking anyway permanently destroys the user's ONLY copy of those records while the UI says "History
- * synced". So the Backfiller archives the raw bytes HERE — durably — BEFORE acking. The archive then
+ * synced". So the AndroidBackfiller archives the raw bytes HERE — durably — BEFORE acking. The archive then
  * lets a later release that maps the layout recover the data, and is itself the corpus that mapping
  * needs. Frames carry sensor payloads, not identifiers (no serials/MACs).
  *
@@ -143,7 +143,7 @@ class RawHistoryArchive(
         for (family in archived.map { it.second }.toSet()) {
             val frames = archived.filter { it.second == family }.map { it.first }
             // type-47 records carry their own real-unix ts (clock offset ignored), so an identity clock
-            // ref is correct here — the same fallback the Backfiller uses when clockRef is nil.
+            // ref is correct here — the same fallback the AndroidBackfiller uses when clockRef is nil.
             val decoded = extractHistoricalStreams(frames, 0, 0, family)
             // Count rows ACTUALLY inserted, not decoded: under the per-app-version gate the archive
             // replays every release, and dedupe makes those re-runs insert 0 — counting decoded rows

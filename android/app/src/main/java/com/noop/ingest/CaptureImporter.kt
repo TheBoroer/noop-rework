@@ -3,7 +3,7 @@ package com.noop.ingest
 import android.content.Context
 import android.net.Uri
 import com.noop.ble.RawHistoryArchive
-import com.noop.ble.WhoopBleClient
+import com.noop.ble.AndroidWhoopBleClient
 import com.noop.data.ImportSummary
 import com.noop.data.InsertCounts
 import com.noop.data.StreamBatch
@@ -157,7 +157,7 @@ object CaptureImporter {
         val rejects = LinkedHashMap<DeviceFamily, List<ByteArray>>()
         var offload = 0
         for ((family, frames) in parsed.byFamily) {
-            val offloadFrames = frames.filter { WhoopBleClient.isOffloadFrame(it, family) }
+            val offloadFrames = frames.filter { AndroidWhoopBleClient.isOffloadFrame(it, family) }
             if (offloadFrames.isEmpty()) continue
             offload += offloadFrames.size
             val batch = extractHistoricalStreams(offloadFrames, 0, 0, family)

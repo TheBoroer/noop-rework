@@ -16,7 +16,7 @@ import com.noop.ui.appLaunchIntent
  * #577 — posts the smart-alarm wake as a local notification, mirroring the iOS `AppModel.postSmartAlarm`.
  * The strap buzzes your wrist at the smart-alarm time; a pocketed phone surfaces it as a notification too
  * so a missed wrist buzz still reaches you. Called from `AppViewModel` when the strap reports
- * `STRAP_DRIVEN_ALARM_EXECUTED` (WhoopBleClient.onSmartAlarmFired).
+ * `STRAP_DRIVEN_ALARM_EXECUTED` (AndroidWhoopBleClient.onSmartAlarmFired).
  *
  * Gated on the SAME wrist-alerts master ([NotifPrefs.MASTER]) the inactivity/illness posters use, so
  * turning wrist alerts off silences it. Twin of [InactivityNotifier].

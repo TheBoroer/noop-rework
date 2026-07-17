@@ -17,7 +17,7 @@ import kotlinx.coroutines.sync.withLock
 /**
  * Historical-offload state machine (idle / backfilling).
  *
- * Direct port of the macOS Swift `Backfiller` (Strand/Collect/Backfiller.swift). It consumes the
+ * Direct port of the macOS Swift `AndroidBackfiller` (Strand/Collect/AndroidBackfiller.swift). It consumes the
  * METADATA frames of an offload — HISTORY_START / repeated HISTORY_END / HISTORY_COMPLETE —
  * accumulating the type-47 records between them into chunks and committing each chunk durably.
  *
@@ -35,10 +35,10 @@ import kotlinx.coroutines.sync.withLock
  * still acked (it advances the strap's trim) — that is how the offload progresses.
  *
  * CONCURRENCY: [ingest] is `suspend` and serialised by [mutex] so START/data/END chunk assembly is
- * never reordered, matching the Swift serial-drain task. The owning [WhoopBleClient] feeds frames
+ * never reordered, matching the Swift serial-drain task. The owning [AndroidWhoopBleClient] feeds frames
  * in arrival order from a single drain coroutine.
  *
- * RAW CAPTURE: the Swift Backfiller optionally persists ALL raw frames (research toggle, default OFF);
+ * RAW CAPTURE: the Swift AndroidBackfiller optionally persists ALL raw frames (research toggle, default OFF);
  * the Android data layer has no raw-frame outbox table, so that bulk capture is intentionally omitted
  * here — decoded rows are the product of record and are still durably committed before the trim is
  * advanced, exactly as in the Swift default (raw-off) configuration. The ONE exception is the
@@ -46,10 +46,10 @@ import kotlinx.coroutines.sync.withLock
  * [rejectedSink] BEFORE the trim is acked, because the strap frees acked history and those bytes would
  * otherwise be the user's permanently-lost only copy. See the FLAG in the port notes.
  */
-class Backfiller(
+class AndroidBackfiller(
     private val repository: WhoopRepository,
     /** The device id every offloaded row is stamped with (read at finishChunk). MUTABLE so a
-     *  WHOOP→WHOOP active-device switch re-points it via [WhoopBleClient.setActiveDeviceId] and the
+     *  WHOOP→WHOOP active-device switch re-points it via [AndroidWhoopBleClient.setActiveDeviceId] and the
      *  next chunk attributes to the new id; the single-WHOOP path never reassigns it ("my-whoop"). */
     var deviceId: String,
     private val cursorStore: TrimCursorStore,
@@ -93,17 +93,17 @@ class Backfiller(
      * The (device, wall) clock reference. type-47 records carry their OWN real unix timestamp so
      * the offset is a no-op for them; this is supplied only for the REALTIME_RAW_DATA fallback and
      * to mirror the Swift signature. Defaults to an identity ref (device == wall == now): the Swift
-     * Backfiller falls back to exactly this when GET_CLOCK is silent, and type-47 still decodes to
-     * correct wall time. Settable by [WhoopBleClient] if a real correlation lands.
+     * AndroidBackfiller falls back to exactly this when GET_CLOCK is silent, and type-47 still decodes to
+     * correct wall time. Settable by [AndroidWhoopBleClient] if a real correlation lands.
      */
-    var clockRef: ClockRef = ClockRef.identityNow(),
+    var clockRef: AndroidClockRef = AndroidClockRef.identityNow(),
     /**
      * Connection & Sync test mode (Test Centre): the cheap gate + tagged sink for the .connection
      * diagnostic lines (offload progress / firmware layout / trim sentinel). [connectionActive] is one
      * SharedPreferences bool read; it is ALWAYS checked BEFORE building any connection line, so the
-     * Backfiller pays nothing when the mode is off. [connectionLog] appends the already-built line tagged
+     * AndroidBackfiller pays nothing when the mode is off. [connectionLog] appends the already-built line tagged
      * .connection. Both default inert (always-off / no-op) so tests get the byte-identical untraced path.
-     * Mirrors the Swift Backfiller's connectionActive / connectionLog.
+     * Mirrors the Swift AndroidBackfiller's connectionActive / connectionLog.
      */
     private val connectionActive: () -> Boolean = { false },
     private val connectionLog: (String) -> Unit = {},
@@ -112,7 +112,7 @@ class Backfiller(
     /**
      * Emit one Connection & Sync test-mode line iff the mode is on. The cheap [connectionActive] gate is
      * checked BEFORE [build] runs, so the line string is never constructed when the mode is off. Diagnostic
-     * only - it never changes the offload path. Mirrors the Swift Backfiller.emitConnection.
+     * only - it never changes the offload path. Mirrors the Swift AndroidBackfiller.emitConnection.
      */
     private inline fun emitConnection(build: () -> String) {
         if (!connectionActive()) return
@@ -121,11 +121,11 @@ class Backfiller(
 
     /**
      * #547 SESSION-RELATIVE gate: the strap's own GET_DATA_RANGE oldest/newest banked-record markers for
-     * the CURRENT offload, set by [WhoopBleClient] when the range reply lands. A record dated months outside
+     * the CURRENT offload, set by [AndroidWhoopBleClient] when the range reply lands. A record dated months outside
      * this window is wandering-clock pollution even if it clears the absolute 2023-11 floor, so the ingest
      * gate rejects it. null (both) until the range is known — the gate then falls back to the absolute floor
      * only, so behaviour is unchanged on the no-range / replay paths. Cleared in [begin]. Volatile because
-     * it's written from the BLE callback thread and read in [finishChunk]. Mirrors Swift Backfiller fields.
+     * it's written from the BLE callback thread and read in [finishChunk]. Mirrors Swift AndroidBackfiller fields.
      */
     @Volatile
     var sessionOldestUnix: Long? = null
@@ -135,9 +135,9 @@ class Backfiller(
 
     /**
      * Strap family for the CURRENT offload, set at [begin] — drives the family-aware frame parse
-     * (5/MG inner record is +4) and the +4 end_data slice. The Backfiller is constructed once at
+     * (5/MG inner record is +4) and the +4 end_data slice. The AndroidBackfiller is constructed once at
      * client init (before the family is known), so this is settable per-offload rather than a
-     * constructor arg. Mirrors Swift `Backfiller.family` set in `begin(family:)`. (#78)
+     * constructor arg. Mirrors Swift `AndroidBackfiller.family` set in `begin(family:)`. (#78)
      */
     private var family: DeviceFamily = DeviceFamily.WHOOP4
 
@@ -161,9 +161,9 @@ class Backfiller(
     /**
      * Per-session persistence tally — the success-side observability flagged as the forensics blind spot
      * (#150): NOOP logged FAILURES (decoded-to-0) but never SUCCESSES, so a strap log couldn't tell a
-     * banking strap from a broken one. Reset in [begin]; read by [WhoopBleClient] at session end to emit
+     * banking strap from a broken one. Reset in [begin]; read by [AndroidWhoopBleClient] at session end to emit
      * "persisted N rows (M with motion) across K night(s)". Nights are day-keys (ts / 86400). Mirrors the
-     * Swift Backfiller.
+     * Swift AndroidBackfiller.
      */
     var sessionRowsPersisted = 0
         private set
@@ -188,7 +188,7 @@ class Backfiller(
      * #727: skin-temp samples banked this session. WHOOP 4.0 carries skin temp (and the raw SpO2 channel)
      * ONLY in its full DSP sleep records; a strap banking HR/RR-only records reports 0 here even on a
      * healthy-looking sync, so surfacing it makes "skin temp never appears" reports self-diagnosing. Mirrors
-     * the Swift Backfiller.
+     * the Swift AndroidBackfiller.
      */
     var sessionSkinTempRows = 0
         private set
@@ -209,12 +209,12 @@ class Backfiller(
     private var loggedFutureRtc = false
 
     /**
-     * The trim cursor of the LAST chunk this Backfiller acked (durably persisted + confirmed to the
+     * The trim cursor of the LAST chunk this AndroidBackfiller acked (durably persisted + confirmed to the
      * strap). Survives across sessions on the same connection so the auto-continue gate (#364) can ask
      * "did the offload actually advance the strap's trim this session?" — the spin-detector signal that
      * stops it re-kicking forever when the cursor is frozen. null until the first ack. NOT reset in
      * [begin] (it's a cross-session high-water mark, not a per-session tally). Mirrors Swift
-     * `Backfiller.lastAckedTrim`.
+     * `AndroidBackfiller.lastAckedTrim`.
      */
     @Volatile
     var lastAckedTrim: Long? = null
@@ -241,15 +241,15 @@ class Backfiller(
 
     /**
      * #547 RE-POLLUTION signal: running count of records this session the ingest gate dropped for an
-     * implausible timestamp (a bad/wandering strap clock). Read by [WhoopBleClient.exitBackfilling] to arm a
+     * implausible timestamp (a bad/wandering strap clock). Read by [AndroidWhoopBleClient.exitBackfilling] to arm a
      * heal re-run — if the strap is bad-clock THIS session it may have banked similar garbage on an OLDER
-     * build whose gate was weaker. Reset in [begin]. Mirrors Swift `Backfiller.sessionDroppedImplausible`.
+     * build whose gate was weaker. Reset in [begin]. Mirrors Swift `AndroidBackfiller.sessionDroppedImplausible`.
      */
     var sessionDroppedImplausible = 0
         private set
 
     /**
-     * Called by [WhoopBleClient] when the strap signals a historical offload is beginning.
+     * Called by [AndroidWhoopBleClient] when the strap signals a historical offload is beginning.
      * chunkOpen starts TRUE: the biometric replay streams records immediately and sends one
      * HISTORY_START then repeated HISTORY_ENDs, so we must accumulate from the outset.
      * Port of Swift `begin()`.
@@ -355,7 +355,7 @@ class Backfiller(
                         log("Backfill: historical records use layout v$v")
                         // Connection test mode: the firmware layout as a compact tagged line. A layout that
                         // decoded a signature field (heart_rate / gravity_x / ppg_waveform) is decodable.
-                        // Gated zero-cost. Twin of the Swift Backfiller emit.
+                        // Gated zero-cost. Twin of the Swift AndroidBackfiller emit.
                         emitConnection {
                             val decodable = frames.any {
                                 val d = decodeHistorical(it, family)
@@ -374,7 +374,7 @@ class Backfiller(
             // historical records (decodeHistorical returns a map with `unix`) spend the sample budget -
             // the strap's type-50 console frames carry no record bytes to correlate. Records dump whether
             // or not they carry SpO2 channels, so "nothing banked" is provable too. Never a user-facing
-            // number (never-fabricate; the #194 lesson). Twin of the Swift Backfiller emit.
+            // number (never-fabricate; the #194 lesson). Twin of the Swift AndroidBackfiller emit.
             if (spo2Dumped < com.noop.analytics.Spo2ReTrace.MAX_SAMPLES && connectionActive()) {
                 for (f in frames) {
                     if (spo2Dumped >= com.noop.analytics.Spo2ReTrace.MAX_SAMPLES) break
@@ -451,7 +451,7 @@ class Backfiller(
                 sessionSkinTempRows += counts.skinTemp
                 sessionNightKeys.addAll(nights)
                 // Connection test mode: per-chunk offload PROGRESS (running session totals). Gated zero-cost.
-                // Twin of the Swift Backfiller emit.
+                // Twin of the Swift AndroidBackfiller emit.
                 emitConnection {
                     "offload progress trim=$trim chunkRows=$rows " +
                         "sessionRows=$sessionRowsPersisted sessionMotion=$sessionMotionRows nights=$sessionNights"
@@ -551,7 +551,7 @@ class Backfiller(
          * record begins at frame[7] on WHOOP4 (end_data = frame[17:25]) and at frame[11] on WHOOP5/MG
          * (the +4 puffin envelope → end_data = frame[21:29]). The trim cursor is the first u32 of
          * end_data. Returns null if the frame is too short. Verified against a real WHOOP5 HISTORY_END
-         * (trim=112193 at frame[21:25]); port of Swift `Backfiller.endData(from:family:)`. (#78)
+         * (trim=112193 at frame[21:25]); port of Swift `AndroidBackfiller.endData(from:family:)`. (#78)
          */
         fun endData(frame: ByteArray, family: DeviceFamily): ByteArray? {
             val start = if (family == DeviceFamily.WHOOP5) 21 else 17
@@ -588,7 +588,7 @@ class Backfiller(
          * "caught up, nothing left past the last trim", NOT "no history". Emitting the alarming "fully charge
          * it" line there falsely scared users whose strap had just synced fine. So pick by [rowsPersisted]:
          * > 0 gives a neutral caught-up line; 0 gives the genuine no-history guidance. Pure so a fixture pins both.
-         * Twin of the Swift `Backfiller.noCursorLine(rowsPersisted:)`.
+         * Twin of the Swift `AndroidBackfiller.noCursorLine(rowsPersisted:)`.
          */
         fun noCursorLine(rowsPersisted: Int, continuedAfterRows: Boolean = false): String =
             when {
@@ -612,14 +612,14 @@ class Backfiller(
          * strap RTC corrupt. The strap RTC and the phone normally agree within seconds; a genuine offload is
          * always dated in the PAST (it's banked history). A timestamp dated days into the FUTURE can only be
          * a corrupt strap clock. Generous (1 day) so ordinary skew or a timezone confusion never trips it.
-         * Twin of the Swift `Backfiller.futureRtcToleranceSeconds`.
+         * Twin of the Swift `AndroidBackfiller.futureRtcToleranceSeconds`.
          */
         const val FUTURE_RTC_TOLERANCE_SECONDS = 86_400L
 
         /**
          * #773: is this HISTORY_END timestamp an implausible FUTURE date (a corrupt strap RTC)? [endUnix] and
          * [wallNowUnix] are unix seconds in the same wall domain. Pure so a fixture pins the boundary. Twin of
-         * the Swift `Backfiller.isCorruptFutureRtc`.
+         * the Swift `AndroidBackfiller.isCorruptFutureRtc`.
          */
         fun isCorruptFutureRtc(endUnix: Long, wallNowUnix: Long): Boolean =
             endUnix > wallNowUnix + FUTURE_RTC_TOLERANCE_SECONDS
@@ -627,7 +627,7 @@ class Backfiller(
         /**
          * #773: the recovery-hint line for a corrupt future-dated strap RTC. Names the cause plainly (the
          * strap's clock, not a NOOP bug) and gives the fix (charge + reconnect re-syncs the RTC). Byte-
-         * identical to the Swift `Backfiller.futureRtcLine`. No em-dash (project rule).
+         * identical to the Swift `AndroidBackfiller.futureRtcLine`. No em-dash (project rule).
          */
         fun futureRtcLine(endUnix: Long, wallNowUnix: Long): String {
             val aheadDays = maxOf(0L, endUnix - wallNowUnix) / 86_400L
@@ -640,22 +640,22 @@ class Backfiller(
 }
 
 /**
- * A (device-epoch, wall-clock) correlation in unix seconds. Android analog of the Swift `ClockRef`.
+ * A (device-epoch, wall-clock) correlation in unix seconds. Android analog of the Swift `AndroidClockRef`.
  * type-47 historical records carry real unix timestamps, so the identity ref (device == wall) makes
  * the offset math a no-op while still decoding correct wall time — the same fallback the Swift
- * Backfiller uses when GET_CLOCK is silent.
+ * AndroidBackfiller uses when GET_CLOCK is silent.
  */
-data class ClockRef(val device: Int, val wall: Int) {
+data class AndroidClockRef(val device: Int, val wall: Int) {
     companion object {
-        fun identityNow(): ClockRef {
+        fun identityNow(): AndroidClockRef {
             val now = (System.currentTimeMillis() / 1000L).toInt()
-            return ClockRef(device = now, wall = now)
+            return AndroidClockRef(device = now, wall = now)
         }
     }
 }
 
 /**
- * Durable key/value cursor store. The macOS Backfiller persists `strap_trim` via the GRDB store's
+ * Durable key/value cursor store. The macOS AndroidBackfiller persists `strap_trim` via the GRDB store's
  * cursor table; the Android Room schema has no cursor table (see Entities.kt — no cursor entity),
  * so this small SharedPreferences-backed store provides the equivalent durability WITHOUT touching
  * the Room schema or the build/manifest.

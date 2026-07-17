@@ -30,7 +30,7 @@ import com.noop.ble.HrBroadcaster
 import com.noop.ble.LiveState
 import com.noop.ble.PuffinExperiment
 import com.noop.ble.WhoopConnectionService
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import androidx.health.connect.client.HealthConnectClient
 import com.noop.data.DailyMetric
 import com.noop.data.HrSample
@@ -226,7 +226,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** WHOOP straps surfaced by the wizard's present-scan ([presentWhoopScan]), WITHOUT auto-connecting.
      *  The wizard observes this directly so its pick list updates as straps appear. */
-    val discoveredWhoops: StateFlow<List<com.noop.ble.WhoopBleClient.DiscoveredWhoop>> = ble.discoveredWhoops
+    val discoveredWhoops: StateFlow<List<com.noop.ble.AndroidWhoopBleClient.DiscoveredWhoop>> = ble.discoveredWhoops
 
     /** The active Oura ring's live adopt outcome, mirrored from the [com.noop.ble.SourceCoordinator]. The
      *  Add-Oura wizard observes this to leave its Adopting step: streaming -> success/close, failed -> the
@@ -241,17 +241,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Point the WHOOP scan at a specific family, then present nearby straps WITHOUT auto-connecting (the
-     * Add-a-device wizard's WHOOP path). [WhoopBleClient.prepareForPresentScan] KEEPS a live same-model
+     * Add-a-device wizard's WHOOP path). [AndroidWhoopBleClient.prepareForPresentScan] KEEPS a live same-model
      * connection (#74, the Android half of the v5.2.3 iOS fix: the old unconditional
      * prepareForModelSwitch dropped a live strap mid-session, left it disconnected for good if the wizard
      * was dismissed without picking, and on a 5/MG risked the insufficient-auth re-bond refusal loop) and
-     * only idles the engine on a genuine family switch. [WhoopBleClient.scanForWhoops] then takes over
+     * only idles the engine on a genuine family switch. [AndroidWhoopBleClient.scanForWhoops] then takes over
      * the LE scanner in present-mode (accumulate, don't connect) without disturbing the kept link.
      * Mirrors the macOS AppModel.presentWhoopScan + BLEManager.prepareForPresentScan. The persisted
      * family selection is updated too so a later real connect to the chosen strap targets the right
      * family.
      */
-    fun presentWhoopScan(model: WhoopModel) {
+    fun presentWhoopScan(model: AndroidWhoopModel) {
         _selectedModel.value = model
         ble.prepareForPresentScan(model)
         ble.scanForWhoops(model)
@@ -306,9 +306,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val live: StateFlow<LiveState> = ble.state
 
     /** Which strap the user is pairing — drives the scan filter in [connect]. Defaults to WHOOP 4.0. */
-    private val _selectedModel = MutableStateFlow(WhoopModel.WHOOP4)
-    val selectedModel: StateFlow<WhoopModel> = _selectedModel.asStateFlow()
-    fun setSelectedModel(model: WhoopModel) {
+    private val _selectedModel = MutableStateFlow(AndroidWhoopModel.WHOOP4)
+    val selectedModel: StateFlow<AndroidWhoopModel> = _selectedModel.asStateFlow()
+    fun setSelectedModel(model: AndroidWhoopModel) {
         if (model == _selectedModel.value) return
         _selectedModel.value = model
         // Switching straps: forget the saved one so launch auto-reconnect (#67) doesn't target the old strap.
@@ -495,7 +495,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * #78 hole-4: the app-foreground hook for the bond-loop salvage probe. Every activity resume runs
-     * [WhoopBleClient.salvageProbeIfBondLoopPaused], which no-ops unless the #747 give-up pause is
+     * [AndroidWhoopBleClient.salvageProbeIfBondLoopPaused], which no-ops unless the #747 give-up pause is
      * latched AND its 10-minute floor has passed - so this is one cheap StateFlow read per resume in the
      * healthy case, and the self-heal path for a paused strap the user has since freed. Registered on the
      * Application (no lifecycle-process dependency needed); unregistered in [onCleared]. The iOS twin
@@ -684,7 +684,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // re-pollution): a wandering-clock strap re-sends bad-dated records across syncs, so a single
                 // on-upgrade pass can't be the only defence. The pending flag is cleared once the re-heal runs.
                 if (!NoopPrefs.tsHealDone(appContext) || NoopPrefs.tsHealPending(appContext)) {
-                    val purged = repository.healImplausibleTimestamps()
+                    val purged = repository.healImplausibleTimestamps().total
                     if (purged > 0) {
                         ble.externalLog(
                             "Heal #547: purged $purged row(s) with an implausible timestamp " +
@@ -714,7 +714,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // recompute clean — not gated behind the one-shot done flag. Idempotent on a clean DB.
                 runCatching {
                     if (NoopPrefs.tsHealPending(appContext)) {
-                        val purged = repository.healImplausibleTimestamps()
+                        val purged = repository.healImplausibleTimestamps().total
                         if (purged > 0) {
                             ble.externalLog(
                                 "Heal #547: purged $purged row(s) with an implausible timestamp " +
@@ -1216,7 +1216,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // --- On-device short-nap detection (PR #569 reimpl under NoopApp). Candidates are detected on the
-    // offload hook (WhoopBleClient.maybeDetectNaps) and queued in NapStore; this is the review surface. ---
+    // offload hook (AndroidWhoopBleClient.maybeDetectNaps) and queued in NapStore; this is the review surface. ---
 
     /** Whether on-device nap detection is enabled (opt-in, default OFF). */
     val napDetectionEnabled: StateFlow<Boolean> get() = _napDetectionEnabled
@@ -1562,7 +1562,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * live BLE client so it takes effect immediately. Default OFF: the strap log stays in the in-app
      * ring buffer (and the "Share strap log" export) but is not mirrored to logcat unless the user opts
      * in — so a normal user never writes the connection log to the system log. With it on, developers
-     * can watch the connection live over `adb logcat -s WhoopBleClient`.
+     * can watch the connection live over `adb logcat -s AndroidWhoopBleClient`.
      */
     fun setDebugLogging(enabled: Boolean) {
         NoopPrefs.setDebugLogging(appContext, enabled)
@@ -1731,7 +1731,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * User-initiated "Sync now": kick a historical offload on demand (#93). A thin pass-through to the
-     * BLE client's gated [WhoopBleClient.syncNow], which forwards to the same connected+bonded+
+     * BLE client's gated [AndroidWhoopBleClient.syncNow], which forwards to the same connected+bonded+
      * not-already-backfilling guard the auto-kick and 900s periodic timer use — so it's a safe no-op
      * when the strap isn't ready or a session is already running. Progress is unknowable from the
      * protocol, so the UI shows an indeterminate indicator + live.syncChunksThisSession, never a percent. */
@@ -1970,7 +1970,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Dispatch the double-tap action when the strap reports a FRESH double-tap. The BLE client already
-     * surfaces the gesture as [LiveState.lastEvent] = "DOUBLE_TAP(14)" (WhoopBleClient onInbound) — it
+     * surfaces the gesture as [LiveState.lastEvent] = "DOUBLE_TAP(14)" (AndroidWhoopBleClient onInbound) — it
      * does NOT change the decode; this just consumes the event it already publishes. Debounced on the
      * event identity: [lastEvent] keeps its last value across many LiveState emissions, so without the
      * [lastDispatchedEvent] guard a single tap would fire on every subsequent emission. Mirrors the iOS

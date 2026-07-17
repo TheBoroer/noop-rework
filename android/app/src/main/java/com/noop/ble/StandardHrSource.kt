@@ -36,7 +36,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Faithful Kotlin twin of Strand/BLE/StandardHRSource.swift.
  *
  * WHOOP-FIRST ISOLATION: this class runs its OWN scan + [BluetoothGatt] and never imports, calls, or
- * shares state with [WhoopBleClient]. The WHOOP path cannot regress because of anything here — the two
+ * shares state with [AndroidWhoopBleClient]. The WHOOP path cannot regress because of anything here — the two
  * BLE flows are fully independent. The only shared surfaces are injected closures:
  *   - [liveSink]  pushes the strap's live HR/R-R into whatever the UI observes (the [SourceCoordinator]
  *                 wires it to the WHOOP client's published state, so live HR shows in the same place).
@@ -45,7 +45,7 @@ import java.util.concurrent.ConcurrentHashMap
  * The pure HR parse lives in [StandardHeartRate]; the HR→rows mapping (HrRow + RrRow only) is inline
  * here, mirroring the Swift `StandardHRMapping`.
  *
- * Android runtime-permission notes (same contract as [WhoopBleClient]): the caller must hold
+ * Android runtime-permission notes (same contract as [AndroidWhoopBleClient]): the caller must hold
  * BLUETOOTH_SCAN + BLUETOOTH_CONNECT before [scan]/[connect]. Every android.bluetooth call is
  * @SuppressLint("MissingPermission") — the caller owns the grant.
  */

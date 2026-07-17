@@ -36,7 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.noop.BuildConfig
 import com.noop.analytics.Baselines
 import com.noop.ble.PuffinExperiment
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import com.noop.testcentre.CaptureAccumulator
 import com.noop.testcentre.CaptureKind
 import com.noop.testcentre.DisplayPerformanceMonitor
@@ -73,7 +73,7 @@ fun TestCentreScreen(vm: AppViewModel) {
     }
     // Match the Settings `showFiveMGControls` gate exactly: pref OR a live-detected 5/MG this session, so a
     // 5/MG connected before its pref is written still sees the experimental block. (SettingsScreen.kt:346.)
-    val is5MG = selectedModelName == WhoopModel.WHOOP5_MG.name || live.whoop5Detected
+    val is5MG = selectedModelName == AndroidWhoopModel.WHOOP5_MG.name || live.whoop5Detected
 
     // A report awaiting the mandatory review-before-share gate (spec section 12). Non-null shows the
     // review dialog; confirming runs TestReportFlow.run.
@@ -236,8 +236,8 @@ private suspend fun buildPending(
     val rows = vm.repo.storageRowCounts()
     var rawBytes = 0L
     for (name in listOf(
-        com.noop.ble.WhoopBleClient.WHOOP5_CAPTURE_FILE,
-        com.noop.ble.WhoopBleClient.WHOOP5_CAPTURE_FILE + ".1",
+        com.noop.ble.AndroidWhoopBleClient.WHOOP5_CAPTURE_FILE,
+        com.noop.ble.AndroidWhoopBleClient.WHOOP5_CAPTURE_FILE + ".1",
     )) {
         val f = java.io.File(context.filesDir, name)
         if (f.exists()) rawBytes += f.length()
@@ -254,7 +254,7 @@ private suspend fun buildPending(
     // #1002: the connected model - the scan/connect path persists the DETECTED family to this pref, so
     // it reflects the strap that actually linked; the display name matches the Swift wire value.
     val strapModel = NoopPrefs.of(context).getString("noop.selectedWhoopModel", null)
-        ?.let { name -> runCatching { WhoopModel.valueOf(name).displayName }.getOrNull() }
+        ?.let { name -> runCatching { AndroidWhoopModel.valueOf(name).displayName }.getOrNull() }
     val entries = TestBundleAssembler.assemble(context, mode.domain, logText, storage, strapModel)
     val modeInactive = mode.domain != TestDomain.MASTER && !TestCentre.from(context).active(mode.domain)
     return PendingReport(mode.domain, mode.title, entries, ReportReviewGate(entries), modeInactive)

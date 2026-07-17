@@ -15,7 +15,7 @@ import org.junit.Test
  * is PUFFIN_METADATA = 56, NOT 49. Omitting 56 silently broke 5/MG offload (the strap never trims),
  * which is why this whole path stayed dead on Android even though the decoder was ready. These tests
  * pin the family-aware plumbing against that exact regression, mirroring the hardware-proven Swift
- * path (BLEManager.isOffloadFrame, Backfiller.endData, decodeWhoop5Metadata).
+ * path (BLEManager.isOffloadFrame, AndroidBackfiller.endData, decodeWhoop5Metadata).
  */
 class Whoop5OffloadTest {
 
@@ -33,10 +33,10 @@ class Whoop5OffloadTest {
         for (t in intArrayOf(47, 48, 49, 50)) {
             val f = ByteArray(8); f[4] = t.toByte()
             assertTrue("WHOOP4 type $t should be an offload frame",
-                WhoopBleClient.isOffloadFrame(f, DeviceFamily.WHOOP4))
+                AndroidWhoopBleClient.isOffloadFrame(f, DeviceFamily.WHOOP4))
         }
         val live = ByteArray(8); live[4] = 40 // REALTIME_DATA
-        assertFalse(WhoopBleClient.isOffloadFrame(live, DeviceFamily.WHOOP4))
+        assertFalse(AndroidWhoopBleClient.isOffloadFrame(live, DeviceFamily.WHOOP4))
     }
 
     @Test
@@ -44,10 +44,10 @@ class Whoop5OffloadTest {
         for (t in intArrayOf(47, 48, 49, 50, 56)) {
             val f = ByteArray(12); f[8] = t.toByte()
             assertTrue("WHOOP5 type $t should be an offload frame (56 = PUFFIN_METADATA)",
-                WhoopBleClient.isOffloadFrame(f, DeviceFamily.WHOOP5))
+                AndroidWhoopBleClient.isOffloadFrame(f, DeviceFamily.WHOOP5))
         }
         val live = ByteArray(12); live[8] = 40 // REALTIME_DATA
-        assertFalse(WhoopBleClient.isOffloadFrame(live, DeviceFamily.WHOOP5))
+        assertFalse(AndroidWhoopBleClient.isOffloadFrame(live, DeviceFamily.WHOOP5))
     }
 
     /**
@@ -60,23 +60,23 @@ class Whoop5OffloadTest {
         val end = ByteArray(12)
         end[4] = 40   // looks like live REALTIME_DATA at the WHOOP4 index
         end[8] = 56   // real PUFFIN_METADATA (HISTORY_END/COMPLETE) at the WHOOP5 index
-        assertTrue(WhoopBleClient.isOffloadFrame(end, DeviceFamily.WHOOP5))
+        assertTrue(AndroidWhoopBleClient.isOffloadFrame(end, DeviceFamily.WHOOP5))
     }
 
-    // ---- Backfiller.endData: family-aware +4 slice (the 8 ack bytes) ----
+    // ---- AndroidBackfiller.endData: family-aware +4 slice (the 8 ack bytes) ----
 
     @Test
     fun endData_whoop4_isFrame17to25() {
         val f = ByteArray(26)
         for (i in 17 until 25) f[i] = (i - 16).toByte() // 1..8 at [17..24]
-        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8), Backfiller.endData(f, DeviceFamily.WHOOP4))
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8), AndroidBackfiller.endData(f, DeviceFamily.WHOOP4))
     }
 
     @Test
     fun endData_whoop5_isFrame21to29() {
         val f = ByteArray(30)
         for (i in 21 until 29) f[i] = (i - 20).toByte() // 1..8 at [21..28]
-        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8), Backfiller.endData(f, DeviceFamily.WHOOP5))
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8), AndroidBackfiller.endData(f, DeviceFamily.WHOOP5))
     }
 
     // ---- WHOOP5 METADATA decode (+4): meta_type@10, unix@11, trim_cursor@21 ----

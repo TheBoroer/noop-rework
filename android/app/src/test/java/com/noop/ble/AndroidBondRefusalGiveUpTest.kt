@@ -17,7 +17,7 @@ class BondRefusalGiveUpTest {
     // The default threshold is 5: the pairing hint already shows from streak 2, so we give the user several
     // reconnect cycles to act before pausing. The trip is reported exactly once.
     @Test fun givesUpAfterThresholdRefusals() {
-        val g = BondRefusalGiveUp()   // default giveUpThreshold = 5
+        val g = AndroidBondRefusalGiveUp()   // default giveUpThreshold = 5
         for (i in 1..4) {
             assertFalse("refusal $i is below the give-up threshold", g.recordRefusal())
             assertFalse(g.gaveUp)
@@ -32,7 +32,7 @@ class BondRefusalGiveUpTest {
 
     // reset() re-arms: a genuine bond or an explicit user reconnect clears the streak so auto-reconnect works.
     @Test fun resetReArms() {
-        val g = BondRefusalGiveUp()
+        val g = AndroidBondRefusalGiveUp()
         repeat(5) { g.recordRefusal() }
         assertTrue(g.gaveUp)
         g.reset()
@@ -44,7 +44,7 @@ class BondRefusalGiveUpTest {
 
     // A custom (lower) threshold trips sooner.
     @Test fun customThreshold() {
-        val g = BondRefusalGiveUp(giveUpThreshold = 2)
+        val g = AndroidBondRefusalGiveUp(giveUpThreshold = 2)
         assertFalse(g.recordRefusal())
         assertTrue(g.recordRefusal())
         assertTrue(g.gaveUp)
@@ -52,7 +52,7 @@ class BondRefusalGiveUpTest {
 
     // #750: the epitaph records the streak + opaque id and carries NO PII (no MAC, no em-dash).
     @Test fun epitaphLineHasNoPii() {
-        val line = BondRefusalGiveUp.epitaphLine(5, "a1b2c3d4")
+        val line = AndroidBondRefusalGiveUp.epitaphLine(5, "a1b2c3d4")
         assertTrue(line.contains("refused the encrypted bond 5x"))
         assertTrue(line.contains("a1b2c3d4"))
         // No raw MAC (colon-separated hex octets) and no em-dash.
@@ -63,20 +63,20 @@ class BondRefusalGiveUpTest {
     // #750: the opaque id is an irreversible HASH of the MAC (never the MAC itself), deterministic + short.
     @Test fun opaqueIdHashesTheMacDeterministically() {
         val mac = "A1:B2:C3:D4:E5:F6"
-        val id = BondRefusalGiveUp.opaqueId(mac)
+        val id = AndroidBondRefusalGiveUp.opaqueId(mac)
         // 8 hex chars, lower-case, and it does NOT contain the raw MAC bytes.
         assertEquals(8, id.length)
         assertTrue(Regex("^[0-9a-f]{8}$").matches(id))
         assertFalse(id.contains("a1b2"))
         // Deterministic: the same MAC always hashes to the same token.
-        assertEquals(id, BondRefusalGiveUp.opaqueId(mac))
+        assertEquals(id, AndroidBondRefusalGiveUp.opaqueId(mac))
         // Distinct MACs give distinct tokens (so a log can tell two straps apart).
-        assertFalse(id == BondRefusalGiveUp.opaqueId("11:22:33:44:55:66"))
+        assertFalse(id == AndroidBondRefusalGiveUp.opaqueId("11:22:33:44:55:66"))
     }
 
     // #747: the paused hint explains the stop + the fix, with no em-dash.
     @Test fun pausedHintWording() {
-        val hint = BondRefusalGiveUp.pausedHint()
+        val hint = AndroidBondRefusalGiveUp.pausedHint()
         assertTrue(hint.contains("stopped retrying"))
         assertTrue(hint.contains("Forget This Device"))
         assertFalse(hint.contains("\u2014"))

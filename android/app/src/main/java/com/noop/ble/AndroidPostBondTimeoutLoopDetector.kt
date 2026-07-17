@@ -1,7 +1,7 @@
 package com.noop.ble
 
 /**
- * Mirror of the Swift `PostBondTimeoutLoopDetector` (Strand/BLE/BLEManager.swift).
+ * Mirror of the Swift `AndroidPostBondTimeoutLoopDetector` (Strand/BLE/BLEManager.swift).
  *
  * Detects a WHOOP 4 "bond-loop" (#617): the strap bonds successfully, then the encrypted link drops
  * ~1s later with a CONNECTION TIMEOUT (Android `GATT_CONN_TIMEOUT` / `0x08`, the twin of iOS
@@ -19,7 +19,7 @@ package com.noop.ble
  * Pure value type -> unit-testable without a BLE seam — same shape as the Swift detector and
  * [EmptySyncTracker].
  */
-class PostBondTimeoutLoopDetector(
+class AndroidPostBondTimeoutLoopDetector(
     /**
      * How many consecutive bond-then-quick-timeout cycles before we surface the re-pair guide.
      * 2 (not 1): one quick post-bond drop is noise; two in a row is the loop, not a fluke.

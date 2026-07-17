@@ -26,7 +26,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.noop.BuildConfig
 import com.noop.NoopApplication
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import com.noop.data.DemoSeeder
 import com.noop.data.WhoopRepository
 import kotlinx.coroutines.Dispatchers
@@ -176,14 +176,14 @@ object NoopPrefs {
     /** "Continuous HRV capture", when on (AND background connection is on), NOOP holds the dense
      *  realtime HR stream armed even with no Live screen open, so the strap banks beat-to-beat R-R 24/7
      *  for far better overnight HRV/recovery/sleep. Uses more battery (continuous HR streaming). Default
-     *  OFF. Drives [com.noop.ble.WhoopBleClient.setKeepStreamForData] via [AppViewModel]. */
+     *  OFF. Drives [com.noop.ble.AndroidWhoopBleClient.setKeepStreamForData] via [AppViewModel]. */
     const val KEY_CONTINUOUS_HRV = "noop.continuousHrv"
 
     /** "Overnight only" refinement of Continuous HRV capture (#927): when on (with [KEY_CONTINUOUS_HRV]),
      *  the dense realtime stream is armed only inside the nightly quiet-hours window (22:00 to 07:00 by
      *  default, wrap-aware, local wall time) instead of 24/7, roughly halving the battery cost. Default
      *  OFF, so existing Continuous HRV users keep the always-on behaviour with no migration. Read by
-     *  [com.noop.ble.WhoopBleClient] at every arm site (re-derived at arm time, never cached). */
+     *  [com.noop.ble.AndroidWhoopBleClient] at every arm site (re-derived at arm time, never cached). */
     const val KEY_CONTINUOUS_HRV_OVERNIGHT = "noop.continuousHrvOvernight"
 
     /** The calendar day (yyyy-MM-dd) on which the morning-journal nudge was last shown, keeps the
@@ -192,7 +192,7 @@ object NoopPrefs {
 
     /** "Debug logging", when on, the strap log is also written to logcat (`adb`). Default OFF so a
      *  normal user never emits the connection log to the system log; the in-app ring buffer (and the
-     *  "Share strap log" export) work regardless. See [com.noop.ble.WhoopBleClient.debugLogcat]. */
+     *  "Share strap log" export) work regardless. See [com.noop.ble.AndroidWhoopBleClient.debugLogcat]. */
     const val KEY_DEBUG_LOGGING = "noop.debugLogging"
 
     /** "Broadcast heart rate", when on, NOOP acts as a standard BLE Heart Rate peripheral (0x180D /
@@ -693,7 +693,7 @@ object NoopPrefs {
     const val KEY_LAST_DEVICE_ADDR = "noop.lastDeviceAddress"
     const val KEY_LAST_DEVICE_MODEL = "noop.lastDeviceModel"
 
-    fun setLastDevice(context: Context, address: String, model: WhoopModel) {
+    fun setLastDevice(context: Context, address: String, model: AndroidWhoopModel) {
         of(context).edit()
             .putString(KEY_LAST_DEVICE_ADDR, address)
             .putString(KEY_LAST_DEVICE_MODEL, model.name)
@@ -701,11 +701,11 @@ object NoopPrefs {
     }
 
     /** The saved strap as (address, model), or null if none has bonded yet. */
-    fun lastDevice(context: Context): Pair<String, WhoopModel>? {
+    fun lastDevice(context: Context): Pair<String, AndroidWhoopModel>? {
         val addr = of(context).getString(KEY_LAST_DEVICE_ADDR, null) ?: return null
         val model = of(context).getString(KEY_LAST_DEVICE_MODEL, null)
-            ?.let { name -> runCatching { WhoopModel.valueOf(name) }.getOrNull() }
-            ?: WhoopModel.WHOOP4
+            ?.let { name -> runCatching { AndroidWhoopModel.valueOf(name) }.getOrNull() }
+            ?: AndroidWhoopModel.WHOOP4
         return addr to model
     }
 

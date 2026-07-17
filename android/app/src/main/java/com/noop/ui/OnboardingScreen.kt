@@ -72,7 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 import com.noop.data.ImportSummary
 import com.noop.ingest.AppleHealthImporter
 import com.noop.ingest.HealthConnectImporter
@@ -550,7 +550,7 @@ private fun ConnectStep(viewModel: AppViewModel) {
                         ) {
                             Text("Strap", style = NoopType.footnote, color = Palette.textSecondary)
                             SegmentedPillControl(
-                                items = WhoopModel.entries.toList(),
+                                items = AndroidWhoopModel.entries.toList(),
                                 selection = selectedModel,
                                 label = { it.displayName },
                                 onSelect = {

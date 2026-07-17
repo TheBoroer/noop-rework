@@ -20,7 +20,7 @@ class BackfillerSessionTallyTest {
     // housekeeping and must NOT inflate the count (matches the Swift tuple, which has no steps). motion = gravity.
     @Test fun chunkTallySumsBiometricRowsAndGravityOnly() {
         val counts = InsertCounts(hr = 10, rr = 4, events = 99, battery = 7, spo2 = 3, skinTemp = 2, steps = 50, resp = 1, gravity = 5)
-        val (rows, motion, nights) = Backfiller.chunkTally(counts, emptyList())
+        val (rows, motion, nights) = AndroidBackfiller.chunkTally(counts, emptyList())
         assertEquals(10 + 4 + 3 + 2 + 1 + 5, rows) // 25 — events(99)/battery(7)/steps(50) excluded
         assertEquals(5, motion)
         assertTrue(nights.isEmpty())
@@ -32,20 +32,20 @@ class BackfillerSessionTallyTest {
         val day0 = 1_700_000_000L
         val sameDay = day0 + 3_600L
         val nextDay = day0 + 86_400L
-        val (_, _, nights) = Backfiller.chunkTally(InsertCounts(), listOf(day0, sameDay, nextDay))
+        val (_, _, nights) = AndroidBackfiller.chunkTally(InsertCounts(), listOf(day0, sameDay, nextDay))
         assertEquals(setOf(day0 / 86_400L, nextDay / 86_400L), nights)
         assertEquals(2, nights.size)
     }
 
     // Silent when nothing persisted, so a console-only / caught-up session doesn't claim a false success.
     @Test fun sessionSummaryNullWhenNoRows() {
-        assertNull(Backfiller.sessionSummaryLine(0, 0, 0, 0))
+        assertNull(AndroidBackfiller.sessionSummaryLine(0, 0, 0, 0))
     }
 
     @Test fun sessionSummaryFormat() {
         assertEquals(
             "Backfill: session persisted 240 rows (180 with motion, 12 skin-temp) across 3 night(s).",
-            Backfiller.sessionSummaryLine(240, 180, 12, 3),
+            AndroidBackfiller.sessionSummaryLine(240, 180, 12, 3),
         )
     }
 
@@ -54,14 +54,14 @@ class BackfillerSessionTallyTest {
     @Test fun sessionSummaryShowsZeroSkinTemp() {
         assertEquals(
             "Backfill: session persisted 872 rows (172 with motion, 0 skin-temp) across 1 night(s).",
-            Backfiller.sessionSummaryLine(872, 172, 0, 1),
+            AndroidBackfiller.sessionSummaryLine(872, 172, 0, 1),
         )
     }
 
     // #783: trim=0xFFFFFFFF on a fresh run that banked NOTHING means "no banked history": the genuine
     // clock/charge guidance with the "fully charge it" hint.
     @Test fun noCursorLineNoRowsGivesNoHistoryGuidance() {
-        val line = Backfiller.noCursorLine(0)
+        val line = AndroidBackfiller.noCursorLine(0)
         assertTrue(line.contains("no banked history to offload"))
         assertTrue(line.contains("fully charge"))
     }
@@ -69,7 +69,7 @@ class BackfillerSessionTallyTest {
     // #783: trim=0xFFFFFFFF AFTER the auto-continuation has already persisted rows means "caught up",
     // NOT "no history". It must NOT emit the scary fully-charge guidance.
     @Test fun noCursorLineAfterRowsGivesCaughtUpLine() {
-        val line = Backfiller.noCursorLine(240)
+        val line = AndroidBackfiller.noCursorLine(240)
         assertTrue(line.contains("reached the end of available history"))
         assertTrue(line.contains("240 row(s)"))
         assertFalse(line.contains("no banked history"))
@@ -80,7 +80,7 @@ class BackfillerSessionTallyTest {
     // earlier session in the burst did \u2014 continuedAfterRows=true) means "caught up", NOT "no history". It
     // must NOT emit the scary fully-charge guidance even though rowsPersisted is 0.
     @Test fun noCursorLineContinuedAfterRowsGivesCaughtUpLine() {
-        val line = Backfiller.noCursorLine(0, continuedAfterRows = true)
+        val line = AndroidBackfiller.noCursorLine(0, continuedAfterRows = true)
         assertTrue(line.contains("caught up"))
         assertFalse(line.contains("no banked history"))
         assertFalse(line.contains("fully charge"))
@@ -89,14 +89,14 @@ class BackfillerSessionTallyTest {
     // #42: continuedAfterRows only softens the ZERO-row tail; a genuinely empty FRESH run (default false)
     // still gets the honest no-history guidance.
     @Test fun noCursorLineFreshEmptyStillGivesNoHistoryGuidance() {
-        assertTrue(Backfiller.noCursorLine(0, continuedAfterRows = false).contains("no banked history"))
+        assertTrue(AndroidBackfiller.noCursorLine(0, continuedAfterRows = false).contains("no banked history"))
     }
 
     // No em-dash leaks into either branch (project hard rule).
     @Test fun noCursorLineHasNoEmDash() {
-        assertFalse(Backfiller.noCursorLine(0).contains("\u2014"))
-        assertFalse(Backfiller.noCursorLine(5).contains("\u2014"))
-        assertFalse(Backfiller.noCursorLine(0, continuedAfterRows = true).contains("\u2014"))
+        assertFalse(AndroidBackfiller.noCursorLine(0).contains("\u2014"))
+        assertFalse(AndroidBackfiller.noCursorLine(5).contains("\u2014"))
+        assertFalse(AndroidBackfiller.noCursorLine(0, continuedAfterRows = true).contains("\u2014"))
     }
 
     // ---- #773 corrupt future-RTC detection ----
@@ -104,28 +104,28 @@ class BackfillerSessionTallyTest {
     // A genuine offload is PAST-dated; a past timestamp is never flagged.
     @Test fun futureRtcNotFlaggedForPastDate() {
         val now = 1_700_000_000L
-        assertFalse(Backfiller.isCorruptFutureRtc(now - 86_400L, now))
-        assertFalse(Backfiller.isCorruptFutureRtc(now, now))
+        assertFalse(AndroidBackfiller.isCorruptFutureRtc(now - 86_400L, now))
+        assertFalse(AndroidBackfiller.isCorruptFutureRtc(now, now))
     }
 
     // Ordinary forward skew under the 1-day tolerance is NOT a corrupt clock (no false alarm).
     @Test fun futureRtcToleratesSmallSkew() {
         val now = 1_700_000_000L
-        assertFalse(Backfiller.isCorruptFutureRtc(now + 3_600L, now))
+        assertFalse(AndroidBackfiller.isCorruptFutureRtc(now + 3_600L, now))
         // Exactly at the tolerance boundary is still OK (strictly greater trips it).
-        assertFalse(Backfiller.isCorruptFutureRtc(now + Backfiller.FUTURE_RTC_TOLERANCE_SECONDS, now))
+        assertFalse(AndroidBackfiller.isCorruptFutureRtc(now + AndroidBackfiller.FUTURE_RTC_TOLERANCE_SECONDS, now))
     }
 
     // A date days into the future can only be a corrupt strap RTC, so it's flagged.
     @Test fun futureRtcFlaggedForFarFutureDate() {
         val now = 1_700_000_000L
-        assertTrue(Backfiller.isCorruptFutureRtc(now + 10L * 86_400L, now))
+        assertTrue(AndroidBackfiller.isCorruptFutureRtc(now + 10L * 86_400L, now))
     }
 
     // The recovery hint names the cause + fix, reports days-ahead, and has no em-dash. Byte-identical to Swift.
     @Test fun futureRtcLineWording() {
         val now = 1_700_000_000L
-        val line = Backfiller.futureRtcLine(now + 10L * 86_400L, now)
+        val line = AndroidBackfiller.futureRtcLine(now + 10L * 86_400L, now)
         assertTrue(line.contains("10 day(s) in the FUTURE"))
         assertTrue(line.contains("clock (RTC) is corrupt"))
         assertTrue(line.contains("Fully charge"))
@@ -148,10 +148,10 @@ class BackfillerSessionTallyTest {
         val counts = InsertCounts(gravity = 3)
         var sessionRowsPersisted = 0
         // finishChunk's persist-block ordering: tally THIS chunk, THEN add to the session total...
-        val (rows, _, _) = Backfiller.chunkTally(counts, listOf(1_700_000_000L, 1_700_000_001L, 1_700_000_002L))
+        val (rows, _, _) = AndroidBackfiller.chunkTally(counts, listOf(1_700_000_000L, 1_700_000_001L, 1_700_000_002L))
         sessionRowsPersisted += rows
         // ...and ONLY THEN does the relocated no-cursor gate read sessionRowsPersisted.
-        val line = Backfiller.noCursorLine(sessionRowsPersisted)
+        val line = AndroidBackfiller.noCursorLine(sessionRowsPersisted)
         assertTrue("this END's own rows must be in the count", sessionRowsPersisted > 0)
         assertFalse("a records-bearing 0xFFFFFFFF END must NOT emit the false no-history alarm",
             line.contains("no banked history to offload"))
@@ -168,7 +168,7 @@ class BackfillerSessionTallyTest {
      */
     @Test fun trulyEmptyNoCursorEndStillWarnsNoHistory() {
         val sessionRowsPersisted = 0 // empty END: the persist block never runs, total stays 0
-        val line = Backfiller.noCursorLine(sessionRowsPersisted)
+        val line = AndroidBackfiller.noCursorLine(sessionRowsPersisted)
         assertTrue("a truly-empty no-cursor session must still warn the strap has no banked history",
             line.contains("no banked history to offload"))
         assertTrue(line.contains("fully charge"))

@@ -72,7 +72,7 @@ import com.noop.analytics.SpotHrvReading
 import com.noop.analytics.Sport
 import com.noop.analytics.WorkoutSport
 import com.noop.ble.LiveState
-import com.noop.ble.WhoopModel
+import com.noop.ble.AndroidWhoopModel
 
 /**
  * Live — the real-time strap view + hardware-test surface. A big smoothed HR number,
@@ -175,8 +175,8 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
             // R-R from the optical pulse signal (noisier) while a WHOOP 4 / chest strap is electrical R-R.
             // Driven off the picked strap model.
             val hrvSource = when (selectedModel) {
-                WhoopModel.WHOOP5_MG -> SpotHrvReading.Source.OPTICAL_PPG
-                WhoopModel.WHOOP4 -> SpotHrvReading.Source.CHEST_STRAP
+                AndroidWhoopModel.WHOOP5_MG -> SpotHrvReading.Source.OPTICAL_PPG
+                AndroidWhoopModel.WHOOP4 -> SpotHrvReading.Source.CHEST_STRAP
             }
             HrvSnapshotScreen(
                 viewModel = viewModel,
@@ -486,7 +486,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
             ) {
                 Text("Strap", style = NoopType.footnote, color = Palette.textSecondary)
                 SegmentedPillControl(
-                    items = WhoopModel.entries.toList(),
+                    items = AndroidWhoopModel.entries.toList(),
                     selection = selectedModel,
                     label = { it.displayName },
                     onSelect = { viewModel.setSelectedModel(it) },
@@ -494,7 +494,7 @@ fun LiveScreen(viewModel: AppViewModel, onManageDevices: () -> Unit = {}) {
             }
             // Proactive 5/MG guidance (#130): the strap bonds to one host at a time, so a scan finds
             // nothing while it's still paired in the official WHOOP app. Shown the moment 5/MG is picked.
-            if (selectedModel == WhoopModel.WHOOP5_MG) {
+            if (selectedModel == AndroidWhoopModel.WHOOP5_MG) {
                 Text(
                     "WHOOP 5.0/MG pairs with one app at a time. If a scan finds nothing, unpair it in " +
                         "the official WHOOP app and fully close that app, then Connect again.",

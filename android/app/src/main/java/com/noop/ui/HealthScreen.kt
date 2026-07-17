@@ -220,7 +220,7 @@ fun HealthScreen(
 // Manual "Sync now" control + honest sync status, mirroring HealthView.swift's SyncStatusSection (which
 // itself mirrors this screen's Android Sync-now button). Reads only LiveState (connection + backfill +
 // last-sync), so the ~1Hz HR hero doesn't drag it through re-renders. The button reaches the BLE engine's
-// gated entry point (vm.syncNow → WhoopBleClient.syncNow) — a no-op when no strap is connected or a sync
+// gated entry point (vm.syncNow → AndroidWhoopBleClient.syncNow) — a no-op when no strap is connected or a sync
 // is already running, so it's safe regardless of state. The status line explains itself when no strap is
 // connected; while a sync runs it shows the shared in-progress note + live chunk count; otherwise it
 // shows when history last synced.
@@ -233,7 +233,7 @@ private fun SyncStatusSection(vm: AppViewModel, onSyncNow: () -> Unit) {
     // ~1Hz churn to the (cheap) sync card alone. The fields read below are slow-changing; only this
     // leaf re-runs per tick. Appearance + behaviour identical.
     val live by vm.live.collectAsStateWithLifecycle()
-    // The strap link is usable for a manual offload kick (matches WhoopBleClient.syncNow's own gate).
+    // The strap link is usable for a manual offload kick (matches AndroidWhoopBleClient.syncNow's own gate).
     val canSync = live.connected && live.bonded && !live.backfilling
     Column(verticalArrangement = Arrangement.spacedBy(Metrics.gap)) {
         SectionHeader(

@@ -90,7 +90,7 @@ fun AutomationsScreen(viewModel: AppViewModel) {
 
     // Inactivity reminder (#419) — real + persisted via InactivityPrefs (opt-in, default OFF). Seeded
     // once, written through on change (SharedPreferences isn't reactive). The buzz itself fires from the
-    // BLE offload path (WhoopBleClient.maybeBuzzInactivity → the shipped SedentaryDetector engine); this
+    // BLE offload path (AndroidWhoopBleClient.maybeBuzzInactivity → the shipped SedentaryDetector engine); this
     // screen only edits the prefs the engine reads.
     var inactivityEnabled by remember { mutableStateOf(InactivityPrefs.enabled(ctx)) }
     var inactivityThreshold by remember { mutableStateOf(InactivityPrefs.thresholdMinutes(ctx)) }
@@ -356,7 +356,7 @@ fun AutomationsScreen(viewModel: AppViewModel) {
 
 /**
  * The nap-detection automation: a toggle plus the REVIEW queue. Detection runs on the offload hook
- * (WhoopBleClient.maybeDetectNaps → the pure NapDetector); a confident NAP is queued in NapStore and shown
+ * (AndroidWhoopBleClient.maybeDetectNaps → the pure NapDetector); a confident NAP is queued in NapStore and shown
  * here as a card the user ACCEPTS (→ a manual nap session, the #508 path) or DISMISSES. The engine never
  * auto-writes a session, and an INCONCLUSIVE window queues nothing — honest by construction.
  */

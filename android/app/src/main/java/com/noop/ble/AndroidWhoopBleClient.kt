@@ -247,7 +247,7 @@ data class LiveState(
  *
  * The boolean returns mirror `BluetoothGatt`'s own contract (true == the op was accepted by the
  * stack). A THROW is distinct from a `false` return: `false` is a transient BUSY (retry), a throw is
- * a dead binder (tear down). See [WhoopBleClient.safeGatt].
+ * a dead binder (tear down). See [AndroidWhoopBleClient.safeGatt].
  */
 interface GattOps {
     fun writeCharacteristicCompat(
@@ -318,12 +318,12 @@ class RealGattOps(private val gatt: BluetoothGatt) : GattOps {
     override fun discoverServicesCompat(): Boolean = gatt.discoverServices()
 }
 
-class WhoopBleClient(
+class AndroidWhoopBleClient(
     private val context: Context,
     /**
      * Local store the decoded live + historical streams are persisted into. Defaults to the
-     * process-wide Room-backed repository so the existing `WhoopBleClient(context)` call site keeps
-     * working unchanged. The Swift `BLEManager` wires a `WhoopStore`-backed `Collector`/`Backfiller`
+     * process-wide Room-backed repository so the existing `AndroidWhoopBleClient(context)` call site keeps
+     * working unchanged. The Swift `BLEManager` wires a `WhoopStore`-backed `Collector`/`AndroidBackfiller`
      * the same way (BLEManager.bootstrapStore).
      */
     private val repository: WhoopRepository = WhoopRepository.from(context),
@@ -337,11 +337,11 @@ class WhoopBleClient(
      * new samples to the newly-active WHOOP immediately, without waiting for a relaunch. The single-WHOOP
      * path NEVER reassigns it (the coordinator only calls [setActiveDeviceId] for a non-legacy WHOOP), so
      * with one WHOOP it stays "my-whoop" throughout — byte-for-byte today's behaviour. The live persist
-     * sites + the analyze pass read this field directly; the [Backfiller] captured its own copy at
+     * sites + the analyze pass read this field directly; the [AndroidBackfiller] captured its own copy at
      * construction, so [setActiveDeviceId] re-points that too (see there).
      */
     private var deviceId: String = DEFAULT_DEVICE_ID,
-    /** Durable trim-cursor store for the offload safe-trim watermark (see [Backfiller]). */
+    /** Durable trim-cursor store for the offload safe-trim watermark (see [AndroidBackfiller]). */
     private val cursorStore: TrimCursorStore = PrefsTrimCursorStore(context),
     /**
      * Opt-in switch for the EXPERIMENTAL WHOOP 5.0/MG ("puffin") protocol probes (default OFF).
@@ -359,7 +359,7 @@ class WhoopBleClient(
 ) {
 
     companion object {
-        private const val TAG = "WhoopBleClient"
+        private const val TAG = "AndroidWhoopBleClient"
         /**
          * Cap on the in-app strap-log ring buffer (for the "Share strap log" diagnostics export).
          * Raised from the old ~1h (2,000 lines) to retain a rolling ~24h of activity (#510 —
@@ -436,12 +436,12 @@ class WhoopBleClient(
 
         /** Pure keep/teardown decision for [prepareForPresentScan] (#74), unit-testable without a BLE
          *  stack (the [scanModeForReconnectAttempts] idiom). Keep the live link ONLY when one exists AND
-         *  the wizard is scanning the SAME model; Android [WhoopModel] has exactly two members (one per
+         *  the wizard is scanning the SAME model; Android [AndroidWhoopModel] has exactly two members (one per
          *  family), so enum equality IS the family check - do not invent a deviceFamily accessor. */
         fun shouldKeepLiveConnectionForPresentScan(
             connected: Boolean,
-            selected: WhoopModel,
-            requested: WhoopModel,
+            selected: AndroidWhoopModel,
+            requested: AndroidWhoopModel,
         ): Boolean = connected && selected == requested
 
         /** Minimum time since the bond-loop pause tripped (or since the last probe) before another
@@ -545,7 +545,7 @@ class WhoopBleClient(
          * that reaches STATE_CONNECTED and subscribes but never lands a genuine bond can self-drop (status 0)
          * at ~7s, BEFORE the escalating bond watchdog fires — so [onBondWatchdog]'s recordBounce (which only
          * runs when OUR OWN gatt.disconnect reports GATT_CONN_TERMINATE_LOCAL_HOST) never runs, and the #617
-         * [PostBondTimeoutLoopDetector] skips it (never bonded, and status != GATT_CONN_TIMEOUT). Neither
+         * [AndroidPostBondTimeoutLoopDetector] skips it (never bonded, and status != GATT_CONN_TIMEOUT). Neither
          * give-up counter advances while STATE_CONNECTED keeps zeroing the reconnect backoff, so the connect →
          * subscribe → drop loop runs unbounded and drains the battery (#982). Pulled out as a pure function so
          * the gate is unit-testable without a BLE seam (same shape as [BondWatchdogBackoff]).
@@ -1091,7 +1091,7 @@ class WhoopBleClient(
     private var intentionalDisconnect = false
     /// The strap family the user chose to pair, remembered so an auto-reconnect after a
     /// dropout re-scans for the same model instead of falling back to WHOOP 4.0.
-    private var selectedModel = WhoopModel.WHOOP4
+    private var selectedModel = AndroidWhoopModel.WHOOP4
     /// The last device we connected to, kept so an auto-reconnect after a dropout can connect
     /// DIRECTLY to it (autoConnect=true) instead of scanning. A bonded strap the OS still holds (or
     /// that simply isn't advertising) won't appear in a scan — so the old scan-only reconnect looped
@@ -1118,7 +1118,7 @@ class WhoopBleClient(
      * connection log to the system log, and shouldn't have to. The in-app ring buffer below always
      * records regardless, so the "Share strap log" export still works for everyone (issues #17/#18);
      * this gate only controls the adb-visible `Log.d`, which is the tool developers use to watch a
-     * connection live (`adb logcat -s WhoopBleClient`). Driven by Settings → Strap → "Debug logging"
+     * connection live (`adb logcat -s AndroidWhoopBleClient`). Driven by Settings → Strap → "Debug logging"
      * (persisted as [com.noop.ui.NoopPrefs.KEY_DEBUG_LOGGING]); the value is pushed down from the
      * composition root so this low-level client never depends on the UI/prefs layer. @Volatile because
      * [log] runs on both the GATT binder thread and the main looper.
@@ -1170,7 +1170,7 @@ class WhoopBleClient(
     }
 
     // ====================================================================================
-    // MARK: Persistence + historical offload (NEW — ports BLEManager.swift Collector/Backfiller)
+    // MARK: Persistence + historical offload (NEW — ports BLEManager.swift Collector/AndroidBackfiller)
     // ====================================================================================
 
     /**
@@ -1205,7 +1205,7 @@ class WhoopBleClient(
     }
 
     /** The offload state machine. Ack callback writes HISTORICAL_DATA_RESULT (with response). */
-    private val backfiller = Backfiller(
+    private val backfiller = AndroidBackfiller(
         repository = repository,
         deviceId = deviceId,
         cursorStore = cursorStore,
@@ -1228,9 +1228,9 @@ class WhoopBleClient(
             }
         },
         log = { s -> log(s) },
-        // Connection & Sync test mode (Test Centre): the cheap gate + tagged sink the Backfiller checks
+        // Connection & Sync test mode (Test Centre): the cheap gate + tagged sink the AndroidBackfiller checks
         // before building any .connection diagnostic line. The gate is one SharedPreferences bool; nothing
-        // is emitted (or built) when the mode is off. Twin of the macOS Backfiller wiring.
+        // is emitted (or built) when the mode is off. Twin of the macOS AndroidBackfiller wiring.
         connectionActive = { testCentre.active(com.noop.testcentre.TestDomain.CONNECTION) },
         connectionLog = { s -> log(s, com.noop.testcentre.TestDomain.CONNECTION) },
     )
@@ -1345,7 +1345,7 @@ class WhoopBleClient(
         }
     }
 
-    /** True while a historical offload is in progress (offload frames route to the Backfiller). */
+    /** True while a historical offload is in progress (offload frames route to the AndroidBackfiller). */
     @Volatile
     private var backfilling = false
     /** Chunks acked this offload session — feeds LiveState.syncChunksThisSession (throttled). Only
@@ -1362,7 +1362,7 @@ class WhoopBleClient(
      *  trips, the client surfaces the existing re-pair guide ([LiveState.reconnectGuide]) instead of
      *  looping silently. Reset on a user-initiated disconnect; the streak is otherwise broken naturally by
      *  any healthy (non-quick-timeout) disconnect. Twin of macOS BLEManager.postBondLoop. */
-    private val postBondLoop = PostBondTimeoutLoopDetector()
+    private val postBondLoop = AndroidPostBondTimeoutLoopDetector()
     /** #971 bond-handshake watchdog pacer: escalates the #50 watchdog window per consecutive bounce (so a
      *  slow-but-healthy WHOOP 4.0 bond gets more time) and, after a capped number of bounces, stops
      *  bouncing and hands off to the re-pair guide + auto-reconnect pause. Distinct from [postBondLoop]:
@@ -1425,7 +1425,7 @@ class WhoopBleClient(
     private var consecutiveAutoContinues = 0
 
     /** #364 spin-detector: the trim cursor as of the END of the PREVIOUS backfill session this
-     *  connection. [exitBackfilling] compares Backfiller.lastAckedTrim against this to decide whether the
+     *  connection. [exitBackfilling] compares AndroidBackfiller.lastAckedTrim against this to decide whether the
      *  just-ended session advanced the strap's trim (progress) or froze (stop re-kicking). null until the
      *  first session ends; reset on disconnect. Mirrors Swift `lastSessionEndTrim`. */
     private var lastSessionEndTrim: Long? = null
@@ -1455,7 +1455,7 @@ class WhoopBleClient(
 
     // --- Offload frame drain (preserves START/data/END arrival order; port of routeBackfillFrame) ---
 
-    /** Ordered queue of offload frames awaiting the serial Backfiller drain. */
+    /** Ordered queue of offload frames awaiting the serial AndroidBackfiller drain. */
     private val backfillFrameQueue = ConcurrentLinkedQueue<ByteArray>()
 
     @Volatile
@@ -1545,7 +1545,7 @@ class WhoopBleClient(
      * Port of `BLEManager.connect()` → `central.scanForPeripherals(withServices:[customService])`.
      */
     @SuppressLint("MissingPermission")
-    fun connect(model: WhoopModel = WhoopModel.WHOOP4) {
+    fun connect(model: AndroidWhoopModel = AndroidWhoopModel.WHOOP4) {
         intentionalDisconnect = false
         // Connection test mode: stamp when this connect attempt began so onConnectionStateChange can report
         // the connect latency. A plain timestamp, no behaviour change; only read behind the CONNECTION gate.
@@ -1588,7 +1588,7 @@ class WhoopBleClient(
         // protected GATT operation (status=133), while the direct path reached a working puffin
         // session. Falls open to the normal scan when no bonded WHOOP is found; a stale bond falls
         // back to a scan via handleDisconnect. Never used for WHOOP 4. (#78 fork)
-        if (model == WhoopModel.WHOOP5_MG) {
+        if (model == AndroidWhoopModel.WHOOP5_MG) {
             val bonded = bondedWhoopDevice()
             if (bonded != null) {
                 log("Connecting directly to OS-bonded ${bonded.name ?: "WHOOP"}")
@@ -1612,7 +1612,7 @@ class WhoopBleClient(
      * the fallback and the not-found timeout. Port of macOS BLEManager.startScan(for:allowFallback:).
      */
     @SuppressLint("MissingPermission")
-    private fun startScan(model: WhoopModel, allowFallback: Boolean) {
+    private fun startScan(model: AndroidWhoopModel, allowFallback: Boolean) {
         handler.removeCallbacks(scanFallbackRunnable)
         // Defensive: the normal auto-connect scan is NEVER a present-scan. Clearing the flag here means a
         // leaked wizard present-scan (e.g. the wizard was dismissed without stopWhoopScan) can't divert
@@ -1810,7 +1810,7 @@ class WhoopBleClient(
      * so the scan starts clean. Decision extracted as the pure [shouldKeepLiveConnectionForPresentScan].
      * Kotlin twin of macOS `BLEManager.prepareForPresentScan`.
      */
-    fun prepareForPresentScan(model: WhoopModel) {
+    fun prepareForPresentScan(model: AndroidWhoopModel) {
         if (shouldKeepLiveConnectionForPresentScan(_state.value.connected, selectedModel, model)) {
             log("Add-a-WHOOP scan: keeping the live ${selectedModel.displayName} connection (#74) - presenting nearby straps without dropping it")
             return
@@ -1865,10 +1865,10 @@ class WhoopBleClient(
      * WHOOP↔WHOOP switch via the registry). Only the [SourceCoordinator] calls this, and only when a
      * DIFFERENT registered WHOOP becomes active — the single-WHOOP path leaves the seeded "my-whoop" id in
      * place (NoopApplication set it at construction; this is never called), so that path is byte-for-byte
-     * unchanged. Sets this client's [deviceId] AND re-points the in-flight [Backfiller] so the very next
+     * unchanged. Sets this client's [deviceId] AND re-points the in-flight [AndroidBackfiller] so the very next
      * live flush / standard-HR persist / historical finishChunk attributes new samples to the new id —
      * without waiting for a relaunch. The live persist sites + analyze read [deviceId] directly; the
-     * Backfiller captured its own copy at construction, so both are updated here. Port of macOS
+     * AndroidBackfiller captured its own copy at construction, so both are updated here. Port of macOS
      * `BLEManager.setActiveDeviceId`. Empty id is ignored.
      */
     fun setActiveDeviceId(id: String) {
@@ -1887,7 +1887,7 @@ class WhoopBleClient(
      * `BLEManager.scanForWhoops`.
      */
     @SuppressLint("MissingPermission")
-    fun scanForWhoops(model: WhoopModel) {
+    fun scanForWhoops(model: AndroidWhoopModel) {
         val adp = adapter
         if (adp == null || !adp.isEnabled) {
             log("Add-a-WHOOP scan: Bluetooth not ready")
@@ -1948,7 +1948,7 @@ class WhoopBleClient(
      * Uses connectGatt(autoConnect=true) so the OS connects as soon as the strap is reachable.
      */
     @SuppressLint("MissingPermission")
-    fun reconnectToAddress(address: String, model: WhoopModel) {
+    fun reconnectToAddress(address: String, model: AndroidWhoopModel) {
         if (gatt != null || _state.value.connected) return
         val adp = adapter ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -2425,7 +2425,7 @@ class WhoopBleClient(
      *  service — what makes a one-time fallback rotation stick. Mirrors macOS
      *  `UserDefaults.set(rawValue, forKey: "selectedWhoopModel")`. Self-contained in the shared
      *  noop_prefs store; failures are non-fatal (the rotation still worked this session). (PR#195) */
-    private fun persistSelectedModel(model: WhoopModel) {
+    private fun persistSelectedModel(model: AndroidWhoopModel) {
         try {
             context.getSharedPreferences("noop_prefs", Context.MODE_PRIVATE)
                 .edit().putString("noop.selectedWhoopModel", model.name).apply()
@@ -2688,7 +2688,7 @@ class WhoopBleClient(
      *  a one-line epitaph. Fed by the SAME refusal events as [bondRefusalStreak]; its higher give-up
      *  threshold fires once the pairing hint has had several cycles to be acted on. Reset on a genuine bond
      *  or an explicit user reconnect. Twin of iOS `BLEManager.bondGiveUp`. */
-    private val bondGiveUp = BondRefusalGiveUp()
+    private val bondGiveUp = AndroidBondRefusalGiveUp()
 
     /** True while auto-reconnect is PAUSED by the #747 give-up. handleDisconnect consults this and skips
      *  scheduling a reconnect; a manual connect()/disconnect() clears it via [bondGiveUp].reset(). @Volatile
@@ -2798,9 +2798,9 @@ class WhoopBleClient(
         if (bondGiveUp.recordRefusal()) {
             autoReconnectPausedForBondLoop = true
             bondLoopPausedAtMs = System.currentTimeMillis()   // starts the #78 hole-4 salvage-probe floor
-            val opaque = BondRefusalGiveUp.opaqueId(failedAddress ?: "device")
-            log(BondRefusalGiveUp.epitaphLine(bondGiveUp.refusals, opaque))
-            _state.update { it.copy(pairingHint = BondRefusalGiveUp.pausedHint()) }
+            val opaque = AndroidBondRefusalGiveUp.opaqueId(failedAddress ?: "device")
+            log(AndroidBondRefusalGiveUp.epitaphLine(bondGiveUp.refusals, opaque))
+            _state.update { it.copy(pairingHint = AndroidBondRefusalGiveUp.pausedHint()) }
             if (testCentre.active(com.noop.testcentre.TestDomain.CONNECTION)) {
                 log("bond gaveUp refusals=${bondGiveUp.refusals} id=$opaque (auto-reconnect paused)",
                     com.noop.testcentre.TestDomain.CONNECTION)
@@ -3296,7 +3296,7 @@ class WhoopBleClient(
                                 log("Strap newest banked record reads ${(it - wallNowForSkew) / 3600L}h AHEAD of the wall clock (implausible; strap clock set in the future, #928). Auto-continue will not trust this range.")
                             }
                             // #547 SESSION-RELATIVE gate: publish the strap's banked-record window to the
-                            // Backfiller so the historical ingest gate can reject a record dated months
+                            // AndroidBackfiller so the historical ingest gate can reject a record dated months
                             // outside THIS strap's own [oldest, newest] (wandering-clock pollution that
                             // clears the absolute 2023-11 floor). The gate ignores a half/malformed window,
                             // so setting newest before oldest is decoded is safe.
@@ -4056,7 +4056,7 @@ class WhoopBleClient(
     private fun sendSetClockBothForms(withResponse: Boolean = false) {
         val now = System.currentTimeMillis() / 1000L
         send(CommandNumber.SET_CLOCK, setClockPayload(now), withResponse = withResponse)
-        if (selectedModel == WhoopModel.WHOOP4) {
+        if (selectedModel == AndroidWhoopModel.WHOOP4) {
             send(CommandNumber.SET_CLOCK, setClockPayloadLegacy(now), withResponse = withResponse)
         }
     }
@@ -4480,7 +4480,7 @@ class WhoopBleClient(
     }
 
     /**
-     * Feed an offload frame to the Backfiller preserving exact arrival order. Frames are appended
+     * Feed an offload frame to the AndroidBackfiller preserving exact arrival order. Frames are appended
      * synchronously (callback order) and drained sequentially by a single coroutine, so START/data/
      * END chunk assembly is never reordered. Port of `routeBackfillFrame` + the serial drain task.
      */
@@ -4500,7 +4500,7 @@ class WhoopBleClient(
                     } catch (t: Throwable) {
                         log("Backfill: drain error (${t.message}) — skipping frame, offload continues")
                     }
-                    // If the Backfiller consumed all historical data, exit the session cleanly.
+                    // If the AndroidBackfiller consumed all historical data, exit the session cleanly.
                     if (backfilling && !backfiller.isBackfilling) {
                         handler.post { exitBackfilling("HISTORY_COMPLETE") }
                     }
@@ -4670,7 +4670,7 @@ class WhoopBleClient(
         // so a strap log couldn't tell a banking strap from a broken one. Emit the per-session persistence
         // tally whenever anything actually landed — the win-rate signal a log previously lacked. Mirrors
         // the Swift exitBackfilling.
-        Backfiller.sessionSummaryLine(
+        AndroidBackfiller.sessionSummaryLine(
             backfiller.sessionRowsPersisted, backfiller.sessionMotionRows, backfiller.sessionSkinTempRows,
             backfiller.sessionNights,
         )?.let {
@@ -4706,7 +4706,7 @@ class WhoopBleClient(
         }
 
         // #364 auto-continue spin-detector: did THIS session move the strap's trim cursor? Compare the
-        // Backfiller's current high-water trim against where it stood when the previous session ended.
+        // AndroidBackfiller's current high-water trim against where it stood when the previous session ended.
         // A frozen cursor (console-only / refusing to trim) ⇒ don't re-kick (it would spin forever).
         val currentTrim = backfiller.lastAckedTrim
         val trimAdvanced = currentTrim != null && currentTrim != lastSessionEndTrim
@@ -5321,7 +5321,7 @@ class WhoopBleClient(
     fun exportLogText(): String = synchronized(logBuffer) { logBuffer.joinToString("\n") }
 }
 
-// PII scrubbers for the shareable strap log (#445). Kept at FILE scope (not inside WhoopBleClient) so
+// PII scrubbers for the shareable strap log (#445). Kept at FILE scope (not inside AndroidWhoopBleClient) so
 // they're unit-testable without constructing the Android-only BLE client.
 //
 //   • MAC: keep the first + LAST octet, mask the four unique middle octets. The regex captures exactly

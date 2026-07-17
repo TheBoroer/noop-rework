@@ -19,29 +19,29 @@ class StrapEventRoutingTest {
     // alarm dispatch now lives). If this were ever true, the case would land in the gesture `when` and be
     // swallowed again.
     @Test fun event57IsNotAGesture() {
-        assertFalse(WhoopBleClient.isGestureEvent("STRAP_DRIVEN_ALARM_EXECUTED(57)"))
+        assertFalse(AndroidWhoopBleClient.isGestureEvent("STRAP_DRIVEN_ALARM_EXECUTED(57)"))
     }
 
     // A LIVE event 57 fires the smart-alarm re-arm.
     @Test fun liveEvent57FiresSmartAlarm() {
         assertTrue(
-            WhoopBleClient.smartAlarmFiredForEvent("STRAP_DRIVEN_ALARM_EXECUTED(57)", replayedOffload = false),
+            AndroidWhoopBleClient.smartAlarmFiredForEvent("STRAP_DRIVEN_ALARM_EXECUTED(57)", replayedOffload = false),
         )
     }
 
     // A HISTORICAL event 57 replayed mid-backfill must NOT re-arm (old ts — not a real wake just now).
     @Test fun replayedEvent57DoesNotFire() {
         assertFalse(
-            WhoopBleClient.smartAlarmFiredForEvent("STRAP_DRIVEN_ALARM_EXECUTED(57)", replayedOffload = true),
+            AndroidWhoopBleClient.smartAlarmFiredForEvent("STRAP_DRIVEN_ALARM_EXECUTED(57)", replayedOffload = true),
         )
     }
 
     // The genuine gestures stay gestures (freshness-gated path) and never trip the smart-alarm dispatch.
     @Test fun gesturesAreGesturesAndNeverFireSmartAlarm() {
         for (g in listOf("DOUBLE_TAP(14)", "WRIST_ON(9)", "WRIST_OFF(10)")) {
-            assertTrue("$g should be a gesture", WhoopBleClient.isGestureEvent(g))
+            assertTrue("$g should be a gesture", AndroidWhoopBleClient.isGestureEvent(g))
             assertFalse("$g must not fire smart alarm",
-                WhoopBleClient.smartAlarmFiredForEvent(g, replayedOffload = false))
+                AndroidWhoopBleClient.smartAlarmFiredForEvent(g, replayedOffload = false))
         }
     }
 
@@ -49,8 +49,8 @@ class StrapEventRoutingTest {
     // smart-alarm dispatch — only event 57 does.
     @Test fun otherNonGestureEventsDoNotFireSmartAlarm() {
         for (e in listOf("BLE_BONDED(1)", "BATTERY_LEVEL(26)")) {
-            assertFalse(WhoopBleClient.isGestureEvent(e))
-            assertFalse(WhoopBleClient.smartAlarmFiredForEvent(e, replayedOffload = false))
+            assertFalse(AndroidWhoopBleClient.isGestureEvent(e))
+            assertFalse(AndroidWhoopBleClient.smartAlarmFiredForEvent(e, replayedOffload = false))
         }
     }
 }

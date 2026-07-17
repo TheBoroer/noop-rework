@@ -6,7 +6,7 @@ package com.noop.ble
  * Faithful Kotlin twin of Strand/BLE/StandardHeartRate.swift. Returns the heart rate (bpm) and any
  * R-R intervals (ms). Pure → unit-testable away from android.bluetooth.
  *
- * This is a SEPARATE parser from [WhoopBleClient.parseStandardHr] on purpose: the new isolated
+ * This is a SEPARATE parser from [AndroidWhoopBleClient.parseStandardHr] on purpose: the new isolated
  * [StandardHrSource] uses THIS one so the WHOOP client's inline parse stays untouched (slight
  * duplication is fine — it keeps the hardware-verified WHOOP path from regressing). Both encode the
  * same Bluetooth SIG layout:
