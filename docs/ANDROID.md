@@ -217,6 +217,9 @@ adb shell am start -n com.noop.whoop.debug/com.noop.ui.MainActivity
 Open `android/` directly in Android Studio (**File ▸ Open ▸ android/**) and let Gradle sync; run
 the `app` configuration on a physical device.
 
+Debug builds also expose an **adb command surface** ("app as CLI") for scripted backup
+export/import — no UI needed. See [`DEBUG_CLI.md`](DEBUG_CLI.md).
+
 ---
 
 ## Installing the APK (sideload & Play Protect)

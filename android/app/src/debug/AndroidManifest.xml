@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Synchronous adb command surface (see DebugCliProvider). Exported so `content call`
+             reaches it; the provider itself rejects any caller that is not adb shell/root. -->
+        <provider
+            android:name="com.noop.debug.DebugCliProvider"
+            android:authorities="com.noop.whoop.rework.debug.cli"
+            android:exported="true" />
+    </application>
+
+</manifest>
