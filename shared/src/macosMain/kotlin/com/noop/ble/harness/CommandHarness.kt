@@ -31,7 +31,8 @@ import kotlin.time.Clock
  * Sequence: scan → connect + handshake → battery (W4: GET_BATTERY_LEVEL COMMAND_RESPONSE must
  * carry a plausible soc%, NOT the 0x2A19 stub's 100) → buzz (physical confirmation!) → arm the
  * wake alarm N minutes out (default 3) → GET_ALARM_TIME readback → optionally hold for the
- * STRAP_DRIVEN_ALARM_EXECUTED(57) fire event → DISABLE_ALARM (unless --keep-alarm).
+ * alarm-fire evidence (STRAP_DRIVEN_ALARM_EXECUTED(57) on 5/MG, STRAP_ALARM_STOPPED(100)
+ * on W4 firmware — sent after the buzz ends, not at wake time) → DISABLE_ALARM (unless --keep-alarm).
  *
  * Exit 0 when every attempted step got its expected reply frame (buzz counts as sent — the
  * vibration itself is the human part of the gate).
@@ -102,9 +103,21 @@ fun runCommandHarness(args: Array<String>) {
                     }
                     respCmd.isNotEmpty() ->
                         println("  [reply] ${frame.parsed.typeName}: parsed=$p")
-                    event.contains("ALARM_EXECUTED") || event.contains("HAPTICS_FIRED") -> {
-                        if (event.contains("STRAP_DRIVEN")) alarmFired = true
+                    event.contains("ALARM_EXECUTED") || event.contains("ALARM_STOPPED") ||
+                        event.contains("HAPTICS_FIRED") -> {
+                        // W4 firmware never emits STRAP_DRIVEN_ALARM_EXECUTED(57) live; it sends
+                        // STRAP_ALARM_STOPPED(100) after the buzz ends (#76 HW captures).
+                        if (event.contains("STRAP_DRIVEN") || event.contains("ALARM_STOPPED")) alarmFired = true
                         println("  [event] $event parsed=$p")
+                    }
+                    else -> {
+                        // #76: catch-all — nothing may drop silently while we chase the strap-driven
+                        // alarm fire. Dump type, char, CRC verdict, decoded map, and raw hex.
+                        val hex = frame.raw.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
+                        println(
+                            "  [frame] ${frame.parsed.typeName} char=…${frame.characteristicUuid.takeLast(4)} " +
+                                "crcOk=${frame.parsed.crcOk} parsed=$p raw=$hex",
+                        )
                     }
                 }
             }
@@ -168,10 +181,10 @@ fun runCommandHarness(args: Array<String>) {
             // ── 5. optional: hold for the strap-driven fire ───────────────────────────────
             if (waitFire) {
                 val holdMs = (wakeEpochMs - Clock.System.now().toEpochMilliseconds()) + 90_000
-                println("command-harness: STEP 5 — holding ${holdMs / 1000}s for STRAP_DRIVEN_ALARM_EXECUTED(57) …")
+                println("command-harness: STEP 5 — holding ${holdMs / 1000}s for alarm-fire evidence (57 on 5/MG, 100 on W4) …")
                 withTimeoutOrNull(holdMs) { while (!alarmFired) delay(500) }
                 if (alarmFired) println("  OK: strap-driven alarm FIRED")
-                else { println("  FAIL: no STRAP_DRIVEN_ALARM_EXECUTED event"); failures++ }
+                else { println("  FAIL: no STRAP_DRIVEN_ALARM_EXECUTED(57) / STRAP_ALARM_STOPPED(100) event"); failures++ }
             }
 
             // ── 6. disarm ─────────────────────────────────────────────────────────────────

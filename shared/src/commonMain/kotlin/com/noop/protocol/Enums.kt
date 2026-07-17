@@ -51,13 +51,24 @@ enum class EventNumber(val rawValue: Int) {
     WRIST_ON(9),
     WRIST_OFF(10),
     DOUBLE_TAP(14),
+    // Observed on WHOOP 4.0 firmware (#76 HW capture): emitted once per SET_CLOCK write,
+    // ~1s after the command — a clock-set acknowledgement event.
+    CLOCK_SET_ACK(16),
     TEMPERATURE_LEVEL(17),
     BLE_BONDED(23),
     BLE_REALTIME_HR_ON(33),
     BLE_REALTIME_HR_OFF(34),
+    // 57/58/60 come from the Swift decompile. WHOOP 4.0 firmware does NOT emit 57 live:
+    // two on-wrist HW captures (#76) show the strap is silent at wake time and instead sends
+    // STRAP_ALARM_STOPPED(100) once the buzz ends — likely 5/MG or app-driven only.
     STRAP_DRIVEN_ALARM_EXECUTED(57),
     APP_DRIVEN_ALARM_EXECUTED(58),
-    HAPTICS_FIRED(60);
+    HAPTICS_FIRED(60),
+    // Observed on WHOOP 4.0 firmware (#76 HW capture): fires when a strap-driven alarm stops,
+    // both user-dismissed (double-tap; payload bytes 010200) and untouched/timed-out (010000).
+    // Payload byte likely encodes the stop reason. Also seen: unmapped 0x3F(63) — periodic
+    // status frame with a battery echo, deliberately left unmapped for now.
+    STRAP_ALARM_STOPPED(100);
 
     companion object {
         private val byRaw = entries.associateBy { it.rawValue }
