@@ -13,7 +13,7 @@ import okio.use
 
 /**
  * The Phase 2a payoff tests: a SYNTHETIC Android-produced schema-v17 `.noopbak` backup (a fresh
- * `:app:installDemoDebug` + DemoSeeder run, never real user data, trimmed to the most recent 21
+ * DemoSeeder run into a debug build, never real user data, trimmed to the most recent 21
  * days by `Tools/make-backup-fixture.sh`, committed under `shared/src/commonTest/fixtures/`)
  * restores through the shared [BackupRestore] engine into shared Room, and reads back rows.
  *

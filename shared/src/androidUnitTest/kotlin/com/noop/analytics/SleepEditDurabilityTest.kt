@@ -19,7 +19,7 @@ import org.junit.Test
  *      edited block's reshaped stages for its detected twin (matched on the stable detected startTs)
  *      so Rest + recovery score the corrected sleep.
  *
- * Pure-function style (no Room/coroutines) so it runs under testFullDebugUnitTest. The overlap
+ * Pure-function style (no Room/coroutines) so it runs under testDebugUnitTest. The overlap
  * predicate is the EXACT one used in IntelligenceEngine.analyzeRecent's sleepKept filter.
  */
 class SleepEditDurabilityTest {

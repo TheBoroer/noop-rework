@@ -13,7 +13,7 @@ import org.junit.Test
  * Tests for [NapDetector] — the pure core of on-device short-nap detection (PR #569 reimpl under
  * NoopApp). Covers the dense-gravity eligibility gate, the tri-state verdict (NAP / NONE / INCONCLUSIVE),
  * the longest-quiet-run detection, the resting-HR settle gate, the min/max length bounds, and the
- * confidence ordering. Fixtures are DB-free + clock-free so they run under testFullDebugUnitTest and are
+ * confidence ordering. Fixtures are DB-free + clock-free so they run under testDebugUnitTest and are
  * byte-identical to verify cross-platform.
  */
 class NapDetectorTest {

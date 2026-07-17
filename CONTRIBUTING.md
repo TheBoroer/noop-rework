@@ -51,9 +51,8 @@ For a runnable, ad-hoc-signed `NOOP.app` without an Apple ID, see
 
 ```bash
 cd android
-./gradlew assembleFullDebug      # the real app (full flavour); JDK 17 required
-./gradlew assembleDemoDebug      # demo flavour — 120 days of synthetic data, no strap
-./gradlew testFullDebugUnitTest  # unit tests
+./gradlew assembleDebug      # build the app; JDK 17 required
+./gradlew testDebugUnitTest  # unit tests
 ```
 
 ---
@@ -66,7 +65,7 @@ run unit tests only — no code signing, no secrets, no release.
 | Workflow | Trigger | What it does |
 |---|---|---|
 | **Swift Packages CI** (`.github/workflows/swift-packages.yml`) | changes under `Packages/**` | `swift build` + `swift test` for each package |
-| **Android CI** (`.github/workflows/android.yml`) | changes under `android/**` | `assembleFullDebug` + `testFullDebugUnitTest` (JDK 17) |
+| **Android CI** (`.github/workflows/android.yml`) | changes under `android/**` | `assembleDebug` + `testDebugUnitTest` (JDK 17) |
 
 If CI fails on your PR, fix the cause rather than working around it. Never commit
 generated output (`Strand.xcodeproj/`) or any secrets, keystores, or `local.properties`.

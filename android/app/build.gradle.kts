@@ -86,27 +86,6 @@ android {
         }
     }
 
-    // Two clearly-distinct apps that install side-by-side:
-    //   • full → "NOOP"      (com.noop.whoop.rework)     — the real app, starts empty, pair a strap / import.
-    //   • demo → "NOOP Demo"  (com.noop.whoop.rework.demo) — preloaded with 120 days of synthetic data and
-    //                          a visible DEMO badge, so anyone can explore every screen with no strap.
-    // Build e.g. ./gradlew assembleFullRelease assembleDemoRelease.
-    flavorDimensions += "tier"
-    productFlavors {
-        create("full") {
-            dimension = "tier"
-            buildConfigField("String", "TIER", "\"full\"")
-            buildConfigField("boolean", "ENABLE_DEMO", "false")
-        }
-        create("demo") {
-            dimension = "tier"
-            applicationIdSuffix = ".demo"
-            versionNameSuffix = "-demo"
-            buildConfigField("String", "TIER", "\"demo\"")
-            buildConfigField("boolean", "ENABLE_DEMO", "true")
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

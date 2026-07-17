@@ -22,7 +22,7 @@ We do not merge. We hand-port Kotlin diffs for protocol/BLE/analytics fixes.
    `shared/src/commonMain/kotlin/com/noop/util/JsonCompat.kt` and `TimeCompat.kt` for the
    reference conventions to translate against.
 4. Run the protocol golden tests and full suite:
-   `cd android && ./gradlew :shared:testDebugUnitTest :shared:iosSimulatorArm64Test :app:testDemoDebugUnitTest :app:testFullDebugUnitTest`
+   `cd android && ./gradlew :shared:testDebugUnitTest :shared:iosSimulatorArm64Test :app:testDebugUnitTest`
 5. Record the reviewed range in this file.
 
 ## Phase 2b: protocol delegation changes where a fix lands

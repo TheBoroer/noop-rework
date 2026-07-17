@@ -85,9 +85,9 @@ if [ -d "$IOSAPP" ]; then
 else echo "  ✗ iOS build FAILED"; grep -E 'error:' /tmp/v7a-ios.log | sed 's#.*Strand/##' | sort -u | head; fi
 
 # ── Android full release ───────────────────────────────────────────────────────
-echo "═══ Android (assembleFullRelease) ═══"
+echo "═══ Android (assembleRelease) ═══"
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
-( cd android && ./gradlew assembleFullRelease ) >/tmp/v7a-android.log 2>&1
+( cd android && ./gradlew assembleRelease ) >/tmp/v7a-android.log 2>&1
 APK="android/app/build/outputs/apk/full/release/app-full-release.apk"
 if [ -f "$APK" ]; then
   cp "$APK" "$DIST/NOOP-v$VER.apk" && ok_apk=1

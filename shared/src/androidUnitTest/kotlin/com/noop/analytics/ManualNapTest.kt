@@ -15,7 +15,7 @@ import org.junit.Test
  * `startTsAdjusted = null`, so the SAME recompute overlap guard that protects a hand-corrected night also
  * protects a manually-added nap and drops any re-detected overlapping session.
  *
- * Pure-function style (no Room/coroutines) so it runs under testFullDebugUnitTest. The overlap predicate
+ * Pure-function style (no Room/coroutines) so it runs under testDebugUnitTest. The overlap predicate
  * is the EXACT one used in IntelligenceEngine.analyzeRecent's `sleepKept` filter; the efficiency helper
  * mirrors WhoopRepository.sleepEfficiency byte-for-byte.
  */

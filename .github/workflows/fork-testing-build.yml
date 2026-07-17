@@ -70,14 +70,14 @@ jobs:
       # $HOME) and would sign with a fresh random key, breaking sideloaded updates ("App not installed").
       # -PstagingRelease gives the release APK a .staging app id so it installs beside the official app.
       - name: Build debug + staging-release APKs
-        run: ./gradlew assembleFullDebug assembleFullRelease -PstagingRelease
+        run: ./gradlew assembleDebug assembleRelease -PstagingRelease
       - name: Version the filenames + attach
         env:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ needs.meta.outputs.ver }}
         run: |
-          cp app/build/outputs/apk/full/debug/*.apk "NOOP-android-debug-v${VER}.apk"
-          cp app/build/outputs/apk/full/release/*.apk "NOOP-android-v${VER}.apk"
+          cp app/build/outputs/apk/debug/*.apk "NOOP-android-debug-v${VER}.apk"
+          cp app/build/outputs/apk/release/*.apk "NOOP-android-v${VER}.apk"
           gh release upload "${{ needs.meta.outputs.tag }}" \
             "NOOP-android-v${VER}.apk" "NOOP-android-debug-v${VER}.apk" \
             --repo "$GITHUB_REPOSITORY" --clobber

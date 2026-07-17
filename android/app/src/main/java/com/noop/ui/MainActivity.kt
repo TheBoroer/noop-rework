@@ -25,10 +25,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.noop.BuildConfig
-import com.noop.NoopApplication
 import com.noop.ble.AndroidWhoopModel
-import com.noop.data.DemoSeeder
-import com.noop.data.WhoopRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -50,19 +47,6 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         // Load the saved "Card transparency" so every frosted card renders at the chosen opacity from launch.
         CardAppearance.init(this)
-
-        // Demo build only: preload a full synthetic dataset so every screen is populated
-        // out of the box (no strap, no import). No-op once seeded; never runs on the full app.
-        if (BuildConfig.ENABLE_DEMO) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                runCatching { DemoSeeder.seedIfEmpty(WhoopRepository.from(applicationContext)) }
-                // Also seed a 2nd PAIRED device (Polar H10) so the Devices screen shows WHOOP (Active)
-                // + a paired strap out of the box. No-op once seeded / if a real pairing exists.
-                runCatching {
-                    DemoSeeder.seedDemoDeviceIfNeeded((application as NoopApplication).deviceRegistry)
-                }
-            }
-        }
 
         // Only pre-warm permissions at launch for already-onboarded users. First-run onboarding
         // requests each permission at the step that explains it, Bluetooth when the Connect step

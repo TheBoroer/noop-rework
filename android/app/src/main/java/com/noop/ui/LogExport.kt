@@ -129,7 +129,7 @@ object LogExport {
             val dynamic = com.noop.testcentre.AndroidDiagnostics.dynamicLines(context)
             val header = buildString {
                 appendLine("NOOP strap log (scheduled debug export)")
-                appendLine("App:     ${BuildConfig.VERSION_NAME} (${BuildConfig.TIER})")
+                appendLine("App:     ${BuildConfig.VERSION_NAME}")
                 for (line in com.noop.testcentre.AndroidDiagnostics.summaryLines(context)) appendLine(line)
                 for (line in dynamic) appendLine(line)
                 appendLine("─".repeat(40))
@@ -170,7 +170,7 @@ object LogExport {
         val dynamic = com.noop.testcentre.AndroidDiagnostics.dynamicLines(context)
         val header = buildString {
             appendLine("NOOP strap log")
-            appendLine("App:     ${BuildConfig.VERSION_NAME} (${BuildConfig.TIER})")
+            appendLine("App:     ${BuildConfig.VERSION_NAME}")
             for (line in com.noop.testcentre.AndroidDiagnostics.summaryLines(context)) appendLine(line)
             for (line in dynamic) appendLine(line)
             appendLine("─".repeat(40))
@@ -199,7 +199,7 @@ object LogExport {
         if (!main.exists() && !prev.exists()) return null
         val header = buildString {
             appendLine("# NOOP 5/MG raw backfill capture (JSONL; one frame per line)")
-            appendLine("# App: ${BuildConfig.VERSION_NAME} (${BuildConfig.TIER}) · Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}) · ${Build.MANUFACTURER} ${Build.MODEL}")
+            appendLine("# App: ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}) · ${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("# NOTE: contains raw biometric frames (heart rate, R-R, skin temp, motion) and the strap's console text. Share only if you're comfortable with that.")
         }
         val dir = File(context.cacheDir, "logs").apply { mkdirs() }

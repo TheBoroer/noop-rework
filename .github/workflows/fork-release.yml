@@ -165,13 +165,13 @@ jobs:
       # signingConfig storeFile (release falls back to it when no keystore.properties is present);
       # -PstagingRelease gives it the .staging app id so it installs beside the official app.
       - name: Build staging-release APK
-        run: ./gradlew assembleFullRelease -PstagingRelease
+        run: ./gradlew assembleRelease -PstagingRelease
       - name: Version the filename + attach
         env:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ needs.bump.outputs.ver }}
         run: |
-          cp app/build/outputs/apk/full/release/*.apk "NOOP-android-v${VER}.apk"
+          cp app/build/outputs/apk/release/*.apk "NOOP-android-v${VER}.apk"
           gh release upload "${{ needs.bump.outputs.tag }}" "NOOP-android-v${VER}.apk" \
             --repo "$GITHUB_REPOSITORY" --clobber
 

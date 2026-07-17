@@ -25,7 +25,7 @@ import com.noop.data.HrRow
  * isn't evidence the person was awake. This mirrors the SleepStager's morning-stillness density check.
  *
  * PURITY: no I/O, no wall-clock reads, no Room/coroutines. Everything is passed IN, so it runs under
- * testFullDebugUnitTest and is byte-identical to verify cross-platform. All `ts`/`start`/`end` are
+ * testDebugUnitTest and is byte-identical to verify cross-platform. All `ts`/`start`/`end` are
  * wall-clock unix SECONDS. Outputs are APPROXIMATE, never medical advice.
  */
 

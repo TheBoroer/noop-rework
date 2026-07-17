@@ -21,9 +21,8 @@ the same analytics so results match macOS.)
 
 > ### Status: shipping platform — builds, releases, and validated on WHOOP 4.0
 >
-> The Android client is a **fully shipping** part of NOOP. It builds and releases as two APK
-> flavours — **full** (`./gradlew assembleFullRelease`) and **demo** (`./gradlew
-> assembleDemoRelease`) — and is sideloaded by users (with features such as a **Sync-now** button).
+> The Android client is a **fully shipping** part of NOOP. It builds and releases as a single APK
+> (`./gradlew assembleRelease`) and is sideloaded by users (with features such as a **Sync-now** button).
 > The BLE pipeline, Compose UI, Room database, and importers are all present and working. It is
 > validated against a real **WHOOP 4.0** strap, and **live HR** is validated on **WHOOP 5.0 / MG**;
 > deeper 5.0/MG scores are still being reverse-engineered from offload data. The
@@ -194,8 +193,8 @@ or export `ANDROID_HOME` / `ANDROID_SDK_ROOT`.
 
 ## Building
 
-> The Android client builds and ships today. It releases as two flavours — **full** and **demo** —
-> via `assembleFullRelease` / `assembleDemoRelease`. The pure-Kotlin unit tests run without a device.
+> The Android client builds and ships today. It releases as a single APK via `assembleRelease`.
+> The pure-Kotlin unit tests run without a device.
 
 ```bash
 cd android
@@ -211,9 +210,8 @@ cd android
 ./gradlew installDebug
 adb shell am start -n com.noop.whoop.debug/com.noop.ui.MainActivity
 
-# Release builds — the two shipped flavours (R8 full mode + resource shrink are enabled).
-./gradlew assembleFullRelease    # → NOOP-full.apk
-./gradlew assembleDemoRelease    # → NOOP-demo.apk
+# Release build.
+./gradlew assembleRelease    # → app/build/outputs/apk/release/app-release.apk
 ```
 
 Open `android/` directly in Android Studio (**File ▸ Open ▸ android/**) and let Gradle sync; run
@@ -240,9 +238,9 @@ Nothing is wrong with the file; it's just missing a Play signature. To get it on
    private on-device storage, so uninstalling and reinstalling simply starts fresh — there's no cloud
    copy to lose, and nothing leaves the device either way.
 
-A sample-data **demo** flavour still exists for exploring every screen with no strap, but it's
-**build-from-source only** (`./gradlew assembleDemoDebug`) and is no longer published as a release
-asset. It installs alongside the full app (distinct `applicationId`), so you can keep both.
+The former sample-data **demo** flavour has been removed; the app builds as a single
+`com.noop.whoop.rework` APK. The `DemoSeeder` utility remains in the shared module for
+regenerating synthetic test fixtures.
 
 ---
 
@@ -641,7 +639,7 @@ should be re-verified against a real build, a real device, and a real strap befo
       `app/proguard-rules.pro`.
 - [x] `./gradlew :app:testDebugUnitTest` is green (analytics vectors).
 - [x] `./gradlew assembleDebug` produces `app-debug.apk`.
-- [x] `./gradlew assembleFullRelease` / `assembleDemoRelease` succeed with R8 full mode + resource shrinking.
+- [x] `./gradlew assembleRelease` succeeds.
 - [x] APK declares **no `INTERNET` permission** (`aapt dump permissions app-debug.apk`).
 
 **Protocol parity (JVM, no device)**

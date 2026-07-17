@@ -83,7 +83,7 @@ is in [`IOS.md` → "Lessons from the fold-in"](IOS.md).
    screen on Android, each built from its design system (`StrandDesign` / `NoopType`+`Palette`).
 5. **Mirror the changelog** in all three surfaces; **bump all version surfaces** in lockstep (see
    [`BUILD.md`](BUILD.md) / the release process). Verify: `swift test` (packages) + the macOS/iOS
-   `app-build` CI + `:app:testFullDebugUnitTest` (Android).
+   `app-build` CI + `:app:testDebugUnitTest` (Android).
 
 Worked examples from recent releases: **#137** (workout re-score) — a pure `ManualWorkoutRescore`
 helper in `StrandAnalytics` + a Kotlin twin, both wired into each platform's `IntelligenceEngine`;

@@ -18,7 +18,7 @@ import org.junit.Test
  * The fix wires AppViewModel.updateSleepSessionTimes / deleteSleepSession / addManualNap to call a private
  * `rescoreAfterSleepEdit()` after the repository persist. The VM itself is an [android.app.AndroidViewModel]
  * backed by the process-wide NoopApplication (Room + BLE), so it can't be constructed in the pure-JVM
- * testFullDebugUnitTest suite. These tests instead pin the CONTROL-FLOW contract the wiring relies on, in
+ * testDebugUnitTest suite. These tests instead pin the CONTROL-FLOW contract the wiring relies on, in
  * the same pure-mirror style the rest of this suite uses (e.g. TodayResolverEffortScaleTest mirrors
  * resolveTodayRow): persist-then-rescore, best-effort persist, best-effort rescore, and cancellation
  * propagation (the #125 rule the 15-min loop already follows).
