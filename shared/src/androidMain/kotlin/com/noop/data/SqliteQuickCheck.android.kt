@@ -81,3 +81,24 @@ internal actual fun sqliteTableNames(path: String): Set<String> {
         runCatching { db.close() }
     }
 }
+
+/**
+ * Read-write exec for the restore engine's staged-copy reconcile (step 3e). The staged temp file
+ * is ours to mutate. The trailing `wal_checkpoint(TRUNCATE)` folds any WAL frames back into the
+ * main file, because the restore swap copies ONLY the main file to the live path. Carries
+ * [PRESERVE_ON_CORRUPTION] like every other probe here (#1014).
+ */
+internal actual fun sqliteExec(path: String, statements: List<String>): String? {
+    val db = runCatching {
+        SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READWRITE, PRESERVE_ON_CORRUPTION)
+    }.getOrElse { return "could not open the database: ${it.message}" }
+    return try {
+        for (stmt in statements) db.execSQL(stmt)
+        db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { c -> c.moveToNext() }
+        null
+    } catch (e: Exception) {
+        "statement failed: ${e.message}"
+    } finally {
+        runCatching { db.close() }
+    }
+}

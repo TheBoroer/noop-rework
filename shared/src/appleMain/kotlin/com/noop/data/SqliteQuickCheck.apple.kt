@@ -56,3 +56,34 @@ internal actual fun sqliteTableNames(path: String): Set<String> {
         runCatching { conn.close() }
     }
 }
+
+/**
+ * Read-write exec for the restore engine's staged-copy reconcile (step 3e). The staged temp file
+ * is ours to mutate. The trailing `wal_checkpoint(TRUNCATE)` folds any WAL frames back into the
+ * main file, because the restore swap copies ONLY the main file to the live path.
+ */
+internal actual fun sqliteExec(path: String, statements: List<String>): String? {
+    val conn = runCatching { BundledSQLiteDriver().open(path, SQLITE_OPEN_READWRITE) }
+        .getOrElse { return "could not open the database: ${it.message}" }
+    return try {
+        for (stmt in statements) {
+            val s = conn.prepare(stmt)
+            try {
+                while (s.step()) { /* exhaust */ }
+            } finally {
+                s.close()
+            }
+        }
+        val checkpoint = conn.prepare("PRAGMA wal_checkpoint(TRUNCATE)")
+        try {
+            while (checkpoint.step()) { /* exhaust */ }
+        } finally {
+            checkpoint.close()
+        }
+        null
+    } catch (e: Exception) {
+        "statement failed: ${e.message}"
+    } finally {
+        runCatching { conn.close() }
+    }
+}

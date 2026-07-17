@@ -237,6 +237,47 @@ object BackupRestore {
             )
         }
 
+        // 3e. Legacy-peer reconcile: the legacy app and this fork share version NUMBERS but not
+        //     schema CONTENT from v18 up. This fork's MIGRATION_17_18 added `outboxBatch` /
+        //     `outboxCursor`, which the legacy app never had, so a legacy backup at v18..v20
+        //     passes the 3d gate yet cannot open here:
+        //       - legacy v18/v19: Room runs the remaining migrations, then validates the full
+        //         schema and throws on the missing outbox tables (crash-loop at every launch).
+        //       - legacy v20: no migration runs; Room compares `room_master_table`'s identity
+        //         hash, which differs between the two v20 schemas, and throws (same crash-loop).
+        //     The legacy fork also kept a `seq` column on `rrInterval` (PK `deviceId, ts, rrMs,
+        //     seq`) that this fork dropped, so Room's deep validation rejects the table shape
+        //     even after the outbox tables exist.
+        //     Fix all of it on the STAGED file, before the live DB is touched: create the missing
+        //     tables (this fork's own migration SQL, all `IF NOT EXISTS`, so a backup written by
+        //     this fork is untouched), rebuild `rrInterval` into this fork's shape (the rebuild
+        //     never references `seq`, so it also works on a legacy row set that predates it; rows
+        //     that collapse into one PK keep `MIN(synced)` so an unsynced duplicate wins and gets
+        //     re-uploaded rather than silently marked synced), and at v20 drop `room_master_table`
+        //     so Room takes its pre-packaged-database path at the next open: it deep-validates the
+        //     real schema (column-order-insensitive) and re-stamps the correct hash itself. This
+        //     fork's own backups keep their (correct) hash: the whole block only runs for
+        //     legacy-shaped files.
+        val isLegacyPeer = "outboxBatch" !in backupTables || "outboxCursor" !in backupTables
+        if (backupVersion != null && isLegacyPeer &&
+            backupVersion >= WhoopDatabase.MIGRATION_17_18.endVersion
+        ) {
+            val reconcileSql = buildList {
+                addAll(WhoopDatabase.OUTBOX_MIGRATION_SQL)
+                addAll(RR_INTERVAL_RECONCILE_SQL)
+                if (backupVersion == WhoopDatabase.SCHEMA_VERSION) {
+                    add("DROP TABLE IF EXISTS room_master_table")
+                }
+            }
+            sqliteExec(stagedDb.toString(), reconcileSql)?.let { complaint ->
+                cleanStaged()
+                return RestoreResult.Failed(
+                    "This backup comes from the original NOOP app and couldn't be adapted to this " +
+                        "one ($complaint). Your current data is untouched."
+                )
+            }
+        }
+
         val walFile = "$liveDbPath-wal".toPath()
         val shmFile = "$liveDbPath-shm".toPath()
         val rollbackFile = "$liveDbPath.import-bak".toPath()
@@ -321,6 +362,26 @@ object BackupRestore {
         }
     }.getOrNull()
 
+    /**
+     * Rebuilds a legacy-shaped `rrInterval` (extra `seq` column, PK `deviceId, ts, rrMs, seq`)
+     * into this fork's shape (no `seq`, PK `deviceId, ts, rrMs`), on the STAGED file only, as
+     * part of the 3e legacy-peer reconcile. Never references `seq`, so it is shape-agnostic:
+     * running it against an already-fork-shaped table is a lossless rebuild. Rows that collapse
+     * into one PK keep `MIN(synced)` — an unsynced duplicate wins, so the beat is re-uploaded
+     * instead of being silently marked synced. No secondary indexes exist on `rrInterval` in
+     * either schema (only the PK autoindex), so none need recreating.
+     */
+    internal val RR_INTERVAL_RECONCILE_SQL: List<String> = listOf(
+        "CREATE TABLE IF NOT EXISTS `rrInterval_new` (`deviceId` TEXT NOT NULL, `ts` INTEGER " +
+            "NOT NULL, `rrMs` INTEGER NOT NULL, `synced` INTEGER NOT NULL, " +
+            "PRIMARY KEY(`deviceId`, `ts`, `rrMs`))",
+        "INSERT OR IGNORE INTO `rrInterval_new` (`deviceId`, `ts`, `rrMs`, `synced`) " +
+            "SELECT `deviceId`, `ts`, `rrMs`, MIN(`synced`) FROM `rrInterval` " +
+            "GROUP BY `deviceId`, `ts`, `rrMs`",
+        "DROP TABLE `rrInterval`",
+        "ALTER TABLE `rrInterval_new` RENAME TO `rrInterval`",
+    )
+
     /** True when the file at [path] begins with the SQLite 3 magic. */
     private fun hasSqliteMagic(fs: FileSystem, path: Path): Boolean = runCatching {
         val bytes = fs.source(path).buffer().use { source ->
@@ -399,3 +460,12 @@ expect fun sqliteQuickCheck(path: String): String?
 
 /** Every table name in the database at [path], read-only; empty on failure. */
 internal expect fun sqliteTableNames(path: String): Set<String>
+
+/**
+ * Execute [statements] in order against the database file at [path] (read-write; the only caller
+ * is [BackupRestore.restore]'s step 3e, which owns the staged temp copy it targets). Returns null
+ * on success, otherwise a short human-readable complaint. Implementations MUST leave the main
+ * database file self-contained on success (checkpoint and truncate any WAL sidecar): the restore
+ * engine copies ONLY the main file to the live path.
+ */
+internal expect fun sqliteExec(path: String, statements: List<String>): String?
