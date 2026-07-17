@@ -331,6 +331,9 @@ fun SettingsScreen(
     fun mutate(block: () -> Unit) { block(); rev++ }
 
     var backupBusy by remember { mutableStateOf(false) }
+    // Last backup/import failure, shown inline under the Export/Import buttons so the
+    // message survives even when the system toast is missed (the toast still fires too).
+    var backupError by remember { mutableStateOf<String?>(null) }
 
     // Re-scan must request the runtime Bluetooth permission before scanning — without this the
     // button calls connect() directly and silently no-ops on Android 12+ when the permission was
@@ -499,6 +502,7 @@ fun SettingsScreen(
                     ).show()
                 },
                 onFailure = { e ->
+                    backupError = "Backup problem: ${e.message}"
                     Toast.makeText(context, "Backup problem: ${e.message}", Toast.LENGTH_LONG).show()
                 },
             )
@@ -524,6 +528,7 @@ fun SettingsScreen(
                     ).show()
                 },
                 onFailure = { e ->
+                    backupError = "CSV export problem: ${e.message}"
                     Toast.makeText(context, "CSV export problem: ${e.message}", Toast.LENGTH_LONG).show()
                 },
             )
@@ -545,9 +550,10 @@ fun SettingsScreen(
                     "Backup imported. Fully close and reopen NOOP for it to take effect.",
                     Toast.LENGTH_LONG,
                 ).show()
-                is DataBackup.ImportResult.Failed -> Toast.makeText(
-                    context, result.message, Toast.LENGTH_LONG,
-                ).show()
+                is DataBackup.ImportResult.Failed -> {
+                    backupError = result.message
+                    Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -2072,6 +2078,7 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         onClick = {
                             backupBusy = true
+                            backupError = null
                             exportLauncher.launch("noop-backup-${java.time.LocalDate.now()}.noopbak")
                         },
                     )
@@ -2083,6 +2090,7 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         onClick = {
                             backupBusy = true
+                            backupError = null
                             importLauncher.launch(arrayOf("*/*"))
                         },
                     )
@@ -2094,6 +2102,7 @@ fun SettingsScreen(
                         modifier = Modifier.weight(1f),
                         onClick = {
                             backupBusy = true
+                            backupError = null
                             csvExportLauncher.launch("noop-export-${java.time.LocalDate.now()}.zip")
                         },
                     )
@@ -2111,6 +2120,10 @@ fun SettingsScreen(
                         )
                         Text("Working…", style = NoopType.footnote, color = Palette.textSecondary)
                     }
+                }
+
+                backupError?.let { err ->
+                    Text(err, style = NoopType.footnote, color = Palette.statusCritical)
                 }
 
                 NoteRow(

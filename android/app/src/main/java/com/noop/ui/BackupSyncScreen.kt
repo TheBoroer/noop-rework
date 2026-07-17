@@ -66,6 +66,9 @@ fun BackupSyncScreen() {
     var auto by remember { mutableStateOf(BackupSyncPrefs.autoEnabled(context)) }
     var lastMs by remember { mutableStateOf(BackupSyncPrefs.lastBackupMs(context)) }
     var busy by remember { mutableStateOf(false) }
+    // Last restore failure, shown inline in the Restore card so the message survives even
+    // when the system toast is missed (the toast still fires too).
+    var restoreError by remember { mutableStateOf<String?>(null) }
     // How many dated snapshots to keep; pruning deletes the oldest beyond this (BackupSync.snapshotsToPrune).
     var keep by remember { mutableStateOf(BackupSyncPrefs.keepCount(context)) }
     var keepMenu by remember { mutableStateOf(false) }
@@ -80,6 +83,7 @@ fun BackupSyncScreen() {
     // Runs the actual destructive restore for a chosen backup Uri, off the main thread.
     fun runRestore(uri: Uri) {
         busy = true
+        restoreError = null
         scope.launch {
             val r = withContext(Dispatchers.IO) { DataBackup.importFrom(context, uri) }
             busy = false
@@ -105,8 +109,10 @@ fun BackupSyncScreen() {
                         Runtime.getRuntime().exit(0)
                     }
                 }
-                is DataBackup.ImportResult.Failed ->
+                is DataBackup.ImportResult.Failed -> {
+                    restoreError = r.message
                     Toast.makeText(context, r.message, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -342,6 +348,9 @@ fun BackupSyncScreen() {
                             }
                         },
                     )
+                    restoreError?.let { err ->
+                        Text(err, style = NoopType.footnote, color = Palette.statusCritical)
+                    }
                 }
             }
         }

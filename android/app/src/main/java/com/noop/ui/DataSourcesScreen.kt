@@ -157,6 +157,9 @@ fun DataSourcesScreen(vm: AppViewModel) {
     // Whole-store backup: export to a user-created document; import from a picked one.
     var busy by remember { mutableStateOf(false) }
     var restartNeeded by remember { mutableStateOf(false) }
+    // Last backup export/import failure, shown inline under the Export/Import buttons so
+    // the message survives even when the system toast is missed (the toast still fires too).
+    var backupError by remember { mutableStateOf<String?>(null) }
     // ah-delete (#616): drives the "Remove Apple Health imported data" confirm dialog.
     var confirmDeleteApple by remember { mutableStateOf(false) }
 
@@ -165,10 +168,13 @@ fun DataSourcesScreen(vm: AppViewModel) {
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         busy = true
+        backupError = null
         scope.launch {
             val message = withContext(Dispatchers.IO) {
                 runCatching { DataBackup.exportTo(context, uri) }
-                    .fold({ "Backup saved." }, { "Backup failed: ${it.message}" })
+                    .fold({ "Backup saved." }, { e ->
+                        "Backup failed: ${e.message}".also { backupError = it }
+                    })
             }
             busy = false
             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
@@ -180,6 +186,7 @@ fun DataSourcesScreen(vm: AppViewModel) {
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         busy = true
+        backupError = null
         scope.launch {
             val result = withContext(Dispatchers.IO) { DataBackup.importFrom(context, uri) }
             busy = false
@@ -192,8 +199,10 @@ fun DataSourcesScreen(vm: AppViewModel) {
                         Toast.LENGTH_LONG,
                     ).show()
                 }
-                is DataBackup.ImportResult.Failed ->
+                is DataBackup.ImportResult.Failed -> {
+                    backupError = result.message
                     Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -848,6 +857,9 @@ fun DataSourcesScreen(vm: AppViewModel) {
             }
             if (busy) {
                 Text("Working…", style = NoopType.footnote, color = Palette.textTertiary)
+            }
+            backupError?.let { err ->
+                Text(err, style = NoopType.footnote, color = Palette.statusCritical)
             }
             if (restartNeeded) {
                 Text(
