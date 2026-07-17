@@ -1,5 +1,5 @@
 import Foundation
-import GRDB
+@testable import NoopLocalAccessCore
 
 enum TemporaryDatabase {
     static func emptyFileURL() throws -> URL {
@@ -13,25 +13,21 @@ enum TemporaryDatabase {
 
     static func seeded() throws -> URL {
         let url = try emptyFileURL()
-        let dbQueue = try DatabaseQueue(path: url.path)
-        try dbQueue.write { db in
-            try createSchema(db)
-            try seed(db)
-        }
+        let db = try SQLiteConnection(path: url.path, readonly: false)
+        try createSchema(db)
+        try seed(db)
         return url
     }
 
     static func foreignNoopLike() throws -> URL {
         let url = try emptyFileURL()
-        let dbQueue = try DatabaseQueue(path: url.path)
-        try dbQueue.write { db in
-            try db.execute(sql: "CREATE TABLE device(id TEXT PRIMARY KEY)")
-            try db.execute(sql: "CREATE TABLE hrSample(deviceId TEXT NOT NULL, ts INTEGER NOT NULL, bpm INTEGER NOT NULL, PRIMARY KEY(deviceId, ts))")
-        }
+        let db = try SQLiteConnection(path: url.path, readonly: false)
+        try db.execute(sql: "CREATE TABLE device(id TEXT PRIMARY KEY)")
+        try db.execute(sql: "CREATE TABLE hrSample(deviceId TEXT NOT NULL, ts INTEGER NOT NULL, bpm INTEGER NOT NULL, PRIMARY KEY(deviceId, ts))")
         return url
     }
 
-    private static func createSchema(_ db: Database) throws {
+    private static func createSchema(_ db: SQLiteConnection) throws {
         try db.execute(sql: "CREATE TABLE grdb_migrations(identifier TEXT PRIMARY KEY)")
         try db.execute(sql: """
             CREATE TABLE dailyMetric(
@@ -76,7 +72,7 @@ enum TemporaryDatabase {
         try db.execute(sql: "CREATE TABLE rawBatch(batchId TEXT PRIMARY KEY, deviceId TEXT NOT NULL, byteSize INTEGER NOT NULL)")
     }
 
-    private static func seed(_ db: Database) throws {
+    private static func seed(_ db: SQLiteConnection) throws {
         try db.execute(sql: """
             INSERT INTO dailyMetric(deviceId, day, totalSleepMin, efficiency, restingHr, avgHrv, recovery, strain)
             VALUES

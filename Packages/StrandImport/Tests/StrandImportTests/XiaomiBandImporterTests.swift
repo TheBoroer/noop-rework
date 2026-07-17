@@ -1,6 +1,5 @@
 import XCTest
 import Foundation
-import GRDB
 @testable import StrandImport
 
 final class XiaomiBandImporterTests: XCTestCase {
@@ -13,22 +12,20 @@ final class XiaomiBandImporterTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("8281032873.db")
-        let dbq = try DatabaseQueue(path: url.path)
+        let db = try SQLiteConnection(path: url.path, readonly: false)
         let tables = Set(rows.map(\.table)).union(["steps"])
-        try dbq.write { db in
-            for t in tables {
-                try db.execute(sql: """
-                    CREATE TABLE "\(t)" (sid TEXT, key TEXT, time INTEGER, value TEXT,
-                        zone_offset INTEGER, time_zero INTEGER, deleted INTEGER DEFAULT 0)
-                    """)
-            }
-            for r in rows {
-                let json = String(data: try JSONSerialization.data(withJSONObject: r.value), encoding: .utf8)!
-                try db.execute(sql: """
-                    INSERT INTO "\(r.table)" (sid, key, time, value, zone_offset, time_zero, deleted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, arguments: ["default", r.table, r.time, json, r.zone, r.time, r.deleted])
-            }
+        for t in tables {
+            try db.execute(sql: """
+                CREATE TABLE "\(t)" (sid TEXT, key TEXT, time INTEGER, value TEXT,
+                    zone_offset INTEGER, time_zero INTEGER, deleted INTEGER DEFAULT 0)
+                """)
+        }
+        for r in rows {
+            let json = String(data: try JSONSerialization.data(withJSONObject: r.value), encoding: .utf8)!
+            try db.execute(sql: """
+                INSERT INTO "\(r.table)" (sid, key, time, value, zone_offset, time_zero, deleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, bindings: ["default", r.table, r.time, json, r.zone, r.time, r.deleted])
         }
         return url
     }

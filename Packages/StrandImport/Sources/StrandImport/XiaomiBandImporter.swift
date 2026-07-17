@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 import ZIPFoundation
 
 /// Parses a **Xiaomi Smart Band / Mi Band** export into normalized rows.
@@ -32,13 +31,8 @@ public struct XiaomiBandImporter {
         let (dbURL, tempDir) = try Self.resolveDatabase(at: url)
         defer { if let tempDir { try? FileManager.default.removeItem(at: tempDir) } }
 
-        var config = Configuration()
-        config.readonly = true
-        let dbq = try DatabaseQueue(path: dbURL.path, configuration: config)
-
-        let (days, sleeps) = try dbq.read { db -> ([XiaomiDailyRow], [XiaomiSleepSession]) in
-            (try Self.readDays(db), try Self.readSleeps(db))
-        }
+        let db = try SQLiteConnection(path: dbURL.path)
+        let (days, sleeps) = (try Self.readDays(db), try Self.readSleeps(db))
 
         if days.isEmpty && sleeps.isEmpty {
             throw ImportError.emptyExport("No Mi Fitness health rows found in \(dbURL.lastPathComponent)")
@@ -105,18 +99,14 @@ public struct XiaomiBandImporter {
     /// `0` if the file isn't a Mi Fitness health DB; otherwise the `steps` row count
     /// (a richness proxy, so we prefer the populated store over `notlogin` stubs).
     private static func healthDBScore(_ url: URL) -> Int {
-        var config = Configuration()
-        config.readonly = true
-        guard let dbq = try? DatabaseQueue(path: url.path, configuration: config) else { return 0 }
-        return (try? dbq.read { db -> Int in
-            guard try tableExists(db, "steps") else { return 0 }
-            return try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM steps") ?? 0
-        }) ?? 0
+        guard let db = try? SQLiteConnection(path: url.path) else { return 0 }
+        guard (try? tableExists(db, "steps")) == true else { return 0 }
+        return (try? db.fetchOneInt(sql: "SELECT COUNT(*) FROM steps")) ?? 0
     }
 
     // MARK: - Day rollups
 
-    static func readDays(_ db: Database) throws -> [XiaomiDailyRow] {
+    static func readDays(_ db: SQLiteConnection) throws -> [XiaomiDailyRow] {
         var byDay: [String: XiaomiDailyRow] = [:]
 
         func ensure(_ key: String, _ time: Int) -> XiaomiDailyRow {
@@ -173,7 +163,7 @@ public struct XiaomiBandImporter {
 
     // MARK: - Sleep sessions + hypnogram
 
-    static func readSleeps(_ db: Database) throws -> [XiaomiSleepSession] {
+    static func readSleeps(_ db: SQLiteConnection) throws -> [XiaomiSleepSession] {
         guard try tableExists(db, "sleep") else { return [] }
         var sessions: [XiaomiSleepSession] = []
         var seenBedtimes = Set<Int>()
@@ -234,22 +224,22 @@ public struct XiaomiBandImporter {
 
     /// `SELECT` the non-deleted rows of a Mi Fitness table and parse the JSON `value`.
     /// `table` is always drawn from a fixed allow-list, never user input.
-    static func rawRows(_ db: Database, table: String) throws -> [RawRow] {
-        let rows = try Row.fetchAll(db, sql: """
+    static func rawRows(_ db: SQLiteConnection, table: String) throws -> [RawRow] {
+        let rows = try db.fetchRows(sql: """
             SELECT sid, time, value, zone_offset FROM "\(table)" WHERE deleted = 0 ORDER BY time
             """)
         return rows.compactMap { row in
-            guard let time: Int = row["time"] else { return nil }
-            let json: String = row["value"] ?? ""
+            guard let time = row["time"]?.intValue else { return nil }
+            let json = row["value"]?.stringValue ?? ""
             guard let data = json.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { return nil }
-            return RawRow(sid: row["sid"] ?? "", time: time, zoneOffset: row["zone_offset"] ?? 0, value: obj)
+            return RawRow(sid: row["sid"]?.stringValue ?? "", time: time, zoneOffset: row["zone_offset"]?.intValue ?? 0, value: obj)
         }
     }
 
-    static func tableExists(_ db: Database, _ name: String) throws -> Bool {
-        try Bool.fetchOne(db, sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", arguments: [name]) ?? false
+    static func tableExists(_ db: SQLiteConnection, _ name: String) throws -> Bool {
+        try db.fetchOneInt(sql: "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", bindings: [name]) != nil
     }
 
     /// The band's local calendar day for a sample (`time + zone_offset`, formatted UTC).

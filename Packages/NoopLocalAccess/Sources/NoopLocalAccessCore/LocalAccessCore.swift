@@ -1,5 +1,4 @@
 import Foundation
-import GRDB
 
 public enum LocalAccessError: Error, CustomStringConvertible, Equatable {
     case invalidParams(String)
@@ -176,122 +175,137 @@ public struct StorageStats: Equatable, Sendable {
 }
 
 public final class ReadonlyNoopStore {
-    private let dbQueue: DatabaseQueue
+    private let db: SQLiteConnection
     private let tableNames: Set<String>
 
     public init(path: String) throws {
-        var config = Configuration()
-        config.readonly = true
-        config.busyMode = .timeout(5)
-        dbQueue = try DatabaseQueue(path: path, configuration: config)
-        tableNames = try dbQueue.read { db in
-            try Set(String.fetchAll(db, sql: "SELECT name FROM sqlite_master WHERE type = 'table'"))
-        }
+        // Read-only open with a 5 second busy timeout, matching the previous GRDB
+        // configuration (readonly plus busyMode = .timeout(5)).
+        db = try SQLiteConnection(path: path, readonly: true, busyTimeoutMs: 5_000)
+        tableNames = Set(
+            try db.fetchRows(sql: "SELECT name FROM sqlite_master WHERE type = 'table'")
+                .compactMap { $0["name"]?.stringValue }
+        )
         try validateSchema()
     }
 
     public func dailyMetrics(deviceId: String, from: String, to: String) throws -> [DailyMetricRow] {
         guard tableNames.contains("dailyMetric") else { return [] }
-        return try dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT day, totalSleepMin, efficiency, deepMin, remMin, lightMin, disturbances,
-                       restingHr, avgHrv, recovery, strain, exerciseCount,
-                       spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst
-                FROM dailyMetric
-                WHERE deviceId = ? AND day >= ? AND day <= ?
-                ORDER BY day ASC
-                """, arguments: [deviceId, from, to])
-                .map {
-                    DailyMetricRow(day: $0["day"], totalSleepMin: $0["totalSleepMin"],
-                                   efficiency: $0["efficiency"], deepMin: $0["deepMin"],
-                                   remMin: $0["remMin"], lightMin: $0["lightMin"],
-                                   disturbances: $0["disturbances"], restingHr: $0["restingHr"],
-                                   avgHrv: $0["avgHrv"], recovery: $0["recovery"],
-                                   strain: $0["strain"], exerciseCount: $0["exerciseCount"],
-                                   spo2Pct: $0["spo2Pct"], skinTempDevC: $0["skinTempDevC"],
-                                   respRateBpm: $0["respRateBpm"], steps: $0["steps"],
-                                   activeKcalEst: $0["activeKcalEst"])
-                }
-        }
+        return try db.fetchRows(sql: """
+            SELECT day, totalSleepMin, efficiency, deepMin, remMin, lightMin, disturbances,
+                   restingHr, avgHrv, recovery, strain, exerciseCount,
+                   spo2Pct, skinTempDevC, respRateBpm, steps, activeKcalEst
+            FROM dailyMetric
+            WHERE deviceId = ? AND day >= ? AND day <= ?
+            ORDER BY day ASC
+            """, bindings: [deviceId, from, to])
+            .map {
+                DailyMetricRow(day: $0["day"]?.stringValue ?? "",
+                               totalSleepMin: $0["totalSleepMin"]?.doubleValue,
+                               efficiency: $0["efficiency"]?.doubleValue,
+                               deepMin: $0["deepMin"]?.doubleValue,
+                               remMin: $0["remMin"]?.doubleValue,
+                               lightMin: $0["lightMin"]?.doubleValue,
+                               disturbances: $0["disturbances"]?.intValue,
+                               restingHr: $0["restingHr"]?.intValue,
+                               avgHrv: $0["avgHrv"]?.doubleValue,
+                               recovery: $0["recovery"]?.doubleValue,
+                               strain: $0["strain"]?.doubleValue,
+                               exerciseCount: $0["exerciseCount"]?.intValue,
+                               spo2Pct: $0["spo2Pct"]?.doubleValue,
+                               skinTempDevC: $0["skinTempDevC"]?.doubleValue,
+                               respRateBpm: $0["respRateBpm"]?.doubleValue,
+                               steps: $0["steps"]?.intValue,
+                               activeKcalEst: $0["activeKcalEst"]?.doubleValue)
+            }
     }
 
     public func sleepSessions(deviceId: String, from: Int, to: Int, limit: Int) throws -> [SleepSessionRow] {
         guard tableNames.contains("sleepSession") else { return [] }
-        return try dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON
-                FROM sleepSession
-                WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
-                ORDER BY startTs ASC LIMIT ?
-                """, arguments: [deviceId, from, to, limit])
-                .map {
-                    SleepSessionRow(startTs: $0["startTs"], endTs: $0["endTs"],
-                                    efficiency: $0["efficiency"], restingHr: $0["restingHr"],
-                                    avgHrv: $0["avgHrv"], stagesJSON: $0["stagesJSON"])
-                }
-        }
+        return try db.fetchRows(sql: """
+            SELECT startTs, endTs, efficiency, restingHr, avgHrv, stagesJSON
+            FROM sleepSession
+            WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
+            ORDER BY startTs ASC LIMIT ?
+            """, bindings: [deviceId, from, to, limit])
+            .map {
+                SleepSessionRow(startTs: $0["startTs"]?.intValue ?? 0,
+                                endTs: $0["endTs"]?.intValue ?? 0,
+                                efficiency: $0["efficiency"]?.doubleValue,
+                                restingHr: $0["restingHr"]?.intValue,
+                                avgHrv: $0["avgHrv"]?.doubleValue,
+                                stagesJSON: $0["stagesJSON"]?.stringValue)
+            }
     }
 
     public func metricSeries(deviceId: String, key: String, from: String, to: String) throws -> [MetricPointRow] {
         guard tableNames.contains("metricSeries") else { return [] }
-        return try dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT day, key, value FROM metricSeries
-                WHERE deviceId = ? AND key = ? AND day >= ? AND day <= ?
-                ORDER BY day ASC
-                """, arguments: [deviceId, key, from, to])
-                .map { MetricPointRow(day: $0["day"], key: $0["key"], value: $0["value"]) }
-        }
+        return try db.fetchRows(sql: """
+            SELECT day, key, value FROM metricSeries
+            WHERE deviceId = ? AND key = ? AND day >= ? AND day <= ?
+            ORDER BY day ASC
+            """, bindings: [deviceId, key, from, to])
+            .map {
+                MetricPointRow(day: $0["day"]?.stringValue ?? "",
+                               key: $0["key"]?.stringValue ?? "",
+                               value: $0["value"]?.doubleValue ?? 0)
+            }
     }
 
     public func metricKeys(deviceId: String) throws -> [String] {
         guard tableNames.contains("metricSeries") else { return [] }
-        return try dbQueue.read { db in
-            try String.fetchAll(db, sql: """
-                SELECT DISTINCT key FROM metricSeries
-                WHERE deviceId = ?
-                ORDER BY key ASC
-                """, arguments: [deviceId])
-        }
+        return try db.fetchRows(sql: """
+            SELECT DISTINCT key FROM metricSeries
+            WHERE deviceId = ?
+            ORDER BY key ASC
+            """, bindings: [deviceId])
+            .compactMap { $0["key"]?.stringValue }
     }
 
     public func appleDaily(deviceId: String, from: String, to: String) throws -> [AppleDailyRow] {
         guard tableNames.contains("appleDaily") else { return [] }
-        return try dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT day, steps, activeKcal, basalKcal, vo2max, avgHr, maxHr, walkingHr, weightKg
-                FROM appleDaily
-                WHERE deviceId = ? AND day >= ? AND day <= ?
-                ORDER BY day ASC
-                """, arguments: [deviceId, from, to])
-                .map {
-                    AppleDailyRow(day: $0["day"], steps: $0["steps"], activeKcal: $0["activeKcal"],
-                                  basalKcal: $0["basalKcal"], vo2max: $0["vo2max"],
-                                  avgHr: $0["avgHr"], maxHr: $0["maxHr"],
-                                  walkingHr: $0["walkingHr"], weightKg: $0["weightKg"])
-                }
-        }
+        return try db.fetchRows(sql: """
+            SELECT day, steps, activeKcal, basalKcal, vo2max, avgHr, maxHr, walkingHr, weightKg
+            FROM appleDaily
+            WHERE deviceId = ? AND day >= ? AND day <= ?
+            ORDER BY day ASC
+            """, bindings: [deviceId, from, to])
+            .map {
+                AppleDailyRow(day: $0["day"]?.stringValue ?? "",
+                              steps: $0["steps"]?.intValue,
+                              activeKcal: $0["activeKcal"]?.doubleValue,
+                              basalKcal: $0["basalKcal"]?.doubleValue,
+                              vo2max: $0["vo2max"]?.doubleValue,
+                              avgHr: $0["avgHr"]?.intValue,
+                              maxHr: $0["maxHr"]?.intValue,
+                              walkingHr: $0["walkingHr"]?.intValue,
+                              weightKg: $0["weightKg"]?.doubleValue)
+            }
     }
 
     public func workouts(deviceId: String, from: Int, to: Int, limit: Int) throws -> [WorkoutRow] {
         guard tableNames.contains("workout") else { return [] }
-        return try dbQueue.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT startTs, endTs, sport, source, durationS, energyKcal, avgHr, maxHr,
-                       strain, distanceM, zonesJSON, notes
-                FROM workout
-                WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
-                ORDER BY startTs ASC LIMIT ?
-                """, arguments: [deviceId, from, to, limit])
-                .map {
-                    WorkoutRow(startTs: $0["startTs"], endTs: $0["endTs"], sport: $0["sport"],
-                               source: $0["source"], durationS: $0["durationS"],
-                               energyKcal: $0["energyKcal"], avgHr: $0["avgHr"],
-                               maxHr: $0["maxHr"], strain: $0["strain"],
-                               distanceM: $0["distanceM"], zonesJSON: $0["zonesJSON"],
-                               notes: $0["notes"])
-                }
-        }
+        return try db.fetchRows(sql: """
+            SELECT startTs, endTs, sport, source, durationS, energyKcal, avgHr, maxHr,
+                   strain, distanceM, zonesJSON, notes
+            FROM workout
+            WHERE deviceId = ? AND startTs >= ? AND startTs <= ?
+            ORDER BY startTs ASC LIMIT ?
+            """, bindings: [deviceId, from, to, limit])
+            .map {
+                WorkoutRow(startTs: $0["startTs"]?.intValue ?? 0,
+                           endTs: $0["endTs"]?.intValue ?? 0,
+                           sport: $0["sport"]?.stringValue ?? "",
+                           source: $0["source"]?.stringValue ?? "",
+                           durationS: $0["durationS"]?.doubleValue,
+                           energyKcal: $0["energyKcal"]?.doubleValue,
+                           avgHr: $0["avgHr"]?.intValue,
+                           maxHr: $0["maxHr"]?.intValue,
+                           strain: $0["strain"]?.doubleValue,
+                           distanceM: $0["distanceM"]?.doubleValue,
+                           zonesJSON: $0["zonesJSON"]?.stringValue,
+                           notes: $0["notes"]?.stringValue)
+            }
     }
 
     public func latestHRSampleTs(deviceId: String) throws -> Int? {
@@ -299,54 +313,50 @@ public final class ReadonlyNoopStore {
         let hasPpg = tableNames.contains("ppgHrSample")
         guard hasHr || hasPpg else { return nil }
 
-        return try dbQueue.read { db in
-            switch (hasHr, hasPpg) {
-            case (true, true):
-                return try Int.fetchOne(db, sql: """
-                    SELECT MAX(ts) FROM (
-                        SELECT ts FROM hrSample WHERE deviceId = ?
-                        UNION ALL
-                        SELECT ts FROM ppgHrSample WHERE deviceId = ?
-                    )
-                    """, arguments: [deviceId, deviceId])
-            case (true, false):
-                return try Int.fetchOne(db, sql: "SELECT MAX(ts) FROM hrSample WHERE deviceId = ?", arguments: [deviceId])
-            case (false, true):
-                return try Int.fetchOne(db, sql: "SELECT MAX(ts) FROM ppgHrSample WHERE deviceId = ?", arguments: [deviceId])
-            case (false, false):
-                return nil
-            }
+        switch (hasHr, hasPpg) {
+        case (true, true):
+            return try db.fetchOneInt(sql: """
+                SELECT MAX(ts) FROM (
+                    SELECT ts FROM hrSample WHERE deviceId = ?
+                    UNION ALL
+                    SELECT ts FROM ppgHrSample WHERE deviceId = ?
+                )
+                """, bindings: [deviceId, deviceId])
+        case (true, false):
+            return try db.fetchOneInt(sql: "SELECT MAX(ts) FROM hrSample WHERE deviceId = ?", bindings: [deviceId])
+        case (false, true):
+            return try db.fetchOneInt(sql: "SELECT MAX(ts) FROM ppgHrSample WHERE deviceId = ?", bindings: [deviceId])
+        case (false, false):
+            return nil
         }
     }
 
     public func storageStats() throws -> StorageStats {
-        try dbQueue.read { db in
-            let decodedTables = [
-                "hrSample", "rrInterval", "event", "battery", "spo2Sample",
-                "skinTempSample", "respSample", "gravitySample", "ppgHrSample", "stepSample",
-            ]
-            var decodedRows = 0
-            for table in decodedTables where tableNames.contains(table) {
-                decodedRows += try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table)") ?? 0
-            }
-            let rawBatches = tableNames.contains("rawBatch")
-                ? (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM rawBatch") ?? 0)
-                : 0
-            let rawBytes = tableNames.contains("rawBatch")
-                ? (try Int.fetchOne(db, sql: "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? 0)
-                : 0
-            return StorageStats(decodedRows: decodedRows, rawBatches: rawBatches, rawBytes: rawBytes)
+        let decodedTables = [
+            "hrSample", "rrInterval", "event", "battery", "spo2Sample",
+            "skinTempSample", "respSample", "gravitySample", "ppgHrSample", "stepSample",
+        ]
+        var decodedRows = 0
+        for table in decodedTables where tableNames.contains(table) {
+            decodedRows += try db.fetchOneInt(sql: "SELECT COUNT(*) FROM \(table)") ?? 0
         }
+        let rawBatches = tableNames.contains("rawBatch")
+            ? (try db.fetchOneInt(sql: "SELECT COUNT(*) FROM rawBatch") ?? 0)
+            : 0
+        let rawBytes = tableNames.contains("rawBatch")
+            ? (try db.fetchOneInt(sql: "SELECT COALESCE(SUM(byteSize), 0) FROM rawBatch") ?? 0)
+            : 0
+        return StorageStats(decodedRows: decodedRows, rawBatches: rawBatches, rawBytes: rawBytes)
     }
 
     internal func writeProbeForTest() throws {
-        try dbQueue.write { db in
-            try db.execute(sql: "CREATE TABLE __noop_local_access_write_probe(id INTEGER)")
-        }
+        // Must throw: the connection is opened read-only, so SQLite refuses the
+        // CREATE TABLE with SQLITE_READONLY and it surfaces as QueryError.
+        try db.execute(sql: "CREATE TABLE __noop_local_access_write_probe(id INTEGER)")
     }
 
     internal func isReadOnlyForTest() throws -> Bool {
-        try dbQueue.read { db in db.configuration.readonly }
+        db.isReadOnly
     }
 
     private func validateSchema() throws {
