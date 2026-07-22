@@ -730,7 +730,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // since the last COMPLETED run. Mirrors the Swift analyzeRecent(force:false) gate; the watermark
                 // advances only on success (below), so an interrupted run can never hide unscored data.
                 val analyzeFp = repository.hrFingerprint()
-                if (analyzeFp != NoopPrefs.analyzeWatermark(appContext)) runCatching {
+                // Stager-version rollout: a bumped SleepStageHealer.STAGING_VERSION (or the debug CLI
+                // `restage` method clearing the stamp) must force a pass even when the HR stream is
+                // unchanged — otherwise the fingerprint gate would sit on an algorithm fix until new
+                // data happened to arrive.
+                val restagePending = NoopPrefs.stagerVersion(appContext) !=
+                    com.noop.analytics.SleepStageHealer.STAGING_VERSION
+                if (analyzeFp != NoopPrefs.analyzeWatermark(appContext) || restagePending) runCatching {
                     IntelligenceEngine.analyzeRecent(
                         repo = repository,
                         profile = currentProfile(),
@@ -766,6 +772,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         // Opt-in experimental sleep staging (V2) — read off SharedPreferences here (the
                         // analytics layer is Context-free) and thread it into the sleep self-heal. (V7 3b)
                         useExperimentalSleepV2 = PuffinExperiment.from(appContext).experimentalSleepV2,
+                        // Stager-version rollout stamp (persisted in NoopPrefs): lets the engine force
+                        // re-stage every stored night from raw exactly once after a
+                        // SleepStageHealer.STAGING_VERSION bump (or a debug-CLI `restage` clear).
+                        stagerVersionGet = { NoopPrefs.stagerVersion(appContext) },
+                        stagerVersionSet = { v -> NoopPrefs.setStagerVersion(appContext, v) },
                         // Sleep & Rest test mode (Test Centre E5): when the SLEEP domain is on, route the
                         // per-day sleep gate trace into the SAME shareable strap log, tagged .sleep so it
                         // lands under the profile in the export. Zero-cost when off: the gate is one

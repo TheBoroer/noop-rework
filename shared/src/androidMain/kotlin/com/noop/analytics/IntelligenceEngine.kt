@@ -180,6 +180,11 @@ object IntelligenceEngine {
         // self-heal, which re-stages with SleepStagerV2 when true. Default false → V1 (the default, untouched
         // path), so existing callers / tests are unaffected. (V7 Pillar 3b)
         useExperimentalSleepV2: Boolean = false,
+        // Stager-version rollout closure pair (see [analyzeRecentOnCpu]): get/set of the persisted
+        // [SleepStageHealer.STAGING_VERSION] stamp of the last completed full-history force re-stage.
+        // Defaults are an already-current no-op pair, so existing callers / tests are byte-identical.
+        stagerVersionGet: () -> Int = { SleepStageHealer.STAGING_VERSION },
+        stagerVersionSet: (Int) -> Unit = {},
         // Sleep & Rest test-mode trace sink (Test Centre E5). The analytics layer is Context-free, so the
         // Context-aware caller (AppViewModel / WhoopBleClient) reads TestCentre.active(SLEEP) and passes a
         // non-null sink ONLY when the mode is on, routing each line to the .sleep-tagged strap log. null (the
@@ -227,7 +232,8 @@ object IntelligenceEngine {
         analyzeGate.withLock {
             val (out, healed) = analyzeRecentOnCpu(repo, profile, maxDays, importedDeviceId, maxHROverride,
                 nowSeconds, ownerSource, manualStepCoefficient, persistStepsCalibration, baselineEpoch,
-                recoveryEpoch, diag, useExperimentalSleepV2, sleepTraceSink, recoveryTraceSink, stepsTraceSink,
+                recoveryEpoch, diag, useExperimentalSleepV2, stagerVersionGet, stagerVersionSet,
+                sleepTraceSink, recoveryTraceSink, stepsTraceSink,
                 universalSink, workoutsTraceSink, hrvTraceSink, deepHrvWindow)
             if (healed == 0) out
             // #899 heal re-pass: the pass above deleted overlapping duplicate sleep sessions AFTER its days
@@ -237,7 +243,8 @@ object IntelligenceEngine {
             // are gone), so this can never loop. Mirrors the Swift pendingForcedRescore re-arm.
             else analyzeRecentOnCpu(repo, profile, maxDays, importedDeviceId, maxHROverride,
                 nowSeconds, ownerSource, manualStepCoefficient, persistStepsCalibration, baselineEpoch,
-                recoveryEpoch, diag, useExperimentalSleepV2, sleepTraceSink, recoveryTraceSink, stepsTraceSink,
+                recoveryEpoch, diag, useExperimentalSleepV2, stagerVersionGet, stagerVersionSet,
+                sleepTraceSink, recoveryTraceSink, stepsTraceSink,
                 universalSink, workoutsTraceSink, hrvTraceSink, deepHrvWindow).first
         }
     }
@@ -299,6 +306,14 @@ object IntelligenceEngine {
         diag: (String) -> Unit = {},
         // Opt-in experimental staging (V2), threaded down to the sleep self-heal. Default false → V1. (3b)
         useExperimentalSleepV2: Boolean = false,
+        // Stager-version rollout: pure-JVM closure pair (matching persistStepsCalibration / diag style).
+        // [stagerVersionGet] returns the persisted [SleepStageHealer.STAGING_VERSION] stamp of the last
+        // completed full-history force re-stage (0 = never); when it's behind the shipped constant this
+        // pass first re-derives EVERY stored night's stages from raw ([SleepStageHealer.forceRestageAll])
+        // and then stamps via [stagerVersionSet]. Defaults are an already-current no-op pair, so existing
+        // callers / tests are byte-identical.
+        stagerVersionGet: () -> Int = { SleepStageHealer.STAGING_VERSION },
+        stagerVersionSet: (Int) -> Unit = {},
         // Sleep & Rest test-mode trace sink (Test Centre E5). null = byte-identical default; when non-null
         // each scored day threads it into AnalyticsEngine.analyzeDay so detectSleep's gate trace + the Rest
         // sub-score line forward line-by-line to the .sleep-tagged strap log. Mirrors Swift.
@@ -683,6 +698,25 @@ object IntelligenceEngine {
         // Rest composite (0–100) per night → persisted as the sleep_performance metric series so the
         // dashboard Rest score reflects the new composite, not raw efficiency. Swift parity.
         val restRows = ArrayList<MetricSeriesRow>()
+
+        // Stager-version rollout: when the persisted stamp is behind SleepStageHealer.STAGING_VERSION,
+        // force re-stage EVERY stored night from raw — full history, not just the recompute window — so
+        // an algorithm change reaches old + edited nights exactly once. Runs BEFORE the edited-rows read
+        // / self-heal below so the refreshed breakdowns flow into this same pass. The density gate inside
+        // skips nights whose raw is gone (retention-trimmed / imported); the stamp advances only after
+        // the sweep completes, so an interrupted run simply retries next pass (idempotent writes).
+        if (stagerVersionGet() != SleepStageHealer.STAGING_VERSION) {
+            val rewritten = SleepStageHealer.forceRestageAll(
+                repo = repo,
+                computedDeviceId = computedId,
+                strapDeviceId = importedDeviceId,
+                windowStart = 0L,
+                windowEnd = nowSeconds,
+                useExperimentalSleepV2 = useExperimentalSleepV2,
+            )
+            diag("restage: stager v${SleepStageHealer.STAGING_VERSION} full-history pass rewrote $rewritten night(s)")
+            stagerVersionSet(SleepStageHealer.STAGING_VERSION)
+        }
 
         // User-corrected sleep windows for the COMPUTED source over the recompute window. They override
         // the detected sleep when scoring a day's sleep aggregates (so Rest + recovery honor the edit,

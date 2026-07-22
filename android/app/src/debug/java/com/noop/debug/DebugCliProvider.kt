@@ -26,6 +26,7 @@ import kotlinx.coroutines.runBlocking
  *       --method export --arg $DIR/backup.noopbak
  *   adb shell content call --uri content://com.noop.whoop.rework.debug.cli \
  *       --method import --arg $DIR/backup.noopbak
+ *   adb shell content call --uri content://com.noop.whoop.rework.debug.cli --method restage
  *   adb shell content call --uri content://com.noop.whoop.rework.debug.cli --method methods
  *
  * Success prints `Result: Bundle[{...}]`; failure prints a Bundle with an `error` key (the binder
@@ -70,6 +71,17 @@ class DebugCliProvider : ContentProvider() {
                     }
                     Log.i(TAG, "import done: $result")
                     Bundle().apply { putString("result", result.toString()) }
+                }
+                "restage" -> {
+                    // Dev shortcut for staging-algorithm work: clear the persisted stager-version
+                    // stamp so the NEXT idle rescore (app launch / 15-min backstop tick) runs the
+                    // same full-history force re-stage a real STAGING_VERSION bump would. No engine
+                    // wiring duplicated here, so the CLI can never drift from production.
+                    com.noop.ui.NoopPrefs.setStagerVersion(context, 0)
+                    Log.i(TAG, "restage: stager-version stamp cleared")
+                    Bundle().apply {
+                        putString("result", "stamp cleared; full re-stage runs on next idle rescore")
+                    }
                 }
                 "methods" -> Bundle().apply { putStringArray("methods", METHODS) }
                 else -> error("unknown method '$method'; try: ${METHODS.joinToString()}")
@@ -119,6 +131,6 @@ class DebugCliProvider : ContentProvider() {
     private companion object {
         const val TAG = "NoopCli"
         const val SHELL_UID = 2000
-        val METHODS = arrayOf("export", "import", "methods")
+        val METHODS = arrayOf("export", "import", "restage", "methods")
     }
 }

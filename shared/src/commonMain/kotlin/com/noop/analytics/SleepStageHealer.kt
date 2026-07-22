@@ -45,6 +45,15 @@ const val STREAM_LIMIT: Int = 200_000
 object SleepStageHealer {
 
     /**
+     * Bump on ANY change to the staging algorithm or its inputs' interpretation ([SleepStager] /
+     * [SleepStagerV2] / the `stagesJSON` encoding). A persisted stamp behind this constant makes the
+     * next engine pass run [forceRestageAll] over the FULL stored history, so an algorithm fix
+     * reaches every night — old, edited, and outside the recompute window — exactly once. The
+     * in-memory stager LRU needs no companion bump: a new algorithm ships in a new process.
+     */
+    const val STAGING_VERSION: Int = 1
+
+    /**
      * Re-derive stages from the raw streams for `[start, end]` (read under the strap [deviceId]),
      * returning the encoded `stagesJSON`, or `null` when the strap does NOT densely cover the window —
      * i.e. there isn't enough worn-night data to stage (a couple of stray samples must not trigger a
@@ -159,5 +168,39 @@ object SleepStageHealer {
             if (n > 0) healed = true
         }
         return if (healed) editedRows() else edited
+    }
+
+    /**
+     * Force re-stage: re-derive stages from raw for EVERY session in `[windowStart, windowEnd]`
+     * under the COMPUTED source — edited or not — and rewrite the stage breakdown ONLY (via
+     * [WhoopRepository.forceUpdateSleepStages]). Bounds and the userEdited flag are never touched.
+     *
+     * Exists for the [STAGING_VERSION] rollout: the regular recompute re-derives only recent
+     * un-edited nights and [selfHealEditedStages] only `userEdited = 1` rows, so a stager algorithm
+     * fix would otherwise never reach older stored nights or edited breakdowns. Same discipline as
+     * every other staging path: LOCKED effective bounds, IMMUTABLE detected key, density gate (a
+     * night whose raw is gone — retention-trimmed or imported — is left untouched via
+     * [restageFromRaw] returning null), equality-skip (idempotent, steady state writes nothing).
+     *
+     * Returns the number of sessions whose stages were rewritten.
+     */
+    suspend fun forceRestageAll(
+        repo: WhoopRepository,
+        computedDeviceId: String,
+        strapDeviceId: String,
+        windowStart: Long,
+        windowEnd: Long,
+        useExperimentalSleepV2: Boolean = false,
+    ): Int {
+        var rewritten = 0
+        for (row in repo.sleepSessions(computedDeviceId, windowStart, windowEnd)) {
+            // Re-derive over the LOCKED effective window (honours a user's corrected bed/wake),
+            // reading raw under the STRAP id; write under the IMMUTABLE detected key.
+            val newJSON = restageFromRaw(repo, strapDeviceId, row.effectiveStartTs, row.endTs,
+                useExperimentalSleepV2) ?: continue
+            if (newJSON == row.stagesJSON) continue
+            if (repo.forceUpdateSleepStages(computedDeviceId, row.startTs, newJSON) > 0) rewritten++
+        }
+        return rewritten
     }
 }

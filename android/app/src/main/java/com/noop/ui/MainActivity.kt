@@ -200,6 +200,19 @@ object NoopPrefs {
         of(context).edit().putString(KEY_ANALYZE_WATERMARK, fingerprint).apply()
     }
 
+    /** The [com.noop.analytics.SleepStageHealer.STAGING_VERSION] stamp of the last completed
+     *  full-history force re-stage (0 = never ran). When the shipped constant moves past this, the
+     *  next idle rescore first re-derives EVERY stored night's stages from raw, then re-stamps.
+     *  The debug CLI `restage` method clears it to 0 to force that pass on demand. */
+    const val KEY_STAGER_VERSION = "noop.stagerVersion"
+
+    fun stagerVersion(context: Context): Int =
+        of(context).getInt(KEY_STAGER_VERSION, 0)
+
+    fun setStagerVersion(context: Context, version: Int) {
+        of(context).edit().putInt(KEY_STAGER_VERSION, version).apply()
+    }
+
     /** Whether NOOP should hold the strap connection open via a foreground service. Default true. */
     fun backgroundConnection(context: Context): Boolean =
         of(context).getBoolean(KEY_BACKGROUND_CONNECTION, true)

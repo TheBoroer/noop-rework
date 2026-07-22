@@ -239,6 +239,18 @@ interface WhoopDao : DeviceRegistryDao {
     suspend fun updateSleepStages(deviceId: String, detectedStartTs: Long, stagesJSON: String): Int
 
     /**
+     * Force variant of [updateSleepStages] for the stager-version rollout
+     * ([com.noop.analytics.SleepStageHealer.forceRestageAll]): rewrites the stage breakdown of ANY
+     * session — edited or not — leaving bounds, flags and the per-epoch columns untouched. Keyed by
+     * the IMMUTABLE detected primary key. Returns rows changed.
+     */
+    @Query(
+        "UPDATE sleepSession SET stagesJSON = :stagesJSON " +
+            "WHERE deviceId = :deviceId AND startTs = :detectedStartTs"
+    )
+    suspend fun forceUpdateSleepStages(deviceId: String, detectedStartTs: Long, stagesJSON: String): Int
+
+    /**
      * v18 (H8): write the per-epoch motion magnitudes (compact JSON array) for one session, banked beside
      * `stagesJSON` on the same row. Keyed by the IMMUTABLE detected key (deviceId, startTs). `null` clears
      * the column (no series). Port of iOS WhoopStore.persistSessionMotion (the repository encodes the array).

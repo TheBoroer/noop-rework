@@ -394,6 +394,13 @@ class WhoopRepository(private val dao: WhoopDao) {
     suspend fun updateSleepStages(deviceId: String, detectedStartTs: Long, stagesJSON: String): Int =
         dao.updateSleepStages(deviceId, detectedStartTs, stagesJSON)
 
+    /** Force variant of [updateSleepStages] for the stager-version rollout
+     *  ([com.noop.analytics.SleepStageHealer.forceRestageAll]): rewrites ANY session's stage
+     *  breakdown — edited or not — never the bounds or the userEdited flag. Keyed by the IMMUTABLE
+     *  detected [detectedStartTs]. Returns rows changed. */
+    suspend fun forceUpdateSleepStages(deviceId: String, detectedStartTs: Long, stagesJSON: String): Int =
+        dao.forceUpdateSleepStages(deviceId, detectedStartTs, stagesJSON)
+
     // MARK: - Per-epoch sleep analytics (v18: motionJSON / sleepStateJSON). Banked beside stagesJSON on
     // the sleepSession row; written/read through targeted methods so the @Upsert recompute/import path
     // (which never names these columns) preserves them. Port of iOS WhoopStore.persist/sessionMotion +
