@@ -1,0 +1,18 @@
+[tools]
+java = "temurin-17"
+
+[tasks.dev]
+description = "Watch sources, auto-deploy + relaunch on device. Args: [device-serial]"
+run = "Tools/dev.sh"
+
+[tasks.adbinstall]
+description = "One-shot incremental installDebug + relaunch"
+run = """
+./gradlew :app:installDebug
+adb shell am force-stop com.noop.whoop.rework.debug
+adb shell monkey -p com.noop.whoop.rework.debug 1
+"""
+
+[tasks.test]
+description = "JVM unit tests (shared + app)"
+run = "./gradlew :shared:testDebugUnitTest :app:testDebugUnitTest"
