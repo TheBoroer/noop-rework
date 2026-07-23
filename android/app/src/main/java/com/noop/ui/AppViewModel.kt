@@ -301,8 +301,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The active strap source id (raw streams + imported history live under this). Resolved once at
      *  startup from the device registry (see [NoopApplication.activeDeviceId]); falls back to the
-     *  legacy "my-whoop", so behaviour is unchanged today. */
-    private val deviceId = noopApp.activeDeviceId
+     *  legacy "my-whoop", so behaviour is unchanged today. Public (not private) so the Today screen's
+     *  workout union can follow a re-paired strap's fresh "whoop-<id>" instead of stranding its
+     *  recordings under a read pinned to the literal "my-whoop" (#814 twin of the Workouts screen;
+     *  #200/upstream 2bc1ce0f). */
+    val deviceId = noopApp.activeDeviceId
 
     /** Live connection + biometric snapshot, surfaced straight from the BLE client. */
     val live: StateFlow<LiveState> = ble.state

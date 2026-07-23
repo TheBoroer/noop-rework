@@ -337,7 +337,25 @@ for our tree, at the risk level it actually carries:
   saved id to the active strap id — rework's exclusion union reads `AUTO_DETECT_DEVICE`
   ("my-whoop"), so keeping the saved id as-is is what keeps save→exclusion consistent
   here (upstream itself noted visibility was never the bug). App suite green.
-- [ ] Latest Workouts dedupe / multi-source (#200)
+- [x] Latest Workouts dedupe / multi-source (#200): `2bc1ce0f` ported (the `c26ba31e`
+  bucket-by-sport perf follow-up not needed — rework's `dedupCrossSource` already carries
+  the O(n) bucketing). All four pieces:
+  - Cross-source dedup at the shared seam: `workoutsAllSources` now runs
+    `WorkoutEditing.dedupCrossSource` over the union, so a live strap recording and its
+    thin Health Connect import collapse to the richer row (no duplicate feed card, no
+    doubled HR-trend glyph).
+  - Active-strap union (#814 twin): the seam takes `viewModel.deviceId` (made public) and
+    reads `workoutsUnion(activeId)` instead of the literal `"my-whoop"`, so a re-paired
+    strap's fresh `whoop-<id>` recordings aren't stranded; the footer's Whoop pill count
+    switched to the same union. The footer signature now folds in the 14-day union so an
+    HC import that doesn't touch Whoop day summaries refreshes the feed immediately.
+  - Missing HC sport types: 24 racket/team/misc types added to `ExerciseTypes.NAMES`
+    (rework's single source of truth — upstream's map was elsewhere; rework already had
+    volleyball/tennis/etc so only the truly-absent ones were added, sentence-case labels).
+  - Feed: single-column newest-4 via the pure `lastWorkoutsFeed` contract; header renamed
+    "Last Workouts" → "Latest Workouts". `LastWorkoutsFeedTest` (3, upstream verbatim —
+    `WorkoutRow` constructor matches exactly). App suite green; shared 1663/1667 (the 4
+    pre-existing locale fails).
 - [ ] Imported rides count toward Effort (#137)
 - [ ] Manual workouts get HR + calories (#510)
 - [ ] Journal import "answered yes" header fix (#631)

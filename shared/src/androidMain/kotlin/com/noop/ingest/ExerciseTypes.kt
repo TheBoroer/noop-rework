@@ -45,6 +45,34 @@ object ExerciseTypes {
         // Snow sports have a route, so they default GPS on (see DISTANCE_TYPES). (#768)
         EX.EXERCISE_TYPE_SKIING to "Skiing",
         EX.EXERCISE_TYPE_SNOWBOARDING to "Snowboarding",
+        // #200 (upstream 2bc1ce0f): racket / team / misc sports that were missing from the map
+        // (found upstream via a volleyball session importing as a generic "Workout"): an untitled
+        // session of any type below used to lose its sport identity even though the record itself
+        // imported fine. Labels follow this file's sentence-case convention.
+        EX.EXERCISE_TYPE_HANDBALL to "Handball",
+        EX.EXERCISE_TYPE_ICE_HOCKEY to "Ice hockey",
+        EX.EXERCISE_TYPE_ROLLER_HOCKEY to "Roller hockey",
+        EX.EXERCISE_TYPE_FOOTBALL_AMERICAN to "Football",
+        EX.EXERCISE_TYPE_FOOTBALL_AUSTRALIAN to "Football",
+        EX.EXERCISE_TYPE_RUGBY to "Rugby",
+        EX.EXERCISE_TYPE_CRICKET to "Cricket",
+        EX.EXERCISE_TYPE_SOFTBALL to "Softball",
+        EX.EXERCISE_TYPE_WATER_POLO to "Water polo",
+        EX.EXERCISE_TYPE_FENCING to "Fencing",
+        EX.EXERCISE_TYPE_GYMNASTICS to "Gymnastics",
+        EX.EXERCISE_TYPE_CALISTHENICS to "Calisthenics",
+        EX.EXERCISE_TYPE_EXERCISE_CLASS to "Exercise class",
+        EX.EXERCISE_TYPE_BOOT_CAMP to "Boot camp",
+        EX.EXERCISE_TYPE_STAIR_CLIMBING to "Stair climbing",
+        EX.EXERCISE_TYPE_STAIR_CLIMBING_MACHINE to "Stair climbing",
+        EX.EXERCISE_TYPE_SNOWSHOEING to "Snowshoeing",
+        EX.EXERCISE_TYPE_ICE_SKATING to "Skating",
+        EX.EXERCISE_TYPE_SKATING to "Skating",
+        EX.EXERCISE_TYPE_SURFING to "Surfing",
+        EX.EXERCISE_TYPE_PADDLING to "Paddling",
+        EX.EXERCISE_TYPE_SAILING to "Sailing",
+        EX.EXERCISE_TYPE_SCUBA_DIVING to "Diving",
+        EX.EXERCISE_TYPE_FRISBEE_DISC to "Frisbee",
         EX.EXERCISE_TYPE_OTHER_WORKOUT to "Other",
     )
 
