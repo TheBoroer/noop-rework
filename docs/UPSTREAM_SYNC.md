@@ -316,7 +316,14 @@ for our tree, at the risk level it actually carries:
     survival dwell (`RECONNECT_HEALTHY_DWELL_MS`), so a contended band escalates to
     PASSIVE autoConnect instead of hammering DIRECT. `BackfillPolicyTest` (7, upstream's
     exact parity fixtures). App suite green.
-- [ ] Health Connect on Android 13 (#226)
+- [x] Health Connect on Android 13 (#226): `1f299e16` applied — rework's manifest carried the
+  exact same wrong rationale action (`androidx.health.connect.action.SHOW_PERMISSIONS_RATIONALE`,
+  neither the API-33 nor API-34 form), so the standalone Android-13 HC APK never enumerated
+  NOOP in "App permissions" (absent from Allowed AND Denied — no way to grant, no HC import).
+  Fixed to the legacy `androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE` the ≤API-33 APK
+  discovers by. Android 14+ (platform HC) was already correct via the
+  `ViewPermissionUsageActivity` alias, as were the healthdata `<queries>`. Manifest-only,
+  upstream-verified fix; `assembleDebug` green.
 - [ ] Auto-detected workouts save on Android (#214)
 - [ ] Latest Workouts dedupe / multi-source (#200)
 - [ ] Imported rides count toward Effort (#137)
