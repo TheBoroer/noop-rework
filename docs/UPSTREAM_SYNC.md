@@ -457,10 +457,18 @@ for our tree, at the risk level it actually carries:
 
 ## Docs worth grabbing cheaply
 
-- [ ] `docs/DEVICE_DRIVER_ARCHITECTURE.md` (new, 217 lines)
-- [ ] `docs/RR-OPTIMIZATION.md` (new)
-- [ ] Updated `docs/PROTOCOL.md`, `docs/BLE_REVERSE_ENGINEERING.md`,
-  `docs/WHOOP5_DEEP_DATA.md`, `docs/PRIVACY_SECURITY.md`
+- [x] `docs/DEVICE_DRIVER_ARCHITECTURE.md` (new, 217 lines) — grabbed verbatim (no local
+  counterpart; zero references to upstream-only features like the raw-IMU decoder).
+- [x] `docs/RR-OPTIMIZATION.md` (new, 69 lines) — grabbed verbatim.
+- [x] `docs/WHOOP5_DEEP_DATA.md` — took upstream's 175-line version wholesale: it carries
+  the same 16-flag/`enable_sig12` correction our f5f64977 port had noted locally (equivalent
+  wording) PLUS the new ~80-line "Why SpO₂ isn't available on 5.0" section (the #623 FAQ +
+  the `spo2_candidate_82` split-evidence status).
+- [x] `docs/PROTOCOL.md` / `docs/BLE_REVERSE_ENGINEERING.md` / `docs/PRIVACY_SECURITY.md` —
+  **deliberately NOT replaced.** Diverged BOTH ways (23/26/52 rework-only lines
+  respectively — real local content, not just staleness), so a wholesale grab would clobber
+  it. These need a section-by-section manual merge if wanted; not a cheap grab, closing the
+  item honestly rather than destructively.
 
 ---
 

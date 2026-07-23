@@ -60,7 +60,9 @@ bytes, the value byte (an ASCII `'1'`/`'2'`) at offset 32, then 7 zeros. The exa
 values, is in [`Whoop5Config.swift`](../Packages/WhoopProtocol/Sources/WhoopProtocol/Whoop5Config.swift)
 and [`Whoop5Config.kt`](../android/app/src/main/java/com/noop/protocol/Whoop5Config.kt), golden-tested on
 both platforms. `enable_r22_packets` is the one that opens the type-`0x2F` biometric stream; the rest
-tune channel selection, wear detection and sleep behaviour.
+tune channel selection, wear detection and sleep behaviour. Flags 1–15 come from judes.club's
+frame-builder; the 16th, `enable_sig12`, was added from a real on-strap HCI capture ([#103](https://github.com/ryanbr/noop/issues/103))
+that otherwise reproduced flags 1–15 byte-for-byte in this order.
 
 ## How NOOP uses it (opt-in, reversible)
 
@@ -68,8 +70,7 @@ tune channel selection, wear detection and sleep behaviour.
   *writes* to the strap.
 - A manual **"Send enable sequence to strap"** button (not auto-run on connect), enabled only when a
   5/MG is **bonded and worn** (the R22 stream is on-wrist gated).
-- The 16 flags (judes.club's 15 + the `enable_sig12` flag from a real capture, #103) are written
-  with-response, ~80 ms apart.
+- The 16 flags are written with-response, ~80 ms apart.
 - It's **reversible** — it only changes which data the strap chooses to emit — and is the same thing the
   official app does on every connect.
 - **iOS / Android only on real hardware:** macOS CoreBluetooth can't complete the authenticated SMP bond
@@ -88,6 +89,75 @@ tune channel selection, wear detection and sleep behaviour.
 - **The decode of what comes back is the next step.** Once a tester confirms deep records start arriving,
   we map the type-`0x2F` layout (documented as HR @ byte 14, accel x/y/z float32 @ 37/41/45) and feed the
   motion into NOOP's existing v25-style sleep stager.
+
+## Why SpO₂ (and the raw respiration track) aren't available on 5.0
+
+This is the single most common "is it broken?" report (e.g. [#623](https://github.com/ryanbr/noop/issues/623)),
+so the reasoning in one place:
+
+**It is not an encryption problem.** NOOP decodes the entire 5.0 (v18) record in plaintext — HR, R-R,
+sleep, and the whole optical tail. Nothing on the wire is hidden behind a cipher NOOP would need a key
+for. The barrier is that the SpO₂ data simply isn't *in* the stream in a usable form:
+
+- **No *confirmed* SpO₂ field on the 5.0 wire — but there is now a candidate.** The raw optical tail
+  (`@106` baseline, `@108/@109` amplitude pair, `@113` float) was checked against WHOOP-app SpO₂ across
+  18,602 real records — it does not match; those channels track HR/motion, and there is no identifiable
+  red/IR pair. Pulse oximetry fundamentally needs two wavelengths; the 5.0's decodable stream doesn't
+  expose them (the v26 PPG waveform is single-channel, HR only). However, a decompile-sourced decode
+  ([#103](https://github.com/ryanbr/noop/issues/103)) reads v18 byte `@82` as a **strap-computed SpO₂ %
+  scalar** (tri-mode: 70–100 = real %, bit-7 = saturation sentinel, other sub-70 = diagnostic code;
+  sleep-only). The evidence is currently **split**: an 8-night independent validation with real spread
+  (corr +0.99, ~0.4 %/night) clears the cross-night bar, but the two nights checked on the original #103
+  capture device moved *opposite* to the app value — unresolved device/firmware variance or an extraction
+  error on one side. NOOP therefore decodes `@82` as `spo2_candidate_82` (deep-timeline instrumentation
+  only, in-band values only) so more devices can correlate it against the app's nightly SpO₂; it does
+  **not** populate `spo2Pct` or any card/score until the contradiction is resolved.
+- **A calibrated % needs WHOOP's proprietary curve.** Even where raw optical exists, turning a red/IR
+  ratio into a real SpO₂ % requires a device-specific calibration NOOP does not have — and NOOP will not
+  fabricate one from unvalidated optical (the withdrawn #194 PPG→HR estimate is the cautionary
+  precedent). `spo2Pct` is therefore nulled for *every* WHOOP; only an import writes it.
+
+**WHOOP 4.0 differs.** The 4.0 **v24** historical layout *does* bank raw SpO₂ channels (`spo2_red@68` /
+`spo2_ir@70`), so NOOP decodes the raw red/IR there (still not a calibrated %). The 5.0's v18 layout
+dropped those channels — most likely SpO₂ moved to a value computed on-device / in WHOOP's cloud rather
+than banked in the offload NOOP reads. NOOP reverse-engineers what the strap actually sends; if a
+decodable SpO₂ isn't sent, there is nothing to decode, plaintext or not.
+
+**Respiration is a partial exception.** The 5.0 sends no raw respiration ADC stream either (also
+4.0-v24-only), so the deep-timeline *track* is empty — but respiration is still estimated on-device from
+the R-R interval stream (RSA) and shown on the Health screen when enough overnight R-R is captured.
+
+**To see SpO₂ in NOOP on a 5.0:** import it. A WHOOP data export carries `blood_oxygen_pct`, and Health
+Connect import works too — both populate the Blood Oxygen card with WHOOP's own computed values.
+
+**Could it ever change?** Only via research, not decryption — and the `@82` candidate above is exactly
+that research in progress. What would flip it to a real reading: the `spo2_candidate_82` nightly values
+tracking the WHOOP app's own SpO₂ across many nights on **multiple devices** (a varying signal, not one
+coincidental match), including on the device where the two checked nights currently move opposite.
+Until that clears the bar, SpO₂ stays import-only on the 5.0.
+
+## Mapping the layout — ground-truth correlation
+
+An HCI capture on its own is a pile of un-labelled bytes. The fast way to label them is *known
+plaintext*: a tester's own **WHOOP data export** (app.whoop.com → Data Export) lists the official
+per-night values — HRV, resting HR, skin temperature, SpO₂, respiratory rate — for exactly the nights
+in the capture. Searching each record type for the byte offset + encoding that reproduces those known
+values across every night pins the field without guesswork.
+
+Two stdlib tools in [`Tools/linux-capture/`](../Tools/linux-capture/) do this:
+
+- **`hci_extract.py`** converts a phone HCI log (iOS `.pklg` / Android `btsnoop_hci.log`) of the
+  official app into the project's `capture.json` frame format — so an official-app full-sync capture
+  feeds the same decoder as a Linux capture. It keeps only CRC-valid WHOOP frames.
+- **`correlate_ground_truth.py`** cross-references those frames against the CSV export and reports
+  candidate `(record type, offset, encoding, scale)` tuples, requiring both breadth and a
+  distribution match so constants and coincidences don't score.
+
+Crucially this is **privacy-preserving**: both tools run locally and the correlation output is only
+offsets/encodings, never health values — so a 5/MG owner can contribute a confirmed field mapping to
+[#103](https://github.com/ryanbr/noop/issues/103) without posting their capture or their data export.
+A mapped offset still follows the project rule — *real captures, never invented offsets* — before it
+lands in `parseFrameWhoop5` / `whoop_protocol.json`.
 
 ## How to help (5.0 / MG owners)
 
