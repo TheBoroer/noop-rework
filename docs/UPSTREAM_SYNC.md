@@ -388,7 +388,15 @@ for our tree, at the risk level it actually carries:
   in the Workouts test-mode trace. `IntelligenceEngineWorkoutBackfillTest` (3, upstream
   verbatim, in shared androidUnitTest). Shared 1667/1671 (the 4 pre-existing locale fails);
   app suite green.
-- [ ] Journal import "answered yes" header fix (#631)
+- [x] Journal import "answered yes" header fix (#631): `348a87d7` applied — rework's
+  `WhoopCsvImporter.parseJournal` had the identical bug: the answer column was looked up
+  only as `answered_yes_no` / `answer` / `answer_text` (NOOP's own exporter's header), but a
+  REAL WHOOP export names the column "Answered yes" → `answered_yes`, which never matched —
+  every imported journal answer silently read false ("Without" in Insights) regardless of
+  what the account actually answered. `answered_yes` added as the FIRST candidate key;
+  regression test `importedJournalReadsRealWhoopAnsweredYesHeader` with the reporter's real
+  header + TRUE/FALSE casing. (Upstream's #682 never-asked-vs-no partition is a separate
+  issue, untouched here, matching upstream's own scoping.) Shared suite green.
 - [ ] Smart wake alarm arms more reliably (#34)
 - [ ] Sleep times/totals read right after an edit (#259)
 - [ ] Automatic sync no longer stalls (#266)
