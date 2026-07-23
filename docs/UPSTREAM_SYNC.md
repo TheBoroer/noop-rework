@@ -98,9 +98,22 @@ Fixes stuck backfills. Lands in shared BLE stack (`BleSession`, `HistoricalStrea
 `CommandChannel`) — we have GET_CLOCK, no retry/fallback.
 
 ### 6. WHOOP protocol decoder fixes
-- [ ] `80da3bca` v20 (2140 B) historical decoder sample count 50 → 25 (#545) —
-  data-loss/corruption class
-- [ ] `f5f64977` `Whoop5Config`: enable_sig12 value is ASCII '1' (0x31) (#522)
+- [x] `80da3bca` v20 (2140 B) historical decoder sample count 50 → 25 (#545) —
+  **N/A (Swift-only).** The fix corrects `Interpreter.swift`'s v20 decoder; the
+  Kotlin side has no v20 historical decoder at all — `HistoricalStreams.kt:280`
+  is `if (version != 18) return null`, byte-identical to upstream Android. Nothing
+  to port until a Kotlin v20 decoder is deliberately added (upstream flags that as
+  its own decision). No-op.
+- [x] `f5f64977` `Whoop5Config`: enable_sig12 value is ASCII '1' (0x31) (#522) —
+  ported into `shared/.../protocol/Whoop5Config.kt`, carrying the #103 rider it
+  depends on. This fork forked at `e19db18` (before upstream #103 `e532929a`), so
+  `enableR22Sequence` had only the 15 judes.club flags — the 16th flag `enable_sig12`
+  was never present. Added it at the CORRECTED value (0x31) in one step, so the
+  strap's on-connect enable burst now matches the official app's real capture.
+  `Whoop5ConfigTest` bumped 15→16 (asserts last flag `enable_sig12` == 0x31);
+  `CommandChannelTest` picks up the extra planned SET_CONFIG via `.size` (no change).
+  `WHOOP5_DEEP_DATA.md` "15 flags" write-burst line updated to 16. Green JVM +
+  iosSimulatorArm64.
 - [ ] `79600cc4` v20 optical: RawImu length-gate parity + RE evidence (#546 → #577)
 - [ ] `e56f45ca` persist the WHOOP 5/MG raw-IMU offload buffer (#423) (#675)
 - [ ] Steal upstream's `android/app/src/test/resources/decoder_oracle.json` additions as
