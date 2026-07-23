@@ -199,9 +199,29 @@ for our tree, at the risk level it actually carries:
 
 ## MEDIUM — worth it, more integration work
 
-- [ ] Faster history sync (#533): `5b1b31d5` offload connection-priority toggle,
-  `73972540` experimental LE 2M PHY preference (#537), `64bb9e33` raise backfill
-  auto-continue cap so a deep backlog drains in one connection (#594)
+- [x] Faster history sync (#533): all three commits ported.
+  - `5b1b31d5` offload connection-priority toggle — rework never got upstream #477's
+    dormant plumbing, so this is the minimal combined port: `GattOps.
+    requestConnectionPriorityCompat` + pure decision twins `offloadPriorityOnBegin`/
+    `offloadPriorityOnRelease` (companion, `shouldTeardownOnGattThrow` pattern), HIGH at
+    `beginBackfill`, BALANCED at `exitBackfilling`/retry, release-on-toggle-off edge
+    (upstream's re-review catch), flag cleared on teardown (no BLE op). Behind
+    `PuffinExperiment.fastHistorySync` (default OFF — default path zero-BLE-op), Settings
+    toggle in the every-model Diagnostics card. `ConnectionPriorityTest` (6) green.
+  - `73972540` LE 2M PHY preference (#537) — `GattOps.setPreferredPhyCompat` + pure
+    `preferredPhyMaskOnBegin` (always 1M|2M, never 2M alone) / `preferredPhyMaskOnRelease`
+    (1M, only if requested) / `phyLabel`; requested at offload START (not connect — the
+    handshake-fragility rule, #85/#50), released ONLY on the Settings on→off edge (a PHY
+    persists once negotiated), `onPhyUpdate` logs the negotiated PHY. Separate
+    `PuffinExperiment.fastLinkPhy` toggle (opposite battery profile from the interval
+    lever; the two stack). Android-only by necessity (CoreBluetooth has no app-side PHY
+    API). `PreferredPhyTest` (6) green.
+  - `64bb9e33` auto-continue cap 6 → 24 (#594) — `MAX_AUTO_CONTINUES = 24` with upstream's
+    rationale comment; `BackfillContinuationTest` multi-pass drain made cap-relative
+    (cap + 5 days) + new `continues_pastOldSixCap_onDeepBacklog` regression. TUNABLE,
+    needs on-strap validation.
+  All NOT hardware-validated (no strap here) — opt-in toggles ship to collect field
+  reports, matching upstream's own posture.
 - [ ] Strap model / skin-temp seeding (#716): `83e722f8` set modelStamped before launch,
   `bd7e7f1a` Android parity + skip repeated DB reads — Android-side commit likely
   near-cherry-pickable

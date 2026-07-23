@@ -266,6 +266,15 @@ interface GattOps {
     fun requestMtuCompat(mtu: Int): Boolean
     fun readRemoteRssiCompat(): Boolean
     fun discoverServicesCompat(): Boolean
+
+    /** #533: GATT connection-priority request (HIGH for the offload burst / BALANCED to release).
+     *  Routed through [GattOps] like every other call that can throw on a dead binder. */
+    fun requestConnectionPriorityCompat(priority: Int): Boolean
+
+    /** #533: ask the controller to prefer a PHY for this link. Mirrors `BluetoothGatt.setPreferredPhy`,
+     *  which is VOID and fire-and-forget: the real outcome arrives on `onPhyUpdate`, and the peer can
+     *  decline. Masks (not single values) so the controller may fall back. API 26 = our minSdk. */
+    fun setPreferredPhyCompat(txPhy: Int, rxPhy: Int, phyOptions: Int)
 }
 
 /**
@@ -316,6 +325,10 @@ class RealGattOps(private val gatt: BluetoothGatt) : GattOps {
     override fun requestMtuCompat(mtu: Int): Boolean = gatt.requestMtu(mtu)
     override fun readRemoteRssiCompat(): Boolean = gatt.readRemoteRssi()
     override fun discoverServicesCompat(): Boolean = gatt.discoverServices()
+    override fun requestConnectionPriorityCompat(priority: Int): Boolean =
+        gatt.requestConnectionPriority(priority)
+    override fun setPreferredPhyCompat(txPhy: Int, rxPhy: Int, phyOptions: Int) =
+        gatt.setPreferredPhy(txPhy, rxPhy, phyOptions)
 }
 
 class AndroidWhoopBleClient(
@@ -693,6 +706,62 @@ class AndroidWhoopBleClient(
         }
 
         /**
+         * #533 pure decision: the GATT connection-priority request to issue when an offload burst
+         * BEGINS, or null for no BLE op at all. Only the user's opt-in ("Faster history sync",
+         * default OFF) turns this on — the default path must stay byte-for-byte zero-BLE-op.
+         * Instance-free twin of [escalateOffloadPriorityIfEnabled] so the policy is unit-testable
+         * without a live GATT stack (same pattern as [shouldTeardownOnGattThrow]).
+         */
+        fun offloadPriorityOnBegin(optedIn: Boolean): Int? =
+            if (optedIn) BluetoothGatt.CONNECTION_PRIORITY_HIGH else null
+
+        /**
+         * #533 pure decision: the request to issue when the burst ENDS or the Settings toggle flips
+         * off, or null for no BLE op. Release hands the link back to BALANCED but ONLY if this
+         * session actually escalated — releasing an un-escalated link would issue a spurious BLE op
+         * on every offload end for every default-config user, and the upstream re-review catch was
+         * exactly the inverse bug (toggle-off leaving a pinned link at HIGH for hours under
+         * "Keep connected in the background").
+         */
+        fun offloadPriorityOnRelease(escalated: Boolean): Int? =
+            if (escalated) BluetoothGatt.CONNECTION_PRIORITY_BALANCED else null
+
+        /**
+         * #533 (upstream 73972540) pure decision: the PHY mask to request when an offload burst
+         * BEGINS, or null for no BLE op (the default). The mask ALWAYS includes 1M, never 2M alone:
+         * it is a preference, and keeping 1M lets the controller fall back rather than cling to a 2M
+         * link gone marginal (2M trades range for speed). Requested at offload START, not on connect,
+         * on purpose: the connect handshake is fragile — an extra GATT op before requestMtu can make
+         * it return false, which skips the MTU bump and caps the very offload this is meant to speed
+         * up (#85/#50).
+         */
+        fun preferredPhyMaskOnBegin(optedIn: Boolean): Int? =
+            if (optedIn) android.bluetooth.BluetoothDevice.PHY_LE_1M_MASK or
+                android.bluetooth.BluetoothDevice.PHY_LE_2M_MASK
+            else null
+
+        /**
+         * #533 pure decision: the mask to request on the Settings toggle's on→off edge, or null for
+         * no BLE op. A PHY PERSISTS once negotiated — turning the toggle off must release an
+         * already-2M link back to 1M NOW (the toggle's own copy tells the user to switch it off if
+         * syncing goes flaky at range, which is exactly when 2M is the suspect). Only issues an op if
+         * this link actually requested 2M; every other transition (notably the default launch path)
+         * stays zero-BLE-op.
+         */
+        fun preferredPhyMaskOnRelease(requested: Boolean): Int? =
+            if (requested) android.bluetooth.BluetoothDevice.PHY_LE_1M_MASK else null
+
+        /** #533: human label for an `onPhyUpdate` value — the only way to learn whether WHOOP
+         *  supports 2M at all, next to the offload's session timestamps for a before/after
+         *  records/sec comparison. */
+        fun phyLabel(phy: Int): String = when (phy) {
+            android.bluetooth.BluetoothDevice.PHY_LE_1M -> "1M"
+            android.bluetooth.BluetoothDevice.PHY_LE_2M -> "2M"
+            android.bluetooth.BluetoothDevice.PHY_LE_CODED -> "coded"
+            else -> "unknown($phy)"
+        }
+
+        /**
          * The LiveState the teardown path publishes after the link drops (#314). Pure model of the
          * `connected = false` + biometrics-cleared transition so a test can assert the UI flips to
          * disconnected without a live instance. Mirrors what `handleDisconnect` applies via
@@ -814,9 +883,16 @@ class AndroidWhoopBleClient(
         }
 
         /** #364 auto-continue cap: consecutive immediate re-kicks per connection before falling back to
-         *  the 900s periodic timer. 6 × ~60s ≈ 6 min of back-to-back draining without letting a
-         *  misbehaving strap monopolise Bluetooth. Mirrors Swift BackfillContinuation.defaultMaxAutoContinues. */
-        const val MAX_AUTO_CONTINUES = 6
+         *  the 900s periodic timer. Guards 1-3 in [shouldAutoContinue] (healthy link, genuine backlog,
+         *  advancing trim, plus the #928/#1012 future-clock exclusion) already stop the pathological cases;
+         *  this cap is only the backstop against a strap that advances its trim but never advances OUR
+         *  frontier (a data-shape spin). #533/#594: at 6, a WELL-BEHAVED deep backlog hit the cap and got
+         *  throttled to the 15-min floor mid-drain (~9s bursts, 15-20 min apart, 95% waiting), so recent
+         *  nights landed hours after waking (which surfaced as a false sleep-detection bug in #515). Raised
+         *  so a typical deep backlog drains in ONE connection: 24 productive passes (~10-15s each) ≈ a few
+         *  minutes of back-to-back draining; the ~24-min backstop only ever bites the rare data-shape spin.
+         *  Mirrors Swift BackfillContinuation.defaultMaxAutoContinues. TUNABLE — needs on-strap validation. */
+        const val MAX_AUTO_CONTINUES = 24
 
         /** #364 "more backlog remains" margin (seconds): how far ahead the strap must be of our persisted
          *  data frontier before we treat it as behind, not clock noise. Matches the Swift
@@ -869,8 +945,8 @@ class AndroidWhoopBleClient(
          * #1012: a FUTURE-dated [strapNewestTs] (more than [futureSkewSeconds] past the wall clock, #928)
          * not only nulls guard 2a — it also STOPS guard 2b. A future-clock strap banks future-dated
          * records, so the rows it hands over are future-timestamped too and "real rows persisted" is no
-         * evidence of genuine backlog; 2b would chase the future-dated range through the whole cap (six
-         * back-to-back passes, each to its idle timeout — the reported ~15-min sync). The stale/PAST-epoch
+         * evidence of genuine backlog; 2b would chase the future-dated range through the whole cap (every
+         * consecutive pass back-to-back, each to its idle timeout — the reported ~15-min sync). The stale/PAST-epoch
          * case 2b actually exists for (#451) reads BEHIND the frontier, never future-dated, so it is
          * untouched.
          */
@@ -1348,6 +1424,16 @@ class AndroidWhoopBleClient(
     /** True while a historical offload is in progress (offload frames route to the AndroidBackfiller). */
     @Volatile
     private var backfilling = false
+    /** #533: true while THIS link is pinned at CONNECTION_PRIORITY_HIGH for the offload burst.
+     *  Release only ever issues a BLE op when this is set, so the default (toggle off) path stays
+     *  byte-for-byte zero-BLE-op. Cleared on disconnect/teardown (the stack forgets the request
+     *  with the link, no release op needed there). */
+    private var offloadPriorityEscalated = false
+    /** #533 (73972540): true while THIS link has a 2M PHY preference requested. Unlike the priority
+     *  flag this is NOT cleared at burst end — a PHY persists once negotiated, so only the Settings
+     *  on→off edge releases it (back to 1M). Cleared on disconnect/teardown (the preference dies
+     *  with the link, no release op needed there). */
+    private var preferredPhyRequested = false
     /** Chunks acked this offload session — feeds LiveState.syncChunksThisSession (throttled). Only
      *  touched on the serial backfill drain coroutine + the begin/exit lifecycle. */
     private var ackedChunksThisSession = 0
@@ -3016,6 +3102,15 @@ class AndroidWhoopBleClient(
             if (status == BluetoothGatt.GATT_SUCCESS) log("Signal: RSSI $rssi dBm")
         }
 
+        override fun onPhyUpdate(g: BluetoothGatt, txPhy: Int, rxPhy: Int, status: Int) {
+            // #533 (73972540): log the PHY the controller ACTUALLY negotiated — the only way to learn
+            // whether WHOOP supports 2M at all. Lands next to the offload's existing session
+            // timestamps + "persisted N rows", so records/sec is measurable from a before/after log
+            // with no new instrumentation. Fires only when a PHY changes (or a request resolves), so
+            // the default path adds zero log noise.
+            log("PHY: tx=${phyLabel(txPhy)} rx=${phyLabel(rxPhy)} (status=$status)")
+        }
+
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -4388,6 +4483,70 @@ class AndroidWhoopBleClient(
      * [0x00] (the Mac ground-truth offload uses [0x00] too). Plain offload — the strap streams
      * HISTORY_START -> type-47 records -> HISTORY_END (acked) ... -> HISTORY_COMPLETE.
      */
+    /** #533: escalate the link to CONNECTION_PRIORITY_HIGH for the offload burst, if the user
+     *  opted in (Settings → Experimental → "Faster history sync", default OFF). Pref read fresh
+     *  per session. Routed through [GattOps]/[safeGatt] like every other dead-binder-capable op. */
+    private fun escalateOffloadPriorityIfEnabled() {
+        val priority = offloadPriorityOnBegin(PuffinExperiment.from(context).fastHistorySync) ?: return
+        val ops = gattOps ?: return
+        val ok = safeGatt("requestConnectionPriority(HIGH)") {
+            ops.requestConnectionPriorityCompat(priority)
+        }
+        if (ok) {
+            offloadPriorityEscalated = true
+            log("Backfill: connection priority → HIGH for the offload burst (#533)")
+        }
+    }
+
+    /** #533: hand the link back to CONNECTION_PRIORITY_BALANCED. Only issues a BLE op if THIS
+     *  session actually escalated — the default path stays zero-BLE-op. */
+    private fun releaseOffloadPriorityIfEscalated() {
+        val priority = offloadPriorityOnRelease(offloadPriorityEscalated) ?: return
+        offloadPriorityEscalated = false
+        val ops = gattOps ?: return
+        safeGatt("requestConnectionPriority(BALANCED)") {
+            ops.requestConnectionPriorityCompat(priority)
+        }
+        log("Backfill: connection priority → BALANCED (offload burst over)")
+    }
+
+    /** #533 (upstream re-review catch): called on the Settings toggle's on→off edge. Without this,
+     *  turning the experiment off only stops FUTURE escalations and leaves a link already pinned at
+     *  HIGH there until the next reconnect — "Keep connected in the background" can hold that link
+     *  open for hours, so the user who turned it off to save battery would keep paying for it.
+     *  Every other transition issues nothing. */
+    fun releaseOffloadPriorityOnToggleOff() {
+        releaseOffloadPriorityIfEscalated()
+    }
+
+    /** #533 (73972540): request the LE 2M PHY preference for the offload burst, if the user opted in
+     *  (Settings → "Prefer 2M Bluetooth", default OFF). Fire-and-forget: `setPreferredPhy` is void,
+     *  the peer can decline, and the real outcome lands on [onPhyUpdate]'s log line. Pref read fresh
+     *  per session, like the priority gate. */
+    private fun applyPreferredPhyIfEnabled() {
+        val mask = preferredPhyMaskOnBegin(PuffinExperiment.from(context).fastLinkPhy) ?: return
+        val ops = gattOps ?: return
+        safeGatt("setPreferredPhy(1M|2M)") {
+            ops.setPreferredPhyCompat(mask, mask, android.bluetooth.BluetoothDevice.PHY_OPTION_NO_PREFERRED)
+            true
+        }
+        preferredPhyRequested = true
+        log("Backfill: requested LE 2M PHY preference for the offload burst (#533)")
+    }
+
+    /** #533: Settings on→off edge for "Prefer 2M Bluetooth". A PHY persists once negotiated, so
+     *  release an already-2M link back to 1M NOW; every other transition issues nothing. */
+    fun releasePreferredPhyOnToggleOff() {
+        val mask = preferredPhyMaskOnRelease(preferredPhyRequested) ?: return
+        preferredPhyRequested = false
+        val ops = gattOps ?: return
+        safeGatt("setPreferredPhy(1M)") {
+            ops.setPreferredPhyCompat(mask, mask, android.bluetooth.BluetoothDevice.PHY_OPTION_NO_PREFERRED)
+            true
+        }
+        log("Backfill: released PHY preference back to 1M (#533 toggle off)")
+    }
+
     private fun beginBackfill() {
         if (!connectHandshakeDone) {
             log("Backfill: deferred — connect handshake not done yet")
@@ -4405,6 +4564,14 @@ class AndroidWhoopBleClient(
         offloadFramesThisSession = 0
         historicalKickSent = false
         _state.update { it.copy(backfilling = true, syncChunksThisSession = 0) }
+        // #533 (upstream 5b1b31d5): opt-in offload-burst escalation. The burst is bounded
+        // (HISTORY_COMPLETE / idle timeout) and bandwidth-hungry, so a shorter connection interval
+        // moves the same bytes in less radio-on wall-clock. Pref read fresh per session, like the
+        // capture gate above. Default off: zero BLE op, today's behaviour byte-for-byte.
+        escalateOffloadPriorityIfEnabled()
+        // #533 (73972540): opt-in LE 2M PHY preference — the same bytes in half the air-time. The two
+        // levers are orthogonal and stack; deliberately SEPARATE toggles (opposite battery profiles).
+        applyPreferredPhyIfEnabled()
         // Opt-in raw capture (research aid): pref read fresh per session, like the probes gate.
         if (connectedFamily == DeviceFamily.WHOOP5 && PuffinExperiment.from(context).isCaptureEnabled) {
             startWhoop5BackfillCapture()
@@ -4530,6 +4697,7 @@ class AndroidWhoopBleClient(
             whoop5HistoryAttempts++
             backfiller.timeoutFired()
             backfilling = false
+            releaseOffloadPriorityIfEscalated()   // #533: retry re-escalates via beginBackfill
             _state.update { it.copy(backfilling = false, syncChunksThisSession = 0) }
             handler.removeCallbacks(backfillTimeoutRunnable)
             backfillFrameQueue.clear()
@@ -4545,6 +4713,8 @@ class AndroidWhoopBleClient(
     private fun exitBackfilling(reason: String) {
         if (!backfilling) return
         backfilling = false
+        // #533: burst over — hand the link back to the stack default. No-op unless we escalated.
+        releaseOffloadPriorityIfEscalated()
         // #174: a backfill just ended. Start (or extend) the deep-packet cooldown from this instant so
         // any type-0x2F records the strap flushes in the seconds after the session aren't miscounted as
         // the live R22 stream — they're the offload's tail.
@@ -5126,6 +5296,10 @@ class AndroidWhoopBleClient(
         // flag resets in didDisconnectPeripheral). Timers are handler-posted, so cancel them here.
         backfillStarted = false
         backfilling = false
+        // #533: the stack forgets the priority request with the link — just clear the flag, no BLE op.
+        offloadPriorityEscalated = false
+        // #533 (73972540): the PHY preference dies with the link too — clear, no BLE op.
+        preferredPhyRequested = false
         backfillDraining = false
         backfillFrameQueue.clear()
         strapNewestTs = null

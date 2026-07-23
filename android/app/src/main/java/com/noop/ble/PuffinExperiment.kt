@@ -56,6 +56,28 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
         get() = prefs.getBoolean(KEY_EXPERIMENTAL_SLEEP_V2, false)
         set(v) = prefs.edit().putBoolean(KEY_EXPERIMENTAL_SLEEP_V2, v).apply()
 
+    /** True if the user opted in to "Faster history sync": escalate the GATT connection priority to
+     *  HIGH for the bounded historical-offload burst, back to BALANCED when it ends (#533, upstream
+     *  5b1b31d5). Spends radio for speed — a shorter connection interval moves the same bytes in less
+     *  radio-on wall-clock. NOT hardware-validated (BLE can't be CI-tested), hence opt-in, default
+     *  false. Live HR deliberately never escalates: realtime stays armed for the whole overnight
+     *  continuous-HRV window, and pinning an ~11 ms interval for hours to carry a 1 Hz stream that
+     *  BALANCED already serves is sustained drain for no throughput gain. */
+    var fastHistorySync: Boolean
+        get() = prefs.getBoolean(KEY_FAST_HISTORY_SYNC, false)
+        set(v) = prefs.edit().putBoolean(KEY_FAST_HISTORY_SYNC, v).apply()
+
+    /** True if the user opted in to "Prefer 2M Bluetooth": ask the controller to prefer the LE 2M PHY
+     *  for the offload burst (#533, upstream 73972540). 2M doubles the symbol rate, so the same bytes
+     *  spend HALF the air-time — the better-behaved of the two sync-speed levers (less radio energy
+     *  per byte, not more), but it trades range for speed. SEPARATE from [fastHistorySync] on purpose:
+     *  opposite battery profiles, so bundling them would make a field report un-attributable. The mask
+     *  always keeps 1M so the controller can fall back. Android-only (CoreBluetooth exposes no app-side
+     *  PHY API — no Swift twin, mirrors the #477 precedent). Default false; off is byte-for-byte today. */
+    var fastLinkPhy: Boolean
+        get() = prefs.getBoolean(KEY_FAST_LINK_PHY, false)
+        set(v) = prefs.edit().putBoolean(KEY_FAST_LINK_PHY, v).apply()
+
     companion object {
         /** Persisted preferences file. */
         private const val PREFS = "noop_experiments"
@@ -74,6 +96,12 @@ class PuffinExperiment(private val prefs: SharedPreferences) {
 
         /** "Experimental sleep staging (V2)" opt-in (mirrors macOS `PuffinExperiment.experimentalSleepV2Key`). */
         const val KEY_EXPERIMENTAL_SLEEP_V2 = "noopExperimentalSleepV2"
+
+        /** "Faster history sync" opt-in — offload-burst GATT priority escalation (#533). */
+        const val KEY_FAST_HISTORY_SYNC = "noopFastHistorySync"
+
+        /** "Prefer 2M Bluetooth" opt-in — LE 2M PHY preference for the offload burst (#533). */
+        const val KEY_FAST_LINK_PHY = "noopFastLinkPhy"
 
         fun from(context: Context): PuffinExperiment =
             PuffinExperiment(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))

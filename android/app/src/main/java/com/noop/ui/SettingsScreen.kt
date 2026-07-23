@@ -385,6 +385,12 @@ fun SettingsScreen(
     var puffinCapture by remember { mutableStateOf(puffinExperiment.isCaptureEnabled) }
     var deepData by remember { mutableStateOf(puffinExperiment.isDeepDataEnabled) }
     var broadcastHr by remember { mutableStateOf(puffinExperiment.broadcastHr) }
+    // Opt-in "Faster history sync" (#533, off by default): offload-burst GATT priority escalation.
+    // Model-agnostic (any strap that offloads history), so not inside the 5/MG-only probes gate.
+    var fastHistorySync by remember { mutableStateOf(puffinExperiment.fastHistorySync) }
+    // Opt-in "Prefer 2M Bluetooth" (#533/73972540, off by default): LE 2M PHY preference for the
+    // offload burst. Separate lever from fastHistorySync — opposite battery profiles, the two stack.
+    var fastLinkPhy by remember { mutableStateOf(puffinExperiment.fastLinkPhy) }
     // Opt-in "Experimental sleep staging (V2)" (off by default). Model-agnostic, so it lives outside the
     // 5/MG-only card — it works on WHOOP 4 and 5. Re-stages detected nights with SleepStagerV2; V1 default.
     var experimentalSleepV2 by remember { mutableStateOf(puffinExperiment.experimentalSleepV2) }
@@ -1692,6 +1698,93 @@ fun SettingsScreen(
                         "default staging. Opt-in and experimental: it only changes how already-detected " +
                         "nights are split into stages (detection and scores are unchanged), and the default " +
                         "staging stays in place if you leave this off. Takes effect on the next nights staged.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- Faster history sync (#533) — opt-in, default OFF, every model that offloads. ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Faster history sync (experimental)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = fastHistorySync,
+                        onCheckedChange = {
+                            fastHistorySync = it
+                            puffinExperiment.fastHistorySync = it
+                            // On→off edge: release a link already pinned at HIGH back to the stack
+                            // default NOW — "Keep connected in the background" can otherwise hold the
+                            // escalated link open for hours (#533 upstream re-review catch).
+                            if (!it) vm.ble.releaseOffloadPriorityOnToggleOff()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Faster history sync"
+                        },
+                    )
+                }
+                Text(
+                    "Asks Android for a shorter Bluetooth connection interval while your strap is " +
+                        "offloading history, so the same data lands in less radio-on time. Spends a " +
+                        "little more battery during the sync burst; turn it back off if it costs more " +
+                        "than it saves. Not validated on hardware yet — reports welcome.",
+                    style = NoopType.caption,
+                    color = Palette.textTertiary,
+                )
+
+                // --- Prefer 2M Bluetooth (#533, 73972540) — opt-in, default OFF, Android-only. ---
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Text(
+                        "Prefer 2M Bluetooth (experimental)",
+                        style = NoopType.subhead,
+                        color = Palette.textPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = fastLinkPhy,
+                        onCheckedChange = {
+                            fastLinkPhy = it
+                            puffinExperiment.fastLinkPhy = it
+                            // On→off edge: a PHY persists once negotiated, so hand an already-2M
+                            // link back to 1M NOW rather than at the next reconnect.
+                            if (!it) vm.ble.releasePreferredPhyOnToggleOff()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Palette.surfaceBase,
+                            checkedTrackColor = Palette.accent,
+                            uncheckedThumbColor = Palette.textSecondary,
+                            uncheckedTrackColor = Palette.surfaceInset,
+                            uncheckedBorderColor = Palette.hairline,
+                        ),
+                        modifier = Modifier.semantics {
+                            contentDescription = "Prefer 2M Bluetooth"
+                        },
+                    )
+                }
+                Text(
+                    "Asks the Bluetooth controller to prefer the faster 2M radio mode while your " +
+                        "strap is offloading history — the same data in about half the air-time, " +
+                        "which should cost less battery per sync, not more. Trades range for speed: " +
+                        "if syncing gets flaky when the strap is far from your phone, turn this off. " +
+                        "Independent of the sync-interval switch above; the two stack. Not validated " +
+                        "on hardware yet.",
                     style = NoopType.caption,
                     color = Palette.textTertiary,
                 )
