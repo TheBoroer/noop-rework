@@ -14,6 +14,15 @@ plugins {
     id("co.touchlab.skie") version "0.10.13"
 }
 
+// #658 (upstream 1928776c): dependency locking. Every resolvable configuration's resolved
+// graph is pinned in gradle.lockfile; a substituted/tampered version fails resolution.
+// :shared is mounted by BOTH Gradle roots (repo root + android/), each resolving its own
+// configuration subset into this same lockfile — `--write-locks` preserves entries for
+// configurations not resolved in a given run, so the file is the union of both builds.
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 kotlin {
     androidTarget {
         compilerOptions {

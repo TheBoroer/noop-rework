@@ -15,6 +15,13 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
+// #658 (upstream 1928776c): dependency locking — pins every resolvable configuration's
+// resolved graph in gradle.lockfile; a substituted/tampered version fails resolution.
+// Same block as upstream's android/app module; :shared carries its own twin.
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 android {
     namespace = "com.noop"
     compileSdk = 34
