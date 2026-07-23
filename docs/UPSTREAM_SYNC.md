@@ -413,7 +413,26 @@ for our tree, at the risk level it actually carries:
   - `83cdc474` ported: live HR persisted at arm time (`alarm.lastArmHeartRate`, removed when
     absent) + surfaced on the Test Centre Alarm block — the free diagnostic for upstream's
     strap-side sleep-adjacency hypothesis. App suite green.
-- [ ] Sleep times/totals read right after an edit (#259)
+- [x] Sleep times/totals read right after an edit (#259): `e3ee67bd` ported, both halves.
+  A bed edit that moves the effective onset on a night the raw was too sparse to re-stage
+  (WHOOP 4.0) left pre-onset segments in the stored stagesJSON; summing them in full pushed
+  asleep past time-in-bed (the impossible "6h41m asleep / 4h33m in bed" card, inflating
+  Rest/score too).
+  - **Analytics half**: `SleepStageTotals.clampStagesToOnset` (kotlinx.serialization flavor —
+    rework's twin is commonMain, upstream's used org.json; only the `[{start,end,stage}]`
+    computed shape is trimmed, `{stage,min}`/dict/unparseable returned unchanged; made
+    PUBLIC because the display half lives in the app module). Wired into
+    `dailyAggregateHonoringEdits`' group-sum path: selection still runs on the ORIGINAL
+    blocks (no #525/#547 pick regression), only the summed main-night total + the
+    inter-fragment spans use the clamped stages. Onset == start (every non-edited night) is
+    a no-op.
+  - **Display half**: SleepScreen's `groupSegments`/`segments` (hypnogram), `sumGroupStages`
+    (hero minutes) and `buildSleepModel`'s `sessionStageMins` all parse the clamped stages,
+    so card number, stage bars, hypnogram and score agree.
+  `Issue259PreOnsetClampTest` (2, upstream verbatim — signature/`StageSegment` match
+  exactly). Upstream's deferred root cause (WHY 4.0 over-stages a low-motion pre-onset
+  stretch) stays deferred, matching their scoping. Shared 1670/1674 (the 4 pre-existing
+  locale fails); app suite green.
 - [ ] Automatic sync no longer stalls (#266)
 
 ## LOW / skip

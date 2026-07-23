@@ -111,6 +111,35 @@ object SleepStageTotals {
         return if (m.inBed > 0.0) m else null
     }
 
+    /**
+     * #259 (upstream e3ee67bd): return `stagesJSON` with its `[{start,end,stage}]` segments trimmed to
+     * begin no earlier than [onsetSec] — segments fully before the onset are dropped, one straddling it
+     * is cut to `[onsetSec, end]`. Only the computed segment-array shape carries the timestamps a trim
+     * needs, so the `{stage,min}` / dict (imported) shapes and any unparseable JSON are returned
+     * UNCHANGED. A no-op when every segment already starts at/after the onset (the common,
+     * already-consistent case). The result is re-parsed by [minutes] / [dailyAggregate] on the SAME
+     * platform, so only the decoded minute totals need cross-platform parity, not the exact string.
+     * Mirrors the Swift/Kotlin `clampStagesToOnset` twins. Public (not internal) because the display
+     * half of the clamp lives in the app module's SleepScreen (upstream had both in one module).
+     */
+    fun clampStagesToOnset(stagesJSON: String?, onsetSec: Long): String? {
+        val json = stagesJSON ?: return null
+        val element = try { Json.parseToJsonElement(json) } catch (_: Throwable) { return stagesJSON }
+        val arr = element as? JsonArray ?: return stagesJSON
+        val segs = arr.filterIsInstance<JsonObject>()
+        // {stage,min} / any non-span shape → unchanged (no timestamps to trim against).
+        if (segs.any { !it.containsKey("start") || !it.containsKey("end") }) return stagesJSON
+        val parts = ArrayList<String>(segs.size)
+        for (seg in segs) {
+            val e = seg.optLong("end")
+            val s = maxOf(seg.optLong("start"), onsetSec)
+            if (e <= s) continue                                          // fully before the onset → drop
+            val stage = seg.optString("stage", "")
+            parts.add("""{"start":$s,"end":$e,"stage":"$stage"}""")
+        }
+        return parts.joinToString(prefix = "[", separator = ",", postfix = "]")
+    }
+
     // ── Canonical main-night selection (#525 / #547 — learned-timing scored pick) ────────────────────
 
     /** Broad overnight band used ONLY for the cold-start alignment bonus (NOT a gate). The band is
@@ -523,18 +552,29 @@ object SleepStageTotals {
             // night `analyzeDay` does. Naps outside the group remain their own rows. Mirrors Swift.
             val group = mainNightGroupIndicesByStages(blocks, onsetByStart, offsetSec, habitualMidsleepSec)
                 ?: return null
+            // #259: trim each SELECTED block's stages to its EFFECTIVE onset before summing. A hand-edited
+            // or onset-trimmed bedtime that the raw was too sparse to re-stage (WHOOP 4.0) leaves pre-onset
+            // segments in the stored stagesJSON; summing them in full pushes asleep past time-in-bed (the
+            // impossible "6h41m asleep / 4h33m in bed" card). Selection above ran on the ORIGINAL blocks, so
+            // no #525/#547 pick regression — only the SUMMED main-night total is clamped. A block already
+            // staged from its onset (the common case, and every non-edited night, where onset == start) is
+            // unchanged. Mirrors the upstream Swift/Kotlin twins (e3ee67bd).
+            val clampedStages = group.map { i ->
+                val onset = onsetByStart[blocks[i].first]
+                if (onset != null) clampStagesToOnset(blocks[i].second, onset) else blocks[i].second
+            }
             // OUT-OF-BED time between the bridged fragments counts as AWAKE (#777/#705), using the SAME
             // single definition `analyzeDay` applies so the seam can't double-count it. Each fragment's
             // effective span is `[onset, onset + decoded in-bed]`; the gap between consecutive fragments is
             // awake the fragments' own stages don't cover. Mirrors Swift.
-            val spans = group.map { i ->
+            val spans = group.mapIndexed { gi, i ->
                 val b = blocks[i]
                 val onset = onsetByStart[b.first] ?: b.first
-                val inBedSec = ((minutes(b.second)?.inBed ?: 0.0) * 60.0).toLong()
+                val inBedSec = ((minutes(clampedStages[gi])?.inBed ?: 0.0) * 60.0).toLong()
                 onset to (onset + inBedSec)
             }
             val gapAwakeS = interFragmentAwakeSeconds(spans)
-            val agg = dailyAggregate(group.map { blocks[it].second }, gapAwakeS) ?: return null
+            val agg = dailyAggregate(clampedStages, gapAwakeS) ?: return null
             return HonoredAggregate(agg, applied)
         }
         val agg = dailyAggregate(blocks.map { it.second }) ?: return null
