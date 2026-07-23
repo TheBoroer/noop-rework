@@ -90,12 +90,38 @@ We have **no** dependency-verification metadata locally. Security fix. Take the 
 regenerate metadata for our own dependency set (Compose desktop, KMP targets, etc. that
 upstream doesn't have).
 
-### 5. Backfill clock retry + Data Range fallback (#700)
-- [ ] `0d252f1d` retry GET_CLOCK when no correlation establishes before backfill
-- [ ] `64f35f8d` Data Range fallback when GET_CLOCK retries exhaust
+### 5. Backfill clock retry + Data Range fallback (#700) — **investigated, DECLINED**
+- [x] `0d252f1d` retry GET_CLOCK when no correlation establishes — **N/A (iOS-only).**
+  Upstream's own note: "Android's historical offload uses type-47 real-unix
+  timestamps and does not have the same clock-correlation dependency for day
+  assignment." No Kotlin change in the commit. Nothing to port.
+- [x] `64f35f8d` Data Range fallback when GET_CLOCK retries exhaust — **DO NOT PORT.**
+  The 10-line Android portion seeds `backfiller.clockRef = ClockRef(device =
+  strapNewestTs, wall = wallNow)` in `beginBackfill`. Ported verbatim it REGRESSES
+  in rework, because our `extractHistoricalStreams` evolved well past upstream's:
 
-Fixes stuck backfills. Lands in shared BLE stack (`BleSession`, `HistoricalStreams`,
-`CommandChannel`) — we have GET_CLOCK, no retry/fallback.
+  Seeding sets `clockOffset = wallNow - strapNewestTs`. That crosses FIX #72's
+  1-day `staleThreshold` (activating the constant-skew shift) whenever the strap's
+  newest banked record is >1 day old — which happens for a perfectly HEALTHY strap
+  that was simply off-wrist / on charger for a day, not only for a drifted RTC.
+  Then rework's own guards turn it into a loss:
+  - **Session markers present (normal):** `Backfiller.sessionOldest/NewestUnix` are
+    the RAW device-epoch `unix` (`AndroidWhoopBleClient.kt:3303`, `Backfiller.kt:147`).
+    FIX #72 shifts every record forward by ~offset, then `plausible()` compares the
+    CORRECTED ts against the RAW session window → all records fall outside →
+    **entire offload dropped** (total data loss for that sync).
+  - **Session markers absent:** corrected ≈ `wallNow`, clears only the absolute
+    floor → every record **misdated to ~now** — exactly the bug #700 set out to fix.
+  The #471 anti-future guard doesn't rescue it (`corrected` never exceeds
+  `wallNow + snapGranularity`, so it is kept, not reverted).
+
+  rework doesn't need the seed anyway: IDENTITY keeps type-47 real-unix, and FIX #72
+  + the #547 session-range plausibility gate + #471 anti-future + #928/#1012
+  future-skew handling already form a far stronger stale-RTC stack than upstream
+  Android had when #700 was written. If genuine drift-recovery for a dead-GET_CLOCK
+  4.0 is ever wanted, build it as a purpose-made change with an
+  `extractHistoricalStreams` unit test pinning the healthy-off-wrist case — NOT this
+  cherry-pick.
 
 ### 6. WHOOP protocol decoder fixes
 - [x] `80da3bca` v20 (2140 B) historical decoder sample count 50 → 25 (#545) —
