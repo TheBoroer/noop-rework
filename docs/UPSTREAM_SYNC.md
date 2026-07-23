@@ -433,7 +433,17 @@ for our tree, at the risk level it actually carries:
   exactly). Upstream's deferred root cause (WHY 4.0 over-stages a low-motion pre-onset
   stretch) stays deferred, matching their scoping. Shared 1670/1674 (the 4 pre-existing
   locale fails); app suite green.
-- [ ] Automatic sync no longer stalls (#266)
+- [x] Automatic sync no longer stalls (#266): `fb022352` — **already satisfied by
+  construction.** Upstream's bug was a STORED `clockUntrusted` field, refreshed only after a
+  backfill session ended: once latched true, every later PERIODIC/STRAP `requestSync` was
+  blocked by BackfillPolicy before it could reach a session that would refresh the flag — a
+  self-corrected strap clock could never resume automatic sync without a reconnect. Our
+  #228 BackfillPolicy port (`06b69f13`) was written against upstream's LATER state: there is
+  no stored field anywhere; `requestSync` computes
+  `isFutureDatedNewest(strapNewestTs, nowSec)` inline on every call, exactly the fb022352
+  end state (mirroring Swift's `BLEManager.requestSync`, which never stored it). Verified by
+  grep: the only `clockUntrusted` occurrences are the `BackfillPolicy.shouldRun` parameter
+  and the inline call-site compute. No change needed.
 
 ## LOW / skip
 
