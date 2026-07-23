@@ -50,9 +50,15 @@ class RegistryDayOwnerSource(private val registry: DeviceRegistry) : Intelligenc
     // model is "WHOOP 4.0" maps to WHOOP4 (raw-ADC skin-temp scale); everything else — a 5/MG, a non-WHOOP
     // import whose skin temp is already °C, or an id absent from the registry — falls back to WHOOP5 (the
     // prior /100 behaviour). Mirrors the Swift IntelligenceEngine.skinTempFamily(forOwner:devices:).
+    //
+    // #716: the matcher accepts BOTH model-string conventions in the registry: the full displayName
+    // ("WHOOP 4.0" — the seeded row after the SourceCoordinator model stamp, and upstream's format)
+    // AND the Add-a-device wizard's short label ("4.0"). Before this, a wizard-added WHOOP 4.0 fell
+    // through to the WHOOP5 /100 scale — the same wrong-skin-temp class of bug the stamp fixes for
+    // the seeded row.
     override suspend fun skinTempFamily(deviceId: String): DeviceFamily {
         val model = registry.all().firstOrNull { it.id == deviceId }?.model
-        return if (AndroidWhoopModel.entries.firstOrNull { it.displayName == model } == AndroidWhoopModel.WHOOP4)
+        return if (model == AndroidWhoopModel.WHOOP4.displayName || model == "4.0")
             DeviceFamily.WHOOP4 else DeviceFamily.WHOOP5
     }
 }

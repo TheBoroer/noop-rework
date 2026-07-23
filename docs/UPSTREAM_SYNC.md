@@ -222,9 +222,22 @@ for our tree, at the risk level it actually carries:
     needs on-strap validation.
   All NOT hardware-validated (no strap here) — opt-in toggles ship to collect field
   reports, matching upstream's own posture.
-- [ ] Strap model / skin-temp seeding (#716): `83e722f8` set modelStamped before launch,
-  `bd7e7f1a` Android parity + skip repeated DB reads — Android-side commit likely
-  near-cherry-pickable
+- [x] Strap model / skin-temp seeding (#716): `bd7e7f1a` + `83e722f8` ported, rework-shaped
+  (NOT cherry-pickable — upstream stamps inside its BLE client; rework's registry writes are
+  owned by `SourceCoordinator`). New `DeviceRegistryDao.setModel` + `DeviceRegistry.setModel`;
+  client exposes a `confirmedFamily: StateFlow<DeviceFamily?>` seam (set at service discovery
+  next to `connectedFamily`, cleared on teardown — same pattern as
+  `connectedPeripheralAddress`); AppViewModel feeds it to
+  `SourceCoordinator.connectedFamilyConfirmed`, which one-time-stamps the seeded generic
+  `"WHOOP"` active row to the real generation (`AndroidWhoopModel.displayName`). `83e722f8`
+  honoured: `modelStamped` set BEFORE the coroutine launches, so repeat confirmations are
+  free (no launch, no registry read). Bonus rework-local fix found during the port:
+  `RegistryDayOwnerSource.skinTempFamily` matched ONLY `"WHOOP 4.0"`, but the Add-a-device
+  wizard writes `"4.0"` — a wizard-added 4.0 silently took the WHOOP5 /100 skin-temp scale;
+  matcher now accepts both conventions. Tests: 4 stamp tests in
+  `SourceCoordinatorAdoptionTest` + 2 matcher tests in `RegistryDayOwnerSourceTest`
+  (+ `setModel` added to the three fake DAOs). App + shared suites green (shared still
+  1656/1660 — the 4 pre-existing locale-whitespace fails).
 - [ ] Strap restart command (#166)
 - [ ] Clock-wrong warning (#324)
 - [ ] Strap pack voltage in Devices (#592)

@@ -562,6 +562,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ble.connectedPeripheralAddress
                 .collect { addr -> noopApp.sourceCoordinator.connectedPeripheralChanged(addr) }
         }
+        // #716: feed the connected strap's CONFIRMED service family into the coordinator, which
+        // one-time-stamps the seeded generic "WHOOP" registry model to the real generation (fixes
+        // the skin-temp ADC scale + Devices display resolving from the model string). Same seam
+        // pattern as the address adoption above; StateFlow dedupes, and the coordinator's
+        // modelStamped flag makes repeat emissions free (no DB read after the one-time fix).
+        viewModelScope.launch {
+            ble.confirmedFamily
+                .collect { fam -> if (fam != null) noopApp.sourceCoordinator.connectedFamilyConfirmed(fam) }
+        }
         // Re-arm the strap's firmware alarm once per process-alive day. The firmware alarm is a single
         // absolute instant with NO recurrence and was previously re-armed ONLY on the bond edge — so a
         // strap that stays continuously bonded (a phone in range overnight) would fire once and then

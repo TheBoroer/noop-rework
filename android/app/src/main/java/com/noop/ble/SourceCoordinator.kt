@@ -231,6 +231,35 @@ class SourceCoordinator(
         }
     }
 
+    /** #716: true once the seeded "WHOOP" model has been stamped to the correct family. Set BEFORE the
+     *  stamp coroutine launches (upstream 83e722f8) so repeated confirmations — every reconnect
+     *  republishes the family — skip both the launch AND the registry read after the one-time fix. */
+    private var modelStamped = false
+
+    /**
+     * #716 (upstream bd7e7f1a + 83e722f8): a live connection confirmed which service family the strap
+     * actually advertises. The seeded "my-whoop" registry row carries the generic model "WHOOP" (no
+     * generation), and the model string is what family-derived behaviour resolves from —
+     * [com.noop.analytics.RegistryDayOwnerSource.skinTempFamily] maps it to the skin-temp ADC scale,
+     * and the Devices screen displays it. One-time: stamp the correct generation onto any ACTIVE row
+     * still carrying the bare "WHOOP". Wizard-added rows (real generation already recorded) and
+     * archived rows are never touched.
+     */
+    fun connectedFamilyConfirmed(family: com.noop.protocol.DeviceFamily) {
+        if (modelStamped) return
+        modelStamped = true   // 83e722f8: set before launch — no redundant coroutines on re-confirm
+        scope.launch {
+            val stale = registry.all().firstOrNull { it.status == "active" && it.model == "WHOOP" }
+            if (stale != null) {
+                val correct =
+                    if (family == com.noop.protocol.DeviceFamily.WHOOP4) AndroidWhoopModel.WHOOP4.displayName
+                    else AndroidWhoopModel.WHOOP5_MG.displayName
+                registry.setModel(stale.id, correct)
+                log("Updated device model from \"WHOOP\" to \"$correct\" (#716)")
+            }
+        }
+    }
+
     private suspend fun reconcile(id: String) {
         if (id == lastSeenId) return
         lastSeenId = id

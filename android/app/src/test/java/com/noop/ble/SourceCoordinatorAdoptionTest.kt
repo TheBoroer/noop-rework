@@ -80,6 +80,9 @@ class SourceCoordinatorAdoptionTest {
         override suspend fun renameDevice(id: String, nickname: String?) {
             devices[id]?.let { devices[id] = it.copy(nickname = nickname) }
         }
+        override suspend fun setModel(id: String, model: String) {
+            devices[id]?.let { devices[id] = it.copy(model = model) }   // #716
+        }
         override suspend fun setPeripheralId(id: String, peripheralId: String?) {
             devices[id]?.let { devices[id] = it.copy(peripheralId = peripheralId) }
         }
@@ -206,6 +209,60 @@ class SourceCoordinatorAdoptionTest {
         coordinator.connectedPeripheralChanged(null) // a disconnect republish
 
         assertNull(dao.devices["my-whoop"]!!.peripheralId) // nothing adopted
+    }
+
+    // ── #716: one-time model stamp (seeded "WHOOP" → the connected strap's real generation) ──────────
+
+    @Test
+    fun confirmedFamilyStampsSeededWhoop4Model() = runBlocking {
+        val dao = FakeRegistryDao().apply { devices["my-whoop"] = whoopRow("my-whoop", peripheralId = null) }
+        var logged: String? = null
+        val coordinator = coordinatorOver(dao) { logged = it }
+
+        coordinator.connectedFamilyConfirmed(com.noop.protocol.DeviceFamily.WHOOP4)
+
+        assertEquals("WHOOP 4.0", dao.devices["my-whoop"]!!.model)
+        assertEquals("Updated device model from \"WHOOP\" to \"WHOOP 4.0\" (#716)", logged)
+    }
+
+    @Test
+    fun confirmedFamilyStampsSeededWhoop5Model() = runBlocking {
+        val dao = FakeRegistryDao().apply { devices["my-whoop"] = whoopRow("my-whoop", peripheralId = null) }
+        val coordinator = coordinatorOver(dao)
+
+        coordinator.connectedFamilyConfirmed(com.noop.protocol.DeviceFamily.WHOOP5)
+
+        assertEquals("WHOOP 5.0 / MG", dao.devices["my-whoop"]!!.model)
+    }
+
+    @Test
+    fun modelStampIsOneTime_repeatConfirmationsAreFree() = runBlocking {
+        // Every reconnect republishes the family; only the FIRST confirmation may touch the registry
+        // (83e722f8: the modelStamped flag is set before the stamp coroutine even launches).
+        val dao = FakeRegistryDao().apply { devices["my-whoop"] = whoopRow("my-whoop", peripheralId = null) }
+        val coordinator = coordinatorOver(dao)
+
+        coordinator.connectedFamilyConfirmed(com.noop.protocol.DeviceFamily.WHOOP4)
+        // Simulate the row somehow reading "WHOOP" again — a repeat confirmation must NOT re-stamp.
+        dao.devices["my-whoop"] = dao.devices["my-whoop"]!!.copy(model = "WHOOP")
+        coordinator.connectedFamilyConfirmed(com.noop.protocol.DeviceFamily.WHOOP5)
+
+        assertEquals("second confirmation must be a no-op", "WHOOP", dao.devices["my-whoop"]!!.model)
+    }
+
+    @Test
+    fun wizardAddedRealModelIsNeverRestamped() = runBlocking {
+        // A wizard-added WHOOP already carries its real generation — the stamp must only ever fix the
+        // seeded generic "WHOOP", so this row stays untouched.
+        val dao = FakeRegistryDao().apply {
+            devices["whoop-aa"] = whoopRow("whoop-aa", peripheralId = "AA:BB:CC:DD:EE:01")
+                .copy(model = "4.0")
+        }
+        val coordinator = coordinatorOver(dao)
+
+        coordinator.connectedFamilyConfirmed(com.noop.protocol.DeviceFamily.WHOOP5)
+
+        assertEquals("4.0", dao.devices["whoop-aa"]!!.model)
     }
 
     @Test

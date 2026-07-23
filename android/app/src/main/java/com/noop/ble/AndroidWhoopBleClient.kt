@@ -1081,6 +1081,14 @@ class AndroidWhoopBleClient(
      *  BLEManager.connectedPeripheralUUID — drives SourceCoordinator's first-connect identity adoption. */
     val connectedPeripheralAddress: StateFlow<String?> = _connectedPeripheralAddress.asStateFlow()
 
+    private val _confirmedFamily = MutableStateFlow<DeviceFamily?>(null)
+    /** #716: the service family the connected strap ACTUALLY advertises (set at service discovery,
+     *  null when disconnected). Drives SourceCoordinator's one-time model stamp that upgrades the
+     *  seeded generic "WHOOP" registry row to the real generation — the registry model is what
+     *  family-derived behaviour (skin-temp ADC scale, Devices display) resolves from. Same seam
+     *  pattern as [connectedPeripheralAddress]. */
+    val confirmedFamily: StateFlow<DeviceFamily?> = _confirmedFamily.asStateFlow()
+
     /** Add-a-WHOOP wizard present-scan flag: while true, [onScanResult] ACCUMULATES every discovered strap
      *  into [discoveredWhoops] instead of auto-connecting. Turned on by [scanForWhoops], off by
      *  [stopWhoopScan]. Default false leaves the auto-connect path untouched. Written on the main looper
@@ -3131,6 +3139,7 @@ class AndroidWhoopBleClient(
                 // notifications ever enable, so HR/battery/events stay empty (issue #12). The bond write
                 // is deferred to startSession(), which runs once every notification is on.
                 connectedFamily = DeviceFamily.WHOOP4
+                _confirmedFamily.value = DeviceFamily.WHOOP4   // #716: registry model stamp seam
                 cmdCharacteristic = whoop4.getCharacteristic(CMD_WRITE_CHAR)
                 whoop4.getCharacteristic(CMD_NOTIFY_CHAR)?.let { cccdQueue.add(it) }
                 whoop4.getCharacteristic(EVENT_NOTIFY_CHAR)?.let { cccdQueue.add(it) }
@@ -3139,6 +3148,7 @@ class AndroidWhoopBleClient(
                 // EXPERIMENTAL WHOOP 5.0/MG: opens with CLIENT_HELLO (sent in startSession, after the
                 // standard HR/battery notifications are enabled), not the WHOOP4 confirmed-write bond.
                 connectedFamily = DeviceFamily.WHOOP5
+                _confirmedFamily.value = DeviceFamily.WHOOP5   // #716: registry model stamp seam
                 log("WHOOP 5/MG detected — will send CLIENT_HELLO after subscribing (experimental).")
                 _state.update { it.copy(
                     whoop5Detected = true,
@@ -5163,6 +5173,7 @@ class AndroidWhoopBleClient(
         // Multi-WHOOP: the link is down — clear the published connected address so SourceCoordinator's
         // adoption sink can't re-fire on a stale strap id (twin of macOS clearing connectedPeripheralUUID).
         _connectedPeripheralAddress.value = null
+        _confirmedFamily.value = null   // #716: the family confirmation dies with the link
         reset()
 
         // close() can itself throw DeadObjectException on a dead binder — teardown must NEVER throw,

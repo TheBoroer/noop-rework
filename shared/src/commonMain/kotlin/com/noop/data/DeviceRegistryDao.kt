@@ -67,6 +67,13 @@ interface DeviceRegistryDao {
     @Query("UPDATE pairedDevice SET nickname = :nickname WHERE id = :id")
     suspend fun renameDevice(id: String, nickname: String?)
 
+    /** #716: update the model label for a device. The seeded "my-whoop" row carries the generic
+     *  model "WHOOP" (no generation); once a live connection confirms which service family the strap
+     *  advertises, the client stamps the correct model so family-derived behaviour (skin-temp ADC
+     *  scale + Devices display) resolves right. Twin of the upstream Android `setModel`. */
+    @Query("UPDATE pairedDevice SET model = :model WHERE id = :id")
+    suspend fun setModel(id: String, model: String)
+
     /** Persist (or clear) a device's stable BLE peripheral identifier (the MAC address on Android). Lets
      *  the seeded "my-whoop" adopt its strap's address on first connect and a specific WHOOP confirm its
      *  identity. Twin of the Swift store's `setPeripheralId`. */

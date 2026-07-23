@@ -68,6 +68,9 @@ class RegistryDayOwnerSourceTest {
             devices[id]?.let { devices[id] = it.copy(status = DeviceStatus.archived.name) }
         }
         override suspend fun renameDevice(id: String, nickname: String?) {}
+        override suspend fun setModel(id: String, model: String) {
+            devices[id]?.let { devices[id] = it.copy(model = model) }   // #716
+        }
         override suspend fun setPeripheralId(id: String, peripheralId: String?) {
             devices[id]?.let { devices[id] = it.copy(peripheralId = peripheralId) }
         }
@@ -119,6 +122,42 @@ class RegistryDayOwnerSourceTest {
             DayOwnerResolver.Candidate(id, priority, hasData = dataByDevice[id] ?: false)
         }
         return DayOwnerResolver.resolve(day, lockedOwner = null, candidates = candidates)
+    }
+
+    // ── #716/#938: skin-temp family resolves from the registry model string ─────────────────────────
+
+    @Test
+    fun skinTempFamilyAcceptsBothWhoop4ModelConventions() = runBlocking {
+        val dao = FakeDao().apply {
+            // The seeded row AFTER the SourceCoordinator #716 stamp (full displayName)…
+            devices["my-whoop"] = device("my-whoop", "WHOOP", SourceKind.liveBLE, DeviceStatus.active)
+                .copy(model = "WHOOP 4.0")
+            // …and a wizard-added 4.0 (short label). Both must resolve to the raw-ADC WHOOP4 scale.
+            devices["whoop-aa"] = device("whoop-aa", "WHOOP", SourceKind.liveBLE, DeviceStatus.paired)
+                .copy(model = "4.0")
+        }
+        val src = RegistryDayOwnerSource(registry(dao))
+
+        assertEquals(com.noop.protocol.DeviceFamily.WHOOP4, src.skinTempFamily("my-whoop"))
+        assertEquals(com.noop.protocol.DeviceFamily.WHOOP4, src.skinTempFamily("whoop-aa"))
+    }
+
+    @Test
+    fun skinTempFamilyFallsBackToWhoop5ForEverythingElse() = runBlocking {
+        val dao = FakeDao().apply {
+            // Un-stamped seeded row (generic "WHOOP"), a 5/MG, and a non-WHOOP import: all take the
+            // /100 WHOOP5 path (the prior behaviour — non-WHOOP skin temp is already °C).
+            devices["my-whoop"] = device("my-whoop", "WHOOP", SourceKind.liveBLE, DeviceStatus.active)
+            devices["whoop-bb"] = device("whoop-bb", "WHOOP", SourceKind.liveBLE, DeviceStatus.paired)
+                .copy(model = "WHOOP 5.0 / MG")
+            devices["oura"] = device("oura", "Oura", SourceKind.cloudImport, DeviceStatus.paired)
+        }
+        val src = RegistryDayOwnerSource(registry(dao))
+
+        assertEquals(com.noop.protocol.DeviceFamily.WHOOP5, src.skinTempFamily("my-whoop"))
+        assertEquals(com.noop.protocol.DeviceFamily.WHOOP5, src.skinTempFamily("whoop-bb"))
+        assertEquals(com.noop.protocol.DeviceFamily.WHOOP5, src.skinTempFamily("oura"))
+        assertEquals(com.noop.protocol.DeviceFamily.WHOOP5, src.skinTempFamily("absent-id"))
     }
 
     @Test

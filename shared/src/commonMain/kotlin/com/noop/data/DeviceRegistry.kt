@@ -83,6 +83,11 @@ class DeviceRegistry(
         dao.renameDevice(id, if (!trimmed.isNullOrEmpty()) trimmed else null)
     }
 
+    /** #716: update the model label for a device. Mirrors the upstream store's `setModel` — used by
+     *  the one-time stamp that upgrades the seeded generic "WHOOP" to the connected strap's real
+     *  generation once a live link confirms its service family. */
+    suspend fun setModel(id: String, model: String) = dao.setModel(id, model)
+
     /**
      * Permanently delete every recorded sample/derived row for [id] across all deviceId-keyed tables, in
      * ONE transaction (all-or-nothing) — the Android twin of the Swift
