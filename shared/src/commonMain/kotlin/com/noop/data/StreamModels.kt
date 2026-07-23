@@ -40,6 +40,15 @@ data class StreamBatch(
      * visible in a shared log. Defaulted so every existing constructor/copy call site is unchanged.
      */
     val droppedImplausibleTs: Int = 0,
+    /**
+     * #324: oldest/newest OWN-timestamp among the dropped records — the poisoned-range epoch span, in
+     * the strap's own claimed unix seconds. On a bad-clock strap this is the wrong base its RTC jumped
+     * to (e.g. both years ahead, #928), and logging the span tells a future-clock strap from a stale
+     * one at a glance. null when nothing was dropped. Diagnostic only, excluded from [isEmpty];
+     * defaulted so every existing constructor/copy call site is unchanged.
+     */
+    val droppedOldestTs: Long? = null,
+    val droppedNewestTs: Long? = null,
 ) {
     val isEmpty: Boolean
         get() = hr.isEmpty() && rr.isEmpty() && events.isEmpty() && battery.isEmpty() &&

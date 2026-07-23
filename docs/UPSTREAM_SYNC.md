@@ -251,7 +251,25 @@ for our tree, at the risk level it actually carries:
   Test Centre RE tool) deliberately NOT ported — it's a research aid for hardware we can't
   validate against. App + shared suites green (shared 1656/1660, the 4 pre-existing
   locale-whitespace fails).
-- [ ] Clock-wrong warning (#324)
+- [x] Clock-wrong warning (#324): `694ae229` ported, both halves.
+  - **Banner half**: pure `futureDatedStrapBanner` companion fun (byte-identical string to
+    upstream's Swift/Kotlin twins), driven by the existing `isFutureDatedNewest` predicate so
+    the banner and the #928/#1012 auto-continue gate can never disagree. Wired into
+    `exitBackfilling` for BOTH outcomes (the reporter's session ended on TIMEOUT, not
+    HISTORY_COMPLETE): HISTORY_COMPLETE checks it only on the banked-something path
+    (`bankedNothing` keeps its #126 sustained-empty precedence, matching upstream's else-if
+    order), and timeout prefers it over "strap went quiet" (5/MG #580 suppression unchanged).
+    One-shot log line with the hours-ahead figure. 4 banner tests in
+    `EmptyBankingClassifierTest`.
+  - **Diagnostics half (#332)**: `extractHistoricalStreams` now tracks the dropped-record
+    SPAN (`droppedOldestTs`/`droppedNewestTs` on `StreamBatch`, claimed timestamps of the
+    #547-gated drops); `BadClockDiagnostics` pure formatters (isoDay UTC / hoursOffset /
+    droppedSpanClause — lives in `com.noop.ble`, not shared protocol, because commonMain has
+    no `java.text`) append " (dated 2028-06-20 -> 2029-07-14, 35189h ahead)" to the
+    Backfiller's once-per-session bad-clock warning. Upstream's dropped-RTC-event capture
+    (RTC_LOST/BOOT/SET_RTC) N/A here — rework's EVENT branch corrects rather than kind-drops.
+    `BadClockDiagnosticsTest` (5) green; app + shared suites green (1656/1660, the 4
+    pre-existing locale fails).
 - [ ] Strap pack voltage in Devices (#592)
 - [ ] Low-battery heads-up (#250)
 - [ ] Android keep-alive / battery (#386, #228) — check vs our rewritten dataSync FGS

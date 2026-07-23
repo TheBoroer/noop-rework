@@ -400,10 +400,17 @@ class AndroidBackfiller(
             sessionDroppedImplausible += decoded.droppedImplausibleTs
             if (decoded.droppedImplausibleTs > 0 && !loggedImplausibleClock) {
                 loggedImplausibleClock = true
+                // #324: append the poisoned-range span — the strap's OWN claimed dates + hours
+                // ahead/behind — so the log tells a future-clock strap (#928) from a stale one at a
+                // glance instead of just "dropped N records".
+                val span = BadClockDiagnostics.droppedSpanClause(
+                    decoded.droppedOldestTs, decoded.droppedNewestTs,
+                    now = System.currentTimeMillis() / 1000L,
+                )
                 log(
                     "Backfill: WARNING dropped ${decoded.droppedImplausibleTs} record(s) with an " +
                         "implausible timestamp (bad strap clock — far-past or future-dated); they are " +
-                        "excluded so they can't misdate history.",
+                        "excluded so they can't misdate history.$span",
                 )
             }
             // #77 / #91: HISTORICAL_DATA record frames that fail decode (CRC failure, or an unmapped

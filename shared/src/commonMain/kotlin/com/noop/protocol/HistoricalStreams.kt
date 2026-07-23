@@ -514,6 +514,16 @@ fun extractHistoricalStreams(
     // Count of records dropped by the #547 plausibility gate this batch, surfaced on the returned
     // StreamBatch so the Backfiller can log "bad strap clock" once per session via its existing seam.
     var droppedImplausible = 0
+    // #324: oldest/newest claimed timestamp among the dropped records — the poisoned-range epoch span.
+    // On a bad-clock strap this is the wrong base its RTC jumped to; logging the span (dates + hours
+    // ahead/behind) turns "dropped N records" into a diagnosable clock story.
+    var droppedOldest: Long? = null
+    var droppedNewest: Long? = null
+    fun trackDropped(ts: Long) {
+        droppedImplausible++
+        droppedOldest = minOf(droppedOldest ?: ts, ts)
+        droppedNewest = maxOf(droppedNewest ?: ts, ts)
+    }
 
     // The plausible-timestamp window for this batch (#547): the absolute floor [MIN_PLAUSIBLE_UNIX,
     // wallNow + FUTURE_MARGIN] PLUS, when the strap's GET_DATA_RANGE markers are known AND well-formed
@@ -566,7 +576,7 @@ fun extractHistoricalStreams(
             if (corrected > wallClockRef + snapGranularity) rawTs else corrected
         }
         if (!plausible(candidate)) {
-            droppedImplausible++
+            trackDropped(candidate)   // #324: keep the poisoned-range span for the strap log
             return null
         }
         return candidate
@@ -663,7 +673,7 @@ fun extractHistoricalStreams(
                 val ts = wall(parsed.parsed.intOrNull("timestamp")) ?: continue
                 // #547: gate the wall()-corrected REALTIME_RAW_DATA ts on the same plausibility window — a
                 // bad device clock here would otherwise inject a far-past / future-dated HR/RR row.
-                if (!plausible(ts.toLong())) { droppedImplausible++; continue }
+                if (!plausible(ts.toLong())) { trackDropped(ts.toLong()); continue }
                 parsed.parsed.intOrNull("heart_rate")?.let { bpm -> hr.add(HrRow(ts.toLong(), bpm)) }
                 @Suppress("UNCHECKED_CAST")
                 (parsed.parsed["rr_intervals"] as? List<Int>)?.forEach { rrMs ->
@@ -711,6 +721,8 @@ fun extractHistoricalStreams(
         sleepState = sleepState,
         ppgHr = ppgHr,
         droppedImplausibleTs = droppedImplausible,
+        droppedOldestTs = droppedOldest,
+        droppedNewestTs = droppedNewest,
     )
 }
 

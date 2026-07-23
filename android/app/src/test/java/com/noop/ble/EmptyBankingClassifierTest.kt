@@ -86,4 +86,38 @@ class EmptyBankingClassifierTest {
         tracker.recordCompletedSync(bankedSensorRecords = banking.first, consoleOnly = banking.second)
         assertEquals(0, tracker.consecutiveEmptySyncs)
     }
+
+    // ── #324/#928: futureDatedStrapBanner — the OTHER bad-clock shape (banks records, dated ahead) ──
+
+    private val wallNow = 1_800_000_000L
+
+    @Test
+    fun futureBanner_nullWithinTheSkewAllowance() {
+        // 47h ahead is inside the 48h skew allowance (time zones + honest drift) — no banner.
+        org.junit.Assert.assertNull(
+            AndroidWhoopBleClient.futureDatedStrapBanner(wallNow + 47L * 3600L, wallNow),
+        )
+    }
+
+    @Test
+    fun futureBanner_firesBeyondTheSkewAllowance() {
+        // 49h ahead: nothing legitimate banks 2 days into the future — one detection is decisive.
+        val banner = AndroidWhoopBleClient.futureDatedStrapBanner(wallNow + 49L * 3600L, wallNow)
+        assertTrue(banner != null && banner.contains("clock is set in the future"))
+    }
+
+    @Test
+    fun futureBanner_nullWhenNewestUnknown() {
+        // An unanswered range query is UNKNOWN, not future-dated (same rule as isFutureDatedNewest).
+        org.junit.Assert.assertNull(AndroidWhoopBleClient.futureDatedStrapBanner(null, wallNow))
+    }
+
+    @Test
+    fun futureBanner_agreesWithTheAutoContinueGuard() {
+        // The banner and the #928/#1012 auto-continue gate key on the SAME predicate, so the sync
+        // that refuses to chase a future-dated range is exactly the sync that explains why.
+        val ts = wallNow + 3L * 86_400L
+        assertTrue(AndroidWhoopBleClient.isFutureDatedNewest(ts, wallNow))
+        assertTrue(AndroidWhoopBleClient.futureDatedStrapBanner(ts, wallNow) != null)
+    }
 }
