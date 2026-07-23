@@ -1287,6 +1287,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Opt-in experimental sleep staging (V2) — same flag the 15-min loop reads, so a manual
                 // re-score after an edit stages with the same engine the user chose. (V7 Pillar 3b)
                 useExperimentalSleepV2 = PuffinExperiment.from(appContext).experimentalSleepV2,
+                // #206 (b8a35820): the edit/backfill re-score must honour the deep-sleep HRV window pref
+                // like the 15-min loop does — omitting it silently recomputed the edited nights over the
+                // whole night for a Deep-sleep user (avgHrv jumps back up until the next loop pass).
+                deepHrvWindow = UnitPrefs.hrvWindow(appContext) == HrvWindow.DEEP_SLEEP,
             )
         }.onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
     }
