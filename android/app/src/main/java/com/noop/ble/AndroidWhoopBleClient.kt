@@ -2089,6 +2089,10 @@ class AndroidWhoopBleClient(
                 cmd != CommandNumber.SET_CLOCK && cmd != CommandNumber.GET_CLOCK &&
                 cmd != CommandNumber.GET_DATA_RANGE &&
                 cmd != CommandNumber.SET_ALARM_TIME && cmd != CommandNumber.DISABLE_ALARM &&
+                // REBOOT_STRAP (29) over puffin: opcode shared with 4.0, framing is the puffin form
+                // built here — verified on real 5/MG hardware (fw 50.40.1.0, upstream e03a6f17). Sent
+                // ONLY by the user-initiated, confirmation-gated restartStrap() action. (#166)
+                cmd != CommandNumber.REBOOT_STRAP &&
                 // SET_CONFIG (the R22 deep-stream unlock) is allowed ONLY while the deep-data experiment
                 // is opted in — it writes a persistent feature flag to the strap, so it must never fire
                 // on a default install. Reversible; driven only by enableWhoop5DeepData(). (#174)
@@ -2158,6 +2162,29 @@ class AndroidWhoopBleClient(
         }
         send(CommandNumber.RUN_ALARM, byteArrayOf(0x01), withResponse = true)
         log("Buzz: one-shot fired (patternId=2 loops=3 + RUN_ALARM, acked)")
+    }
+
+    /**
+     * Restart the connected strap (REBOOT_STRAP / opcode 29, EMPTY body). Non-destructive: the strap
+     * keeps its stored data and just re-advertises after boot — the same reboot the rename flow
+     * already triggers as a side effect (SET_ADVERTISING_NAME applies on reboot). Port of upstream
+     * #166 (a240f74c), at its NET state after #275/#284: 5/MG ONLY, on the puffin frame verified
+     * against real hardware (fw 50.40.1.0). A WHOOP 4.0 is refused here — upstream's strap-log
+     * analysis (~15 probe attempts) showed no safe frame reboots a 4.0; empty bodies are ignored and
+     * non-empty bodies wedge the link into a ~7s supervision-timeout disconnect.
+     *
+     * Sent ONLY from the confirmation-gated Devices action, never automatically. The strap acks on
+     * COMMAND_RESPONSE (logged in handleFrame, result=SUCCESS/UNSUPPORTED); an accepted reboot may
+     * drop the link before or after the ack, and the normal reconnect path picks the strap back up
+     * when it re-advertises.
+     */
+    fun restartStrap() {
+        if (connectedFamily != DeviceFamily.WHOOP5) {
+            log("Restart: refused — only the 5/MG reboot frame is verified (a 4.0 has no safe reboot frame, upstream #275)")
+            return
+        }
+        log("Restart: sending REBOOT_STRAP (user-initiated) — the strap will drop the link and re-advertise")
+        send(CommandNumber.REBOOT_STRAP, byteArrayOf(), withResponse = true)
     }
 
     /**
@@ -3603,6 +3630,13 @@ class AndroidWhoopBleClient(
                 // here is how the MG haptics rejection (#48) would have shown itself in-app.
                 if (result != null && !result.startsWith("SUCCESS")) {
                     log("Command response: ${respCmd ?: "?"} → $result")
+                }
+                // #166: the REBOOT_STRAP ack — the accept/reject signal (the same COMMAND_RESPONSE
+                // channel that exposed 5/MG haptics rejection, result=0x03/UNSUPPORTED). Logged even
+                // on SUCCESS (the generic line above only logs failures): an accepted reboot may drop
+                // the link before OR after this ack, so the log line is the proof the strap took it.
+                if (respCmd?.startsWith("REBOOT_STRAP") == true) {
+                    log("Reboot: strap acked result=${result ?: "none"} — expect the link to drop and the strap to re-advertise")
                 }
                 // Arm-readback diagnostic (#401 close-out): armStrapAlarm follows every WHOOP 4.0 arm
                 // with GET_ALARM_TIME (67) so the log proves what the STRAP believes is armed, not just

@@ -78,11 +78,26 @@ enum class EventNumber(val rawValue: Int) {
 
 /**
  * Curated, SAFE command codes for *sending* to the strap. Destructive commands
- * (reboot / firmware load / force-trim / ship-mode / power-cycle / fuel-gauge reset / BLE DFU)
+ * (firmware load / force-trim / ship-mode / power-cycle / fuel-gauge reset / BLE DFU)
  * are deliberately excluded so the in-app sender can never brick or wipe the device.
+ *
+ * NARROW EXCEPTION (#166, upstream a240f74c): [REBOOT_STRAP] is the one non-destructive member of
+ * the formerly all-denylisted set — the strap keeps its stored data and just re-advertises after
+ * boot, and the app already triggers a reboot today via rename (SET_ADVERTISING_NAME applies on
+ * reboot). It is sent ONLY from the user-initiated, confirmation-gated Restart action; never
+ * automatically, never on a schedule.
  */
 enum class CommandNumber(val rawValue: Int) {
     TOGGLE_REALTIME_HR(3),
+    // REBOOT_STRAP (29) — restart the strap. Payload is an EMPTY body (the official app's builder
+    // sends no bytes). 5/MG ONLY over the puffin frame — framing verified on real hardware
+    // (fw 50.40.1.0, upstream e03a6f17). WHOOP 4.0 is deliberately NOT offered this command: the
+    // strap-log analysis on upstream #275 (~15 probe attempts across four 4.0 logs) showed no safe
+    // frame reboots a 4.0 — empty bodies are ignored, any non-empty body just wedges the BLE link
+    // into a ~7s supervision-timeout disconnect with the sensor still on. The COMMAND_RESPONSE ack
+    // (result=0x00 accepted / 0x03 unsupported — the same signal that exposed 5/MG haptics
+    // rejection) is logged; an accepted reboot may drop the link before or after the ack. (#166)
+    REBOOT_STRAP(29),
     // REPORT_VERSION_INFO (7): WHOOP 4.0 firmware/version read. The strap answers with the bundled
     // component versions (`fw_harvard` a.b.c.d, `fw_boylston` a.b.c.d). A documented READ command,
     // separate from the firmware-LOAD opcodes. Mirrors Swift `WhoopCommand.reportVersionInfo`.

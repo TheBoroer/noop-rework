@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RemoveCircleOutline
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -114,6 +115,9 @@ fun DevicesScreen(
     var renameTarget by remember { mutableStateOf<PairedDeviceRow?>(null) }
     var removeTarget by remember { mutableStateOf<PairedDeviceRow?>(null) }
     var deleteDataTarget by remember { mutableStateOf<PairedDeviceRow?>(null) }
+    // #166: "Restart strap…" confirmation target. Only ever set for a live-connected 5/MG (the menu
+    // item is gated below), so confirming can simply call restartStrap().
+    var restartTarget by remember { mutableStateOf<PairedDeviceRow?>(null) }
     // After removing the ACTIVE device with other devices still paired, prompt to pick a new active one.
     var pickNewActive by remember { mutableStateOf(false) }
 
@@ -163,6 +167,15 @@ fun DevicesScreen(
                 onMakeActive = { switchTarget = device },
                 onRename = { renameTarget = device },
                 onRemove = { removeTarget = device },
+                // #166: Restart is offered ONLY for a live-connected WHOOP that is a 5/MG — upstream's
+                // strap-log analysis (#275) showed no safe frame reboots a 4.0 (empty bodies are
+                // ignored; any non-empty body wedges the link), so a 4.0 never gets the item. Twin of
+                // upstream DevicesScreen's `live.whoop5Detected` gate (1bf8dc02).
+                onRestart = if (device.status == DeviceStatus.active.name && live.connected &&
+                    live.whoop5Detected
+                ) {
+                    { restartTarget = device }
+                } else null,
             )
         }
 
@@ -252,6 +265,21 @@ fun DevicesScreen(
         )
     }
 
+    // --- #166: Restart-strap confirm (only reachable from a live-connected 5/MG's menu) ---
+    restartTarget?.let { device ->
+        ConfirmDialog(
+            title = "Restart your strap?",
+            message = "${displayName(device)} will reboot and briefly disconnect, then reconnect on its " +
+                "own. Your recorded data stays on the strap.",
+            confirmLabel = "Restart",
+            onConfirm = {
+                viewModel.ble.restartStrap()
+                restartTarget = null
+            },
+            onDismiss = { restartTarget = null },
+        )
+    }
+
     // --- Second, strongly-worded delete-data confirm (from the Removed card's secondary control) ---
     deleteDataTarget?.let { device ->
         ConfirmDialog(
@@ -302,6 +330,8 @@ private fun DeviceCard(
     onRemove: (() -> Unit)?,
     onReAdd: (() -> Unit)? = null,
     onDeleteData: (() -> Unit)? = null,
+    /** #166: "Restart strap…" — non-null ONLY for a live-connected 5/MG (the caller gates it). */
+    onRestart: (() -> Unit)? = null,
 ) {
     val profile = deviceProfile(device)
     // The per-device actions menu's open state is hoisted here so the WHOLE card is a tap target that opens
@@ -398,6 +428,7 @@ private fun DeviceCard(
                     onRemove = onRemove,
                     onReAdd = onReAdd,
                     onDeleteData = onDeleteData,
+                    onRestart = onRestart,
                 )
             }
         }
@@ -475,6 +506,8 @@ private fun DeviceActionsMenu(
     onRemove: (() -> Unit)?,
     onReAdd: (() -> Unit)?,
     onDeleteData: (() -> Unit)?,
+    /** #166: non-null ONLY for a live-connected 5/MG (gated at the call site). */
+    onRestart: (() -> Unit)? = null,
 ) {
     Box {
         IconButton(
@@ -502,6 +535,11 @@ private fun DeviceActionsMenu(
                     MenuItem("Make active", Icons.Filled.Bolt) { onOpenChange(false); onMakeActive() }
                 }
                 MenuItem("Rename", Icons.Filled.Edit) { onOpenChange(false); onRename() }
+                // #166: user-initiated, confirmation-gated strap reboot. Present ONLY for a
+                // live-connected 5/MG (null otherwise — a 4.0 has no safe reboot frame, upstream #275).
+                if (onRestart != null) {
+                    MenuItem("Restart strap…", Icons.Filled.RestartAlt) { onOpenChange(false); onRestart() }
+                }
                 if (onRemove != null) {
                     HorizontalDivider(color = Palette.hairline)
                     MenuItem("Remove", Icons.Filled.RemoveCircleOutline, destructive = true) {

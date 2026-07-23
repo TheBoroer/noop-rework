@@ -238,7 +238,19 @@ for our tree, at the risk level it actually carries:
   `SourceCoordinatorAdoptionTest` + 2 matcher tests in `RegistryDayOwnerSourceTest`
   (+ `setModel` added to the three fake DAOs). App + shared suites green (shared still
   1656/1660 — the 4 pre-existing locale-whitespace fails).
-- [ ] Strap restart command (#166)
+- [x] Strap restart command (#166): ported at its NET upstream state (`a240f74c` add →
+  `4a68c34e` 4.0 probe → `1bf8dc02` retire 4.0 → `e03a6f17` 5.0 framing verified):
+  `REBOOT_STRAP(29)` added to `CommandNumber` as the documented narrow exception to the
+  destructive-command denylist (empty body, non-destructive — the rename flow already reboots
+  as a side effect). 5/MG ONLY on the puffin frame (allow-listed in the client's 5/MG send
+  gate); `restartStrap()` refuses a 4.0 outright (upstream #275: ~15 probe attempts showed
+  no safe frame reboots a 4.0 — empty bodies ignored, non-empty bodies wedge the link).
+  COMMAND_RESPONSE ack logged even on SUCCESS ("Reboot: strap acked result=…"). Devices UI:
+  "Restart strap…" menu item gated on `live.connected && live.whoop5Detected` (the
+  `1bf8dc02` twin gate), confirmation dialog before sending. The 4.0 reboot PROBE (upstream's
+  Test Centre RE tool) deliberately NOT ported — it's a research aid for hardware we can't
+  validate against. App + shared suites green (shared 1656/1660, the 4 pre-existing
+  locale-whitespace fails).
 - [ ] Clock-wrong warning (#324)
 - [ ] Strap pack voltage in Devices (#592)
 - [ ] Low-battery heads-up (#250)
