@@ -24,8 +24,15 @@ so history heals itself.
   `shared/.../analytics/HrvAnalyzer.kt` (`CleanSeries` / `cleanRRGapAware` /
   `rmssdGapAware` / `pnn50GapAware`, wired into `analyzeRaw`) + `SleepStager.kt`
   `sessionHrvWindows`, with `HrvGapAwareTest` in commonTest (passes JVM + iosSimulatorArm64).
-- [ ] `286e8b88` per-night cleaning-pipeline summary in the always-on log (#205) — diag-only,
-  optional follow-up.
+- [x] `286e8b88` per-night cleaning-pipeline summary in the always-on log (#205) — ported into
+  `IntelligenceEngine.kt`'s per-day scoring loop (right after the `analyzeDay` call, next to the
+  #691 rhr-floor diag): separate `HrvAnalyzer.analyzeRaw` pass over in-sleep R-R, emits
+  `hrv diag day=… rmssd=…ms sdnn=…ms meanNN=…ms rr=nInput/nClean rejected=N%` via the always-on
+  `diag` sink, byte-identical line format to upstream. Emits for ANY in-sleep R-R (no MIN_BEATS
+  gate — the sparse night `rr=<n>/<m> rmssd=nil` case is the informative one, per upstream's
+  re-review fix). Does NOT touch the shipped windowed `avgHrv`. Green: shared JVM suite
+  1656/1660 (the 4 fails are pre-existing JDK locale-whitespace pinning fails, proven on a
+  clean tree).
 - [x] `b8a35820` honour deep-sleep HRV window on edit/backfill re-scores (#206) — ported with
   item 2 (#201): `AppViewModel.rescoreAfterEdit()` now threads
   `deepHrvWindow = UnitPrefs.hrvWindow(...)` like the 15-min loop (it defaulted to `false`,
