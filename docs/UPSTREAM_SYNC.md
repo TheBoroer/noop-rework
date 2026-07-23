@@ -51,11 +51,36 @@ for several nights). Upstream re-folds the existing history immediately. Belongs
 in `Strand/Screens/SettingsView.swift`.
 
 ### 3. Confirm-sleep runs on median HR, not mean (#268)
-- [ ] `3b168690` recover dropped nights
+- [x] `3b168690` recover dropped nights — ported into
+  `shared/.../analytics/SleepStager.kt` (`confirmSleepWithHR` now gates on
+  `HrvAnalyzer.median(seg)` instead of the mean) + `SleepStagerHrConfirmTest`
+  in commonTest (5 cases, green JVM + iosSimulatorArm64).
 
-Mean HR let a few artifact beats veto a real night; median keeps it. Direct
-`SleepStager`/`SleepStageHealer` logic fix. Changes which nights exist → bump
-`STAGING_VERSION` when ported.
+Mean HR let a few arousal/wake spike beats pull the run mean over
+`baseline * 1.05` and veto a real night; the spike-robust median keeps it. A
+genuinely awake run still has a high median and is still rejected, and because
+`median <= mean` for right-skewed HR the gate only ever RELAXES — no
+currently-detected night regresses. Ported byte-for-byte from upstream (which
+shipped it algorithm-only: no version bump, no migration).
+
+**Correction to the earlier plan (STAGING_VERSION is the wrong tool here).**
+`confirmSleepWithHR` decides whether a sleep *session* is DETECTED at all; a
+dropped night has NO stored `sleepSession` row. `SleepStageHealer.forceRestageAll`
+(the `STAGING_VERSION` sweep) iterates `repo.sleepSessions(...)` and only
+rewrites the `stagesJSON` breakdown of rows that ALREADY EXIST within their
+locked bounds — it cannot resurrect a night that was never detected. So bumping
+`STAGING_VERSION` does nothing for #268. Recovery instead comes from
+re-DETECTION:
+- Nights dropped within the **21-day recompute window** re-detect automatically
+  on the next engine pass (every pass re-runs `detectSleep` over that window) —
+  no gate needed. This matches upstream's algorithm-only shipping.
+- Nights dropped **older than 21 days** would need a one-shot full-history
+  re-detect — the `IntelligenceEngine.runEffortRescoreIfNeeded` pattern
+  (`analyzeRecent(maxDays = 4000)` behind a spent one-shot flag), NOT
+  `forceRestageAll`. Deferred: this fork has little long-term on-device (BLE)
+  detection history (imports come verbatim and are never re-detected), so the
+  set of >21-day-old dropped on-device nights is ~empty. Add the one-shot only
+  if a real strap history turns out to have lost old nights.
 
 ### 4. Gradle supply-chain hardening (#658)
 - [ ] `android/gradle/verification-metadata.xml` (3458 lines) + gradle wrapper update
@@ -136,5 +161,8 @@ Fixes stuck backfills. Lands in shared BLE stack (`BleSession`, `HistoricalStrea
 6. #201 baseline re-fold
 7. Rest of MEDIUM
 
-Items 1, 2 and 6 change stored-night outputs — ship together behind one
-analytics-version bump + force-restage sweep.
+Item 6 (#201) changes stored breakdowns and rides the `STAGING_VERSION`
+force-restage sweep. Items 1 (#195) and 2 (#268) do NOT: #195 re-derives HRV
+from raw on every rescore (no stored column to heal), and #268 is a re-DETECTION
+change that `forceRestageAll` cannot reach (see section 3) — both recover
+naturally via the recompute window, matching how upstream shipped them.
