@@ -324,7 +324,19 @@ for our tree, at the risk level it actually carries:
   discovers by. Android 14+ (platform HC) was already correct via the
   `ViewPermissionUsageActivity` alias, as were the healthdata `<queries>`. Manifest-only,
   upstream-verified fix; `assembleDebug` green.
-- [ ] Auto-detected workouts save on Android (#214)
+- [x] Auto-detected workouts save on Android (#214): `7940eea6` applied — rework's
+  `AutoWorkoutNudge` carried the exact cancelled-coroutine bug: "Save it" set
+  `handledThisSession = true` FIRST, which removes the card from composition (the early
+  `return` gate) and CANCELS its `rememberCoroutineScope`, so the card-scoped
+  `scope.launch { saveManualWorkout }` was killed before the suspend DB write committed —
+  never saved, therefore never excluded, so the card re-prompted the same window forever
+  (Dismiss worked because `AutoWorkoutPrefs.dismiss` is synchronous). Fixed the upstream
+  way: `buildManualRow` is pure so the row is built in the click handler and handed to
+  `AppViewModel.saveManualWorkout` (viewModelScope — survives the card); dropped the dead
+  card scope + `saving` state + imports. NOT ported: upstream's cosmetic switch of the
+  saved id to the active strap id — rework's exclusion union reads `AUTO_DETECT_DEVICE`
+  ("my-whoop"), so keeping the saved id as-is is what keeps save→exclusion consistent
+  here (upstream itself noted visibility was never the bug). App suite green.
 - [ ] Latest Workouts dedupe / multi-source (#200)
 - [ ] Imported rides count toward Effort (#137)
 - [ ] Manual workouts get HR + calories (#510)

@@ -22,7 +22,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,7 +32,6 @@ import androidx.compose.ui.unit.dp
 import com.noop.analytics.AutoWorkoutDetector
 import com.noop.analytics.AutoWorkoutDetectorTrace
 import com.noop.data.DailyMetric
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -111,12 +109,13 @@ fun AutoWorkoutNudgeCard(
     val enabled = remember { NoopPrefs.autoDetectWorkouts(context) }
     if (!enabled) return
 
-    val scope = rememberCoroutineScope()
     // The single surfaced candidate (null = nothing to suggest). Re-scanned whenever the day data grows.
     var candidate by remember { mutableStateOf<AutoWorkoutDetector.DetectedWorkout?>(null) }
     // Hide immediately on Save/X without waiting for the next reload (mirrors iOS `handledThisSession`).
+    // #214: no card CoroutineScope and no `saving` state — the save is synchronous from this card's
+    // point of view (row built pure, handed to the ViewModel's surviving scope), so there is nothing
+    // for a card-scoped coroutine to do and nothing to disable while "saving".
     var handledThisSession by remember { mutableStateOf(false) }
-    var saving by remember { mutableStateOf(false) }
 
     // Re-scan after Today appears / when the data refreshes (days = the recompute trigger; the Android
     // analog of the iOS refreshSeq). All reads + detection run off the main thread. Mirrors `reload()`.
@@ -174,35 +173,36 @@ fun AutoWorkoutNudgeCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    enabled = !saving,
                     onClick = {
-                        saving = true
+                        // #214 (upstream 7940eea6): the save must NOT run on the card's
+                        // rememberCoroutineScope. Setting handledThisSession=true removes the card
+                        // from composition (the early `return` gate above) and CANCELS that scope,
+                        // so a card-scoped `scope.launch { saveManualWorkout }` was killed before its
+                        // suspend DB write committed — the workout never saved, was therefore never
+                        // excluded, and the card re-prompted the same window forever. (Dismiss worked
+                        // because AutoWorkoutPrefs.dismiss is a synchronous write.) buildManualRow is
+                        // pure, so no card coroutine is needed at all: build the row HERE and hand it
+                        // to viewModel.saveManualWorkout, which launches on viewModelScope — a scope
+                        // that survives the card. Mirrors iOS `saveDetectedWorkout`.
+                        val durMin = ((w.endSec - w.startSec) / 60L).toInt().coerceAtLeast(1)
+                        val row = WorkoutEditing.buildManualRow(
+                            deviceId = AUTO_DETECT_DEVICE,
+                            startSeconds = w.startSec,
+                            durationMin = durMin,
+                            sport = AUTO_DETECT_SPORT,
+                            avgHr = w.avgBpm,
+                            energyKcal = null,
+                        )
+                        if (row != null) viewModel.saveManualWorkout(row)
                         handledThisSession = true
-                        scope.launch {
-                            // Build a manual-style "Workout" row over the detected window (avg HR filled),
-                            // saved via the SAME manual path the Workouts screen uses — non-destructive
-                            // until this tap. Mirrors iOS `saveDetectedWorkout`.
-                            val durMin = ((w.endSec - w.startSec) / 60L).toInt().coerceAtLeast(1)
-                            val row = WorkoutEditing.buildManualRow(
-                                deviceId = AUTO_DETECT_DEVICE,
-                                startSeconds = w.startSec,
-                                durationMin = durMin,
-                                sport = AUTO_DETECT_SPORT,
-                                avgHr = w.avgBpm,
-                                energyKcal = null,
-                            )
-                            if (row != null) runCatching { viewModel.repo.saveManualWorkout(row) }
-                            candidate = null
-                            saving = false
-                        }
+                        candidate = null
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Palette.accent, contentColor = Palette.surfaceBase,
                     ),
-                ) { Text(if (saving) "Saving…" else "Save it") }
+                ) { Text("Save it") }
 
                 OutlinedButton(
-                    enabled = !saving,
                     onClick = {
                         AutoWorkoutPrefs.dismiss(context, w)
                         handledThisSession = true
