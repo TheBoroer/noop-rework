@@ -581,6 +581,31 @@ object NoopPrefs {
         of(context).edit().putBoolean(KEY_BATTERY_FULL_ALERTED, alerted).apply()
     }
 
+    /** #250: predictive low-battery alert — warn at ~24 h of ESTIMATED runtime left, whatever the
+     *  strap generation (a fixed 15% SoC line gives ~16 h of warning on a 4.0 but ~1.8 days on a
+     *  5.0/MG). Sub-toggle of [KEY_BATTERY_ALERTS] (both must be on). Default ON, matching the
+     *  upstream 4a91bb2c default; the 15% SoC alert stays as the safety net for straps with no
+     *  usable estimate. */
+    const val KEY_PREDICTIVE_BATTERY_ALERTS = "noop.predictiveBatteryAlerts"
+
+    fun predictiveBatteryAlerts(context: Context): Boolean =
+        of(context).getBoolean(KEY_PREDICTIVE_BATTERY_ALERTS, true)
+
+    fun setPredictiveBatteryAlerts(context: Context, enabled: Boolean) {
+        of(context).edit().putBoolean(KEY_PREDICTIVE_BATTERY_ALERTS, enabled).apply()
+    }
+
+    /** #250: persisted once-per-discharge gate behind BatteryEstimator.runtimeAlert (fires ≤24 h,
+     *  re-arms ≥36 h — the 12 h hysteresis band keeps slope jitter from re-firing). */
+    const val KEY_BATTERY_RUNTIME_ALERTED = "noop.batteryRuntimeAlerted"
+
+    fun batteryRuntimeAlerted(context: Context): Boolean =
+        of(context).getBoolean(KEY_BATTERY_RUNTIME_ALERTED, false)
+
+    fun setBatteryRuntimeAlerted(context: Context, alerted: Boolean) {
+        of(context).edit().putBoolean(KEY_BATTERY_RUNTIME_ALERTED, alerted).apply()
+    }
+
     /** Scheduled report notifications (#517), opt-in, default OFF, no AI. Two independent toggles:
      *  - [KEY_REPORT_MORNING]: a morning recap (Charge + Rest) posted once after a fresh night is
      *    processed. It is NOT alarm-precise, it lands when the next sync + analytics pass completes,

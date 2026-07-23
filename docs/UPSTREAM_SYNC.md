@@ -280,7 +280,20 @@ for our tree, at the risk level it actually carries:
   can't outlive the link. DevicesScreen appends " · x.xx V" (Locale.US, 2dp) to the active+
   connected strap's status line beside the percent tube — purely additive, no new opcode, no
   automatic sends. App suite green.
-- [ ] Low-battery heads-up (#250)
+- [x] Low-battery heads-up (#250): `4a91bb2c` predictive runtime alert ported. Rework
+  already had BOTH halves it connects — `BatteryEstimator` (#713 twin, shared commonMain)
+  and `BatteryAlertNotifier` (#368 fixed-15% policy) — so this is exactly upstream's wiring:
+  `BatteryEstimator.runtimeAlert` (fire ≤24 h remaining, re-arm ≥36 h; confirmed-charging
+  suppresses WITHOUT consuming the once-per-discharge gate; `charging == null` still fires —
+  the same null-tolerant rule as the SoC alert), `BatteryAlertNotifier.onRuntimeEstimate`
+  (NOTIF_ID 4205 per the #297/#304 distinct-id discipline; gate persisted even when delivery
+  deferred), `WhoopConnectionService` evaluation gated on an ACTUAL SoC change (~8-min strap
+  cadence — the Room read + slope fit never rides every live-state emission; same
+  samples/rated inputs as the Today badge so alert and badge can never disagree). New prefs
+  `predictiveBatteryAlerts` (default ON, sub-toggle of the master in Automations — `ToggleRow`
+  gained an `enabled` param) + persisted `batteryRuntimeAlerted` gate.
+  `BatteryRuntimeAlertTest` (7, commonTest — JVM + iosSimulatorArm64) with upstream's exact
+  fixtures. Shared 1663/1667 (the 4 pre-existing locale fails), app suite green.
 - [ ] Android keep-alive / battery (#386, #228) — check vs our rewritten dataSync FGS
   service layer; may be already-fixed or inapplicable
 - [ ] Health Connect on Android 13 (#226)

@@ -347,6 +347,21 @@ fun AutomationsScreen(viewModel: AppViewModel) {
                 checked = batteryAlerts,
                 onChange = { viewModel.setBatteryAlertsEnabled(it) },
             )
+            // #250: predictive runtime alert — sub-toggle of the master (both must be on). A fixed
+            // 15% line warns ~16 h ahead on a 4.0 but ~1.8 days on a 5.0/MG; the runtime threshold
+            // gives the same "charge it tonight" lead time on both.
+            val ctx = LocalContext.current
+            var predictive by remember { mutableStateOf(NoopPrefs.predictiveBatteryAlerts(ctx)) }
+            ToggleRow(
+                label = "Predict low battery (~24h left)",
+                help = "Uses your strap's own discharge history to estimate runtime, and warns when about a day remains — the same lead time on a 4.0 and a 5.0/MG. The 15% alert stays as the fallback.",
+                checked = predictive && batteryAlerts,
+                enabled = batteryAlerts,
+                onChange = {
+                    predictive = it
+                    NoopPrefs.setPredictiveBatteryAlerts(ctx, it)
+                },
+            )
         }
         }
     }
@@ -581,16 +596,19 @@ private fun ToggleRow(
     label: String,
     help: String,
     checked: Boolean,
+    /** #250: false greys the row + disables the switch — used by sub-toggles whose master is off. */
+    enabled: Boolean = true,
     onChange: (Boolean) -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label, style = NoopType.body, color = Palette.textPrimary)
+            Text(label, style = NoopType.body, color = if (enabled) Palette.textPrimary else Palette.textTertiary)
             Text(help, style = NoopType.footnote, color = Palette.textTertiary)
         }
         Spacer(Modifier.width(16.dp))
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Palette.surfaceBase,

@@ -103,6 +103,11 @@ class WhoopConnectionService : Service() {
      *  process restarts and the AppViewModel call site. */
     private var lastIllnessAlert: String? = null
 
+    /** #250: last battery % the predictive runtime alert was evaluated at. The live-state flow emits
+     *  far more often than the strap's ~8-min battery cadence; gating the Room read + estimator fit
+     *  on an actual SoC change keeps the predictive path as cheap as the SoC-only alert beside it. */
+    private var lastRuntimeEvalPct: Int? = null
+
     /** Smart-alarm light-sleep watcher (#207). Feeds the live HR while we're inside the wake window
      *  and, on a lighter-phase reading, advances the GUARANTEED alarm earlier. It can only ever move
      *  the alarm earlier within the window — the hard deadline scheduled via AlarmManager is the floor
@@ -240,6 +245,28 @@ class WhoopConnectionService : Service() {
                     currPct = state.batteryPct?.roundToInt(),
                     charging = state.charging,
                 )
+                // #250: predictive runtime alert (upstream twin: BatteryNotifier.onRuntimeEstimate):
+                // re-fit the "~X left" estimate from the persisted SoC series and warn at ≤24 h of
+                // runtime, whatever the strap generation. Evaluated only when the battery % actually
+                // changes (~8-min strap cadence), so the Room read + slope fit never rides every
+                // live-state emission. Same samples/rated inputs as the Today badge, so the alert can
+                // never disagree with the number on screen.
+                val runtimePct = state.batteryPct?.roundToInt()
+                if (runtimePct != null && runtimePct != lastRuntimeEvalPct) {
+                    lastRuntimeEvalPct = runtimePct
+                    runCatching {
+                        val nowS = System.currentTimeMillis() / 1000
+                        val samples = repo.batterySamples("my-whoop", nowS - 14L * 86_400, nowS, limit = 2_000)
+                            .mapNotNull { s -> s.soc?.let { s.ts to it } }
+                        val rated = if (state.whoop5Detected) com.noop.analytics.BatteryEstimator.ratedLifeHoursWhoop5
+                                    else com.noop.analytics.BatteryEstimator.ratedLifeHoursWhoop4
+                        BatteryAlertNotifier.onRuntimeEstimate(
+                            this@WhoopConnectionService,
+                            remainingHours = com.noop.analytics.BatteryEstimator.estimate(samples, rated)?.hoursRemaining,
+                            charging = state.charging,
+                        )
+                    }
+                }
                 // Feed the home-screen widget from the same stream — this service is its heartbeat
                 // while the app UI is closed. Throttled + no-op without a placed widget (the store
                 // checks both); runCatching so a Glance hiccup never tears down the connection.
