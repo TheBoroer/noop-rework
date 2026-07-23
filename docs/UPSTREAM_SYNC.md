@@ -26,8 +26,10 @@ so history heals itself.
   `sessionHrvWindows`, with `HrvGapAwareTest` in commonTest (passes JVM + iosSimulatorArm64).
 - [ ] `286e8b88` per-night cleaning-pipeline summary in the always-on log (#205) — diag-only,
   optional follow-up.
-- [ ] `b8a35820` honour deep-sleep HRV window on edit/backfill re-scores (#206) — folded into
-  item 2 (#201) work.
+- [x] `b8a35820` honour deep-sleep HRV window on edit/backfill re-scores (#206) — ported with
+  item 2 (#201): `AppViewModel.rescoreAfterEdit()` now threads
+  `deepHrvWindow = UnitPrefs.hrvWindow(...)` like the 15-min loop (it defaulted to `false`,
+  so an edit re-score recomputed the touched nights whole-night for a Deep-sleep user).
 
 The cleaned RR series was compacted before RMSSD/pNN50 ran, so a dropped noisy beat spliced
 its neighbours and the squared jump across the gap dominated the night (HRV ~2× high, recovery
@@ -42,13 +44,16 @@ tachogram, and direct `rmssdRaw` in `RhythmScreener`/`ResonanceEngine` still spl
 lists these as the same follow-up class; port later if wanted.
 
 ### 2. HRV window switch re-folds baseline (#201)
-- [ ] `f890e416` re-fold the HRV baseline on a window switch instead of restarting
-  calibration (#209)
-
-Switching whole-night ↔ deep-sleep currently restarts baseline calibration ("calibrating"
-for several nights). Upstream re-folds the existing history immediately. Belongs in shared
-`IntelligenceEngine`. Supersedes the "HRV BASELINE must re-learn" re-anchor comment logic
-in `Strand/Screens/SettingsView.swift`.
+- [x] `f890e416` re-fold the HRV baseline on a window switch instead of restarting
+  calibration (#209) — ported. `SettingsScreen.kt` no longer writes
+  `noop.hrvBaselineEpoch` on the window toggle (epoch reset dropped every stored night from
+  the fold → CALIBRATING for ~`minNightsSeed` nights, Change nil); it keeps the watermark
+  clear + `syncNow()` so the ~21-night re-score under the new window EWMA-dominates the
+  full-history fold within days while the baseline stays USABLE throughout. The epoch reset
+  remains the manual "Recalibrate Charge baseline" mechanism only. Pinned by
+  `windowSwitchRefold_staysUsableWithoutEpochReset` (usable across the switch, ~63 → 53.9
+  after the 21 re-scored nights, → 52.0 ten nights later) alongside the existing
+  `recalibrateEpoch_afterAllNights_resetsToColdStart` cold-start pin.
 
 ### 3. Confirm-sleep runs on median HR, not mean (#268)
 - [x] `3b168690` recover dropped nights — ported into
@@ -218,8 +223,10 @@ for our tree, at the risk level it actually carries:
 6. #201 baseline re-fold
 7. Rest of MEDIUM
 
-Item 6 (#201) changes stored breakdowns and rides the `STAGING_VERSION`
-force-restage sweep. Items 1 (#195) and 2 (#268) do NOT: #195 re-derives HRV
-from raw on every rescore (no stored column to heal), and #268 is a re-DETECTION
-change that `forceRestageAll` cannot reach (see section 3) — both recover
-naturally via the recompute window, matching how upstream shipped them.
+Item 6 (#201) landed WITHOUT a `STAGING_VERSION` bump (the earlier note here was a
+plan-time assumption): the port changes no stored data — it removes a prefs write in the
+Settings toggle and relies on the existing watermark-cleared re-score, and the baseline
+fold already replays the full stored history each pass. Items 1 (#195) and 2 (#268) also
+do NOT ride the sweep: #195 re-derives HRV from raw on every rescore (no stored column to
+heal), and #268 is a re-DETECTION change that `forceRestageAll` cannot reach (see
+section 3) — both recover naturally via the recompute window, matching upstream.
