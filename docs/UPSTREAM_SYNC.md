@@ -375,7 +375,19 @@ for our tree, at the risk level it actually carries:
   Tests: GPX hrSamples assertions + `hrSamplesRequireBothTimestampAndHr` + FIT stream parity
   in `ActivityFileImporterTest`; `activityFileRideRanksBelowWholeDayImport` tie-break in
   `RegistryDayOwnerSourceTest`. All green; app suite green.
-- [ ] Manual workouts get HR + calories (#510)
+- [x] Manual workouts get HR + calories (#510): `0bfbfc1e` ported. Rework's detected-bout
+  overlap drop (the #975 "two workouts, one vanished" seam) threw away the bout's own
+  computed avgHR/calories/maxHR/strain purely to avoid double-counting — a manual entry's
+  user-typed `[startTs,endTs]` rarely matches the detector's tighter boundaries, so the
+  display-time `fillWorkoutHrFromStrap` raw-window read came up too thin and the row
+  silently showed no HR/calories. Now the collision path backfills ONLY the fields the real
+  row doesn't already have (`backfillWorkoutFromDetectedBout`, pure + internal — never
+  touches anything user-typed/imported/already-filled; returns the row `==`-unchanged when
+  nothing is missing so the caller skips the write) and upserts in place on the same
+  natural key. New trace verdict `droppedOverlapBackfilled` distinguishes a backfilled drop
+  in the Workouts test-mode trace. `IntelligenceEngineWorkoutBackfillTest` (3, upstream
+  verbatim, in shared androidUnitTest). Shared 1667/1671 (the 4 pre-existing locale fails);
+  app suite green.
 - [ ] Journal import "answered yes" header fix (#631)
 - [ ] Smart wake alarm arms more reliably (#34)
 - [ ] Sleep times/totals read right after an edit (#259)
