@@ -82,13 +82,31 @@ re-DETECTION:
   set of >21-day-old dropped on-device nights is ~empty. Add the one-shot only
   if a real strap history turns out to have lost old nights.
 
-### 4. Gradle supply-chain hardening (#658)
-- [ ] `android/gradle/verification-metadata.xml` (3458 lines) + gradle wrapper update
-  (PR #683, kavemang)
+### 4. Gradle supply-chain hardening (#658, PR #683 kavemang)
 
-We have **no** dependency-verification metadata locally. Security fix. Take the mechanism,
-regenerate metadata for our own dependency set (Compose desktop, KMP targets, etc. that
-upstream doesn't have).
+Upstream's PR is three independent mechanisms. Can't cherry-pick any of the files:
+upstream is Android-only under `android/` with its own wrapper; rework is a unified
+KMP build at the repo root with a completely different dependency set (Compose
+Multiplatform, Room KMP, KSP, native iOS/macOS targets). Each mechanism regenerated
+for our tree, at the risk level it actually carries:
+
+- [x] **Gradle distribution SHA-256 pin** (`32765235`) — shipped.
+  `gradle/wrapper/gradle-wrapper.properties` now carries
+  `distributionSha256Sum=a4b4158601f8636cdeeab09bd76afb640030bb5b144aafe261a5e8af027dc612`
+  for our gradle-8.8-bin.zip (upstream pinned 8.7). Value cross-verified against two
+  official sources (the published `.sha256` and gradle.org/release-checksums). The
+  wrapper aborts if the downloaded distribution's hash doesn't match — blocks a
+  tampered Gradle. Self-contained, zero build-graph risk. `./gradlew --version` green.
+- [ ] **Dependency locking** (`1928776c`, `dependencyLocking { lockAllConfigurations() }`
+  + `gradle.lockfile`) — feasible but heavier here than upstream's single Android app
+  module: KMP has many more configurations (per-target compile/runtime/klib/cinterop/
+  metadata). Reversible (delete locks + config). Moderate value, own careful step.
+- [ ] **`verification-metadata.xml` (per-artifact checksums)** — HIGH RISK for KMP,
+  deferred. Once the file exists Gradle enforces it on EVERY resolution, and native/
+  konan + klib + KSP + CMP artifacts are hard to capture cleanly; a half-populated file
+  bricks every build (breaks `dev.sh`, on-device installs). A gap here is worse than
+  its absence. Only attempt as a deliberate, verified step — not a blind
+  `--write-verification-metadata`.
 
 ### 5. Backfill clock retry + Data Range fallback (#700) — **investigated, DECLINED**
 - [x] `0d252f1d` retry GET_CLOCK when no correlation establishes — **N/A (iOS-only).**
