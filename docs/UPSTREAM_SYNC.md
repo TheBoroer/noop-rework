@@ -109,16 +109,26 @@ for our tree, at the risk level it actually carries:
   official sources (the published `.sha256` and gradle.org/release-checksums). The
   wrapper aborts if the downloaded distribution's hash doesn't match — blocks a
   tampered Gradle. Self-contained, zero build-graph risk. `./gradlew --version` green.
-- [ ] **Dependency locking** (`1928776c`, `dependencyLocking { lockAllConfigurations() }`
-  + `gradle.lockfile`) — feasible but heavier here than upstream's single Android app
-  module: KMP has many more configurations (per-target compile/runtime/klib/cinterop/
-  metadata). Reversible (delete locks + config). Moderate value, own careful step.
-- [ ] **`verification-metadata.xml` (per-artifact checksums)** — HIGH RISK for KMP,
-  deferred. Once the file exists Gradle enforces it on EVERY resolution, and native/
-  konan + klib + KSP + CMP artifacts are hard to capture cleanly; a half-populated file
-  bricks every build (breaks `dev.sh`, on-device installs). A gap here is worse than
-  its absence. Only attempt as a deliberate, verified step — not a blind
-  `--write-verification-metadata`.
+- [x] **Dependency locking** (`1928776c`, `dependencyLocking { lockAllConfigurations() }`
+  + `gradle.lockfile`) — shipped. Block added to BOTH `:shared` (root build) and android
+  `:app` (mirrors upstream's app-module placement). `shared/gradle.lockfile` (344 lines)
+  is the union of both roots' resolution — `--write-locks` preserves entries for
+  configurations not resolved in a given run; the android pass left it byte-identical.
+  `android/app/gradle.lockfile` 330 lines. Verified: both roots compile green under
+  enforcement (androidTarget + iosSimulatorArm64 klib + assembleDebug), and a tampered
+  lockfile (coroutines pinned to 1.6.0) fails resolution with lock-constraint errors.
+- [x] **`verification-metadata.xml` (per-artifact SHA-256)** — shipped, the deliberate
+  way: generated per Gradle root from REAL task graphs, not a blind write.
+  Root `gradle/verification-metadata.xml` (503 components) from
+  `help + :shared:dependencies + compileDebugKotlinAndroid + compileKotlinIosSimulatorArm64
+  + testDebugUnitTest`; android `gradle/verification-metadata.xml` (629 components) from
+  `help + :app:dependencies + :app:assembleDebug`. Enforcement verified live on both
+  roots (full `dependencies` resolution + real builds all green), and a corrupted
+  sha256 blocks the build ("Dependency verification failed … activity-1.2.0.aar").
+  `dev.sh` safe: it runs `:app:installDebug`, whose external-dependency graph equals the
+  verified `assembleDebug`. konan/Kotlin-Native compiler downloads are outside dependency
+  resolution and unaffected. If a future dependency bump trips verification, regenerate
+  with `--write-verification-metadata sha256 <same task graph>`.
 
 ### 5. Backfill clock retry + Data Range fallback (#700) — **investigated, DECLINED**
 - [x] `0d252f1d` retry GET_CLOCK when no correlation establishes — **N/A (iOS-only).**
