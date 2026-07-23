@@ -1227,6 +1227,97 @@ fun SettingsScreen(
                     )
                 }
 
+                // #386 (upstream 05c2d867): "Keep NOOP alive overnight" — the battery-optimisation
+                // whitelist against aggressive-OEM background kill. Shown only when the background
+                // connection is on (there's nothing to keep alive otherwise). POPUP DISCIPLINE:
+                // turning it ON fires exactly ONE system dialog; already-exempt = inert switch,
+                // never re-prompted; the OEM auto-start deep-link is a SEPARATE text link, never
+                // chained onto the dialog. The switch reflects the LIVE system exempt state,
+                // re-read on every ON_RESUME so returning from the system dialog updates it
+                // immediately (stale state would invite a second tap = a duplicate popup).
+                if (backgroundConnection) {
+                    var batteryExempt by remember {
+                        mutableStateOf(com.noop.ble.BackgroundHealth.isBatteryExempt(context))
+                    }
+                    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+                    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                batteryExempt = com.noop.ble.BackgroundHealth.isBatteryExempt(context)
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+                    val vendorKills = com.noop.ble.BackgroundHealth.isAggressiveVendor()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Keep NOOP alive overnight",
+                                style = NoopType.subhead,
+                                color = Palette.textPrimary,
+                            )
+                            Text(
+                                (if (vendorKills)
+                                    "${android.os.Build.MANUFACTURER} phones aggressively stop background apps, which can kill the overnight connection. "
+                                else "") +
+                                    "Asks Android to exempt NOOP from battery optimisation so the overnight " +
+                                    "sync isn't stopped mid-night. Adds no battery use of its own — it only " +
+                                    "prevents a premature kill of work you already enabled.",
+                                style = NoopType.footnote,
+                                color = Palette.textTertiary,
+                            )
+                        }
+                        Switch(
+                            checked = batteryExempt,
+                            onCheckedChange = { wantOn ->
+                                // ONE dialog, only on the off→on tap; an exempt user is never re-prompted,
+                                // and Android offers no silent revoke (turn it off in system settings).
+                                if (wantOn && !batteryExempt) {
+                                    runCatching {
+                                        context.startActivity(
+                                            com.noop.ble.BackgroundHealth.batteryExemptionIntent(context),
+                                        )
+                                    }.recoverCatching {
+                                        // A ROM that hides the request action still has the app page.
+                                        context.startActivity(
+                                            com.noop.ble.BackgroundHealth.appBatterySettingsIntent(context),
+                                        )
+                                    }
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Palette.surfaceBase,
+                                checkedTrackColor = Palette.accent,
+                                uncheckedThumbColor = Palette.textSecondary,
+                                uncheckedTrackColor = Palette.surfaceInset,
+                                uncheckedBorderColor = Palette.hairline,
+                            ),
+                            modifier = Modifier.semantics {
+                                contentDescription = "Keep NOOP alive overnight"
+                            },
+                        )
+                    }
+                    // The OEM auto-start screen is a SEPARATE, second action (component names drift per
+                    // ROM; shown only when one actually resolves on this device) — never chained onto
+                    // the exemption dialog, so one tap can't spawn two popups.
+                    val autostart = remember { com.noop.ble.BackgroundHealth.oemAutostartIntent(context) }
+                    if (autostart != null) {
+                        Text(
+                            "Also allow auto-start in your phone's security app",
+                            style = NoopType.footnote,
+                            color = Palette.accent,
+                            modifier = Modifier.clickable {
+                                runCatching { context.startActivity(autostart) }
+                            },
+                        )
+                    }
+                }
+
                 // Continuous HRV capture: keep the dense beat-to-beat (R-R) stream armed even with no Live
                 // screen open, so the strap banks far more data overnight for better HRV/recovery/sleep.
                 // Honest battery framing — continuous HR streaming uses more battery. Needs background

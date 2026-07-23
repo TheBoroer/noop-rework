@@ -62,6 +62,11 @@
          must be granted at runtime. Requested in MainActivity alongside the BLE permissions. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Sideload-only (Play restricts this; NOOP doesn't ship there): the Settings "Keep NOOP alive
+         overnight" toggle uses it to pop the one-tap battery-optimisation whitelist dialog, so the
+         overnight foreground service isn't killed on aggressive-OEM phones (#386, upstream 05c2d867). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Optional call alerts. Requested only when the user enables "Phone calls"; NOOP does not
          request READ_CALL_LOG and never reads incoming numbers, contacts, or call history. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -123,6 +128,16 @@
         <!-- So the connection helper can detect the official WHOOP app and deep-link to its
              info screen (a strap only pairs with one app at a time). Android 11+ visibility. -->
         <package android:name="com.whoop.android" />
+        <!-- #386: OEM security-centre packages, so BackgroundHealth.oemAutostartIntent's
+             resolveActivity can SEE their auto-start screens under Android 11+ package-visibility
+             filtering (targetSdk 34) — without these the deep-link would silently never resolve on
+             exactly the aggressive-OEM phones (Xiaomi/Oppo/Vivo/Huawei/Meizu) that need it. -->
+        <package android:name="com.miui.securitycenter" />
+        <package android:name="com.coloros.safecenter" />
+        <package android:name="com.oppo.safe" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.huawei.systemmanager" />
+        <package android:name="com.meizu.safe" />
     </queries>
 
     <application

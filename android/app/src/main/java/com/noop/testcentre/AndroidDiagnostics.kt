@@ -257,11 +257,13 @@ object AndroidDiagnostics {
     }.getOrDefault("unknown")
 
     /** A coarse OEM-kill heuristic by manufacturer (the aggressive-background-kill vendors). Pure and
-     *  internal so it unit-tests without a Context (the suite stays Robolectric-free). */
+     *  internal so it unit-tests without a Context (the suite stays Robolectric-free). #386: the vendor
+     *  set now lives in [com.noop.ble.BackgroundHealth.AGGRESSIVE_VENDORS] — the diagnostic and the
+     *  Settings fix read ONE canonical list, so the two can never drift. */
     internal fun oemKillHeuristic(manufacturer: String): String {
         val m = manufacturer.lowercase()
-        val aggressive = listOf("xiaomi", "oppo", "vivo", "huawei", "oneplus", "realme", "meizu")
-        return if (aggressive.any { m.contains(it) }) "aggressive vendor ($m), whitelist NOOP to keep it alive"
+        return if (com.noop.ble.BackgroundHealth.isAggressiveVendor(manufacturer))
+            "aggressive vendor ($m), whitelist NOOP to keep it alive"
         else "standard"
     }
 
