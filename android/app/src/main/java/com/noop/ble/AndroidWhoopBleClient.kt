@@ -2549,11 +2549,23 @@ class AndroidWhoopBleClient(
      *  strap was connected when we sent it), so a "didn't buzz" report shows sent-vs-strap-reports. */
     private fun recordAlarmArm(sentEpoch: Long) {
         runCatching {
-            NoopPrefs.of(context).edit()
+            val editor = NoopPrefs.of(context).edit()
                 .putLong("alarm.lastArmSentEpoch", sentEpoch)
                 .putLong("alarm.lastArmAt", System.currentTimeMillis())
                 .putBoolean("alarm.lastArmConnected", _state.value.connected)
-                .apply()
+            // #34 (upstream 83cdc474): live HR at the moment of the arm, purely to test a hypothesis
+            // raised on a reporter's log — morning wake-up and morning short-horizon arms have fired
+            // reliably, but an identical evening short-horizon arm (same code path, same commands, no
+            // day/night branch anywhere in armStrapAlarm) did not. One firmware-side explanation that
+            // would fit every reported case: the physical alarm haptic might only fire while the
+            // strap's OWN sleep/rest detection considers the wearer sleep-adjacent, independent of
+            // anything NOOP sends. This doesn't prove or fix that — it's a free read of state already
+            // tracked live, logged so the next reported failure (ideally an evening one) can be
+            // compared against the resting HR of the successful arms already on file. Absent key means
+            // no HR had streamed yet at arm time.
+            val hr = _state.value.heartRate
+            if (hr != null) editor.putInt("alarm.lastArmHeartRate", hr) else editor.remove("alarm.lastArmHeartRate")
+            editor.apply()
         }
     }
 
@@ -3706,10 +3718,32 @@ class AndroidWhoopBleClient(
                                 .putLong("alarm.lastReportedAt", System.currentTimeMillis())
                                 .apply()
                         }
+                    } else if (whoop4ReadbackReportsNoAlarm(frame)) {
+                        // #34 (17e5b09a): the strap's "nothing armed" sentinel — the epoch field decodes
+                        // to 0. This is NOT an undocumented layout; it's the strap telling us it has no
+                        // alarm stored, so an arm we just sent did NOT persist. Calling this
+                        // "unrecognised payload" hid the single most diagnostic signal in a "didn't
+                        // buzz" report: SET went out, strap kept nothing. Name it plainly. Log-only.
+                        val raw = whoop4AlarmReadbackPayloadHex(frame) ?: "empty"
+                        log("Alarm: strap reports NO alarm currently stored (epoch 0) — the arm did not persist on the strap (raw $raw)")
                     } else {
                         val raw = whoop4AlarmReadbackPayloadHex(frame) ?: "empty"
                         log("Alarm: strap answered the alarm readback with an unrecognised payload (raw $raw) - layout undocumented, log-only")
                     }
+                }
+                // #34 (17e5b09a): the strap's OWN answer to the arm we just sent — the accept/reject
+                // datum previously thrown away. armStrapAlarm logs "armed" the instant the SET goes
+                // out, which only proves NOOP transmitted the frame; if the firmware drops it the
+                // GET_ALARM_TIME readback then reads back epoch 0 (a silently-unpersisted alarm). The
+                // WHOOP 4.0 result-code meaning is UNVERIFIED (the 5/MG puffin table is 0=FAILURE
+                // 1=SUCCESS 2=PENDING 3=UNSUPPORTED, but the 4.0 reboot probe assumed 0=accepted), so
+                // no verdict is claimed — it surfaces the byte, nothing more. LOG-ONLY. WHOOP4-only:
+                // the 4.0 result byte sits at frame[8]; the 5/MG result is decoded as the `result`
+                // string above and its alarm path is the Experimental one.
+                if (connectedFamily == DeviceFamily.WHOOP4 && respCmd?.startsWith("SET_ALARM_TIME") == true) {
+                    val r = frame.getOrNull(8)?.toInt()?.and(0xFF)
+                    val rhex = if (r != null) "0x%02x".format(r) else "none"
+                    log("Alarm: strap answered the arm (SET_ALARM_TIME) with result=$rhex — log-only, 4.0 result-code meaning unverified")
                 }
             }
 
@@ -5724,6 +5758,28 @@ internal fun whoop4ArmedAlarmEpoch(frame: ByteArray): Long? {
         u32le(1)?.takeIf { isPlausibleAlarmEpoch(it) }?.let { return it }
     }
     return u32le(0)?.takeIf { isPlausibleAlarmEpoch(it) }
+}
+
+/**
+ * True when a GET_ALARM_TIME readback explicitly reports NO alarm stored — the epoch field decodes to
+ * 0 in the same shapes [whoop4ArmedAlarmEpoch] reads (SET-mirror `[0x01][u32=0]` first, then a bare
+ * leading `u32=0`). This is the strap's "nothing armed" sentinel, distinct from a genuinely
+ * unparseable payload: an arm the strap silently dropped reads back as epoch 0, so labelling it
+ * "unrecognised" hid the real signal (#34, upstream 17e5b09a). Only consulted AFTER
+ * [whoop4ArmedAlarmEpoch] returns null. Twin of the Swift `FrameRouter.readbackReportsNoAlarm`;
+ * pinned by `AlarmReadbackDecodeTest`.
+ */
+internal fun whoop4ReadbackReportsNoAlarm(frame: ByteArray): Boolean {
+    val payload = whoop4CommandResponsePayload(frame) ?: return false
+    fun u32le(at: Int): Long? {
+        if (payload.size < at + 4) return null
+        return (payload[at].toLong() and 0xFFL) or
+            ((payload[at + 1].toLong() and 0xFFL) shl 8) or
+            ((payload[at + 2].toLong() and 0xFFL) shl 16) or
+            ((payload[at + 3].toLong() and 0xFFL) shl 24)
+    }
+    if (payload.isNotEmpty() && payload[0] == 0x01.toByte() && u32le(1) == 0L) return true
+    return u32le(0) == 0L
 }
 
 /** Local wall-clock render for the readback log line ("EEE HH:mm zzz", the armStrapAlarm idiom on the

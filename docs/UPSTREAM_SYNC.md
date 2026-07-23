@@ -397,7 +397,22 @@ for our tree, at the risk level it actually carries:
   regression test `importedJournalReadsRealWhoopAnsweredYesHeader` with the reporter's real
   header + TRUE/FALSE casing. (Upstream's #682 never-asked-vs-no partition is a separate
   issue, untouched here, matching upstream's own scoping.) Shared suite green.
-- [ ] Smart wake alarm arms more reliably (#34)
+- [x] Smart wake alarm arms more reliably (#34): three upstream commits triaged; two ported,
+  one N/A.
+  - `b0dc0c63` (defer re-arm-on-bond past the connect handshake) — **N/A (Swift-only race).**
+    The bug was Combine delivering the bonded sink SYNCHRONOUSLY inside BLEManager's
+    connect-handshake continuation. Rework's Android side is safe by construction: `bonded`
+    is only set after the CCCD queue confirms (the #12 ordering), and the `ble.state.collect`
+    re-arm runs on the main-dispatcher coroutine, never on the BLE callback stack.
+  - `17e5b09a` ported: `whoop4ReadbackReportsNoAlarm` (the epoch-0 "nothing armed" sentinel,
+    both decode shapes) so a silently-unpersisted arm logs "strap reports NO alarm currently
+    stored" instead of hiding behind "unrecognised payload" — the single most diagnostic
+    signal in a "didn't buzz" report; plus the SET_ALARM_TIME result-byte log (LOG-ONLY,
+    4.0 result-code meaning explicitly unverified). 4 new `AlarmReadbackDecodeTest` cases
+    incl. the verbatim field-report payload.
+  - `83cdc474` ported: live HR persisted at arm time (`alarm.lastArmHeartRate`, removed when
+    absent) + surfaced on the Test Centre Alarm block — the free diagnostic for upstream's
+    strap-side sleep-adjacency hypothesis. App suite green.
 - [ ] Sleep times/totals read right after an edit (#259)
 - [ ] Automatic sync no longer stalls (#266)
 
