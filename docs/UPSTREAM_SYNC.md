@@ -163,10 +163,20 @@ for our tree, at the risk level it actually carries:
   `CommandChannelTest` picks up the extra planned SET_CONFIG via `.size` (no change).
   `WHOOP5_DEEP_DATA.md` "15 flags" write-burst line updated to 16. Green JVM +
   iosSimulatorArm64.
-- [ ] `79600cc4` v20 optical: RawImu length-gate parity + RE evidence (#546 → #577)
-- [ ] `e56f45ca` persist the WHOOP 5/MG raw-IMU offload buffer (#423) (#675)
-- [ ] Steal upstream's `android/app/src/test/resources/decoder_oracle.json` additions as
-  golden vectors for our decoder oracle tests
+- [x] `79600cc4` v20 optical: RawImu length-gate parity + RE evidence (#546 → #577) —
+  **N/A (no decoder here).** Fixes upstream Android's `Whoop5RawImu.kt` length gate; this
+  tree has no raw-IMU/optical decoder at all (zero `RawImu`/`RawOptical` hits outside this
+  doc). Same precedent as `80da3bca`: nothing to port until a raw-IMU decoder is
+  deliberately added.
+- [x] `e56f45ca` persist the WHOOP 5/MG raw-IMU offload buffer (#423) (#675) —
+  **N/A (no decoder here).** Persists the output of that same absent decoder
+  (`rawImuSample` table, Room `MIGRATION_20_21`, receive-side capture in
+  `WhoopBleClient`); instrument-only upstream ("nothing consumes it yet"). Porting it
+  requires first porting the decoder — one decision, take both together or neither.
+- [x] Steal upstream's `android/app/src/test/resources/decoder_oracle.json` additions —
+  **already in sync.** Compared vector-by-vector against
+  `shared/src/androidUnitTest/resources/decoder_oracle.json`: 11/11 frames identical in
+  both directions, nothing to steal.
 
 ---
 
