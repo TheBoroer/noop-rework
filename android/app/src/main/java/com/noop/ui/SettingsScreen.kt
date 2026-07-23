@@ -1301,7 +1301,7 @@ fun SettingsScreen(
                 // HRV window (#141) — grouped with the other HRV settings (#155). Measure nightly HRV over
                 // the whole night (NOOP's long-standing value) or DEEP sleep only (WHOOP-style, reads lower
                 // and more comparable to WHOOP/Polar). Unlike the Effort scale this CHANGES the number, so a
-                // switch forces a re-score + re-baseline.
+                // switch forces a re-score; the baseline re-folds from the re-scored nights (#201).
                 FormRow(label = "HRV window") {
                     SegmentedPillControl(
                         items = listOf(HrvWindow.WHOLE_NIGHT, HrvWindow.DEEP_SLEEP),
@@ -1310,27 +1310,28 @@ fun SettingsScreen(
                         onSelect = {
                             hrvWindow = it
                             UnitPrefs.setHrvWindow(context, it)
-                            // The new window shifts every night's avgHrv, so the HRV BASELINE must re-learn or
-                            // recovery would compare the new value against a baseline still folded from the old
-                            // window (only the recent ~21 nights re-score, but the baseline EWMA spans further —
-                            // it would read skewed for weeks). Re-anchor the HRV baseline to now (same key +
-                            // mechanism as "Recalibrate Charge baseline"), then force a re-score so the recent
-                            // trend + the fresh baseline both reflect the new window. A few nights to settle.
-                            NoopPrefs.of(context).edit()
-                                .putLong(Baselines.hrvBaselineEpochKey, System.currentTimeMillis() / 1000L)
-                                .apply()
+                            // #201: do NOT re-anchor the HRV baseline epoch here. Resetting the epoch drops
+                            // every pre-switch night from the fold, so the baseline re-enters CALIBRATING and
+                            // Change reads nil for ~minNightsSeed nights — a user with months of history fell
+                            // back to "calibrating" just for flipping a display-adjacent setting. The forced
+                            // re-score below recomputes the recent ~21 nights' avgHrv under the new window and
+                            // the baseline fold (which replays the full stored history each pass) is EWMA-
+                            // dominated by those re-scored nights within days, while staying USABLE the whole
+                            // time. Nights older than the re-score window keep old-window values in the fold;
+                            // acceptable skew that decays fast, vs. a guaranteed multi-night outage. The epoch
+                            // reset remains the mechanism of the manual "Recalibrate Charge baseline" only.
                             NoopPrefs.setAnalyzeWatermark(context, "")
                             vm.syncNow()
                             Toast.makeText(
                                 context,
-                                "Re-learning your HRV over the ${if (it == HrvWindow.DEEP_SLEEP) "deep-sleep" else "whole-night"} window. Charge recalibrates over the next few nights.",
+                                "Re-scoring your HRV over the ${if (it == HrvWindow.DEEP_SLEEP) "deep-sleep" else "whole-night"} window. Charge adjusts over the next few nights.",
                                 Toast.LENGTH_LONG,
                             ).show()
                         },
                     )
                 }
                 Text(
-                    "Whole night is NOOP's default measure; Deep sleep pools HRV over slow-wave sleep only, reading lower and matching WHOOP. Switching re-scores recent nights and recalibrates Charge over a few nights.",
+                    "Whole night is NOOP's default measure; Deep sleep pools HRV over slow-wave sleep only, reading lower and matching WHOOP. Switching re-scores recent nights; Charge keeps working and adjusts over a few nights.",
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                 )

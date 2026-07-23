@@ -113,6 +113,39 @@ class HrvBaselineRecalibrationTest {
         assertEquals(BaselineStatus.CALIBRATING, s.status)
     }
 
+    /**
+     * #201 — HRV-window switch (whole-night → deep-sleep) must NOT reset the baseline epoch. The
+     * re-score rewrites the recent ~21 nights' avgHrv under the new window; re-folding the full
+     * history (older nights still old-window, no epoch) must stay USABLE throughout and land near
+     * the new-window value — the EWMA is dominated by the re-scored recent nights. The epoch-reset
+     * alternative is the cold-start pinned by [recalibrateEpoch_afterAllNights_resetsToColdStart]:
+     * every stored night predates a now-epoch, so Change would read nil for ~minNightsSeed nights.
+     */
+    @Test
+    fun windowSwitchRefold_staysUsableWithoutEpochReset() {
+        // 40 whole-night nights (~62ms), then the switch: the last 21 re-score under the deep-sleep
+        // window (~48ms). Mixed series, no epoch.
+        val vals: List<Double?> = List(40) { 62.0 + (it % 3).toDouble() } + List(21) { 48.0 + (it % 3).toDouble() }
+        val s = Baselines.foldHistory(vals, hrvCfg)
+
+        // Never drops to calibrating — the whole point of #201.
+        assertTrue("baseline must stay usable across a window switch", s.status != BaselineStatus.CALIBRATING)
+        assertEquals(vals.size, s.nValid)
+
+        // Winsor clamping throttles each big-step night, so the re-anchor is gradual, not instant —
+        // but after the 21 re-scored nights it must already sit clearly below the old whole-night
+        // level (~63), closer to the deep-sleep mean (~49) than to the old one.
+        assertTrue("must have left the whole-night level behind, got ${s.baseline}", s.baseline < 56.0)
+
+        // And post-switch nights keep pulling it in: 10 more deep-sleep nights → closer still.
+        val extended = Baselines.foldHistory(vals + List(10) { 48.0 + (it % 3).toDouble() }, hrvCfg)
+        assertTrue(
+            "convergence must continue as new-window nights arrive, ${s.baseline} -> ${extended.baseline}",
+            extended.baseline < s.baseline - 0.5,
+        )
+        println("windowSwitchRefold: after21=${s.baseline} after31=${extended.baseline}")
+    }
+
     // ── 3. "Recalibrate Charge baseline" reset helper (writes BOTH epoch keys) ───────────────────
 
     /**
