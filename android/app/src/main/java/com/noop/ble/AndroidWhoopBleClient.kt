@@ -496,6 +496,12 @@ class AndroidWhoopBleClient(
         // MARK: Historical-offload timers (ported from BLEManager.swift, same constants).
         /** Periodic re-offload of the type-47 store while connected+bonded. 900s = 15 min (matches WHOOP). */
         private const val BACKFILL_INTERVAL_MS = 900_000L
+        /** #228 (0c552aaf): how long a fresh STATE_CONNECTED link must SURVIVE before the involuntary
+         *  reconnect backoff resets. A contended band (official app holding the ACL) reaches
+         *  STATE_CONNECTED briefly each cycle; an instant reset pinned the reconnect at attempt 1 =
+         *  active DIRECT connects indefinitely, both radios hot. 8s is comfortably past the flap
+         *  window and well under the 15-min cadence. */
+        internal const val RECONNECT_HEALTHY_DWELL_MS = 8_000L
         /** How far back the inactivity check reads gravity on each offload completion (4 h comfortably
          *  spans the threshold + re-nudge cadence and a separating Active break for bout continuity). */
         private const val INACTIVITY_LOOKBACK_S = 4 * 3600L
@@ -3060,9 +3066,17 @@ class AndroidWhoopBleClient(
                     // #1030 (ryanbr): a real link is up — cancel any pending involuntary reconnect so a
                     // stale backoff timer can't fire and reset+close this connection.
                     cancelPendingReconnect()
-                    // A successful connect clears the reconnect backoff — the next involuntary drop
-                    // starts the 3,6,12…s schedule afresh (iOS didConnect: failedConnectAttempts=0, #48).
-                    resetReconnectBackoff()
+                    // #228 (upstream 0c552aaf): the backoff reset is DEFERRED behind an 8s survival
+                    // dwell instead of firing here. The direct-first reconnect makes involuntary
+                    // attempts 1-2 active DIRECT connects; on a band whose ACL is contended (e.g. by
+                    // the official WHOOP app) the link reaches STATE_CONNECTED briefly each cycle,
+                    // and an immediate reset here pinned it at attempt 1 = active DIRECT reconnect
+                    // indefinitely, keeping both radios hot. A flap inside the dwell bumps
+                    // connectGeneration so the reset no-ops and failedReconnectAttempts accumulates,
+                    // escalating the involuntary reconnect to low-power PASSIVE autoConnect (≥3). A
+                    // healthy link survives the dwell and resets, keeping the snappy 3s first retry.
+                    // It does NOT trip the bond-loop re-pair guide (the band isn't bond-looping, just
+                    // contended). See the reset scheduling after connectGeneration += 1 below.
                     // A connect succeeded → clear the stale-bond re-pair guide UNLESS we are in a known
                     // bond-loop (#617). In that loop the strap "connects" every ~3 s before timing out
                     // again, so clearing here wiped the guide on EVERY cycle: it flashed for ~1 s and
@@ -3076,6 +3090,14 @@ class AndroidWhoopBleClient(
                         reconnectGuide = if (keepGuide) it.reconnectGuide else null,
                     ) }
                     connectGeneration += 1
+                    // #228: the deferred backoff reset — same generation-guard idiom as the re-pair
+                    // guide clear below (the shared "did this exact connection survive?" discipline).
+                    run {
+                        val gen = connectGeneration
+                        handler.postDelayed({
+                            if (_state.value.connected && connectGeneration == gen) resetReconnectBackoff()
+                        }, RECONNECT_HEALTHY_DWELL_MS)
+                    }
                     if (keepGuide) {
                         val gen = connectGeneration
                         handler.postDelayed({
@@ -4683,15 +4705,36 @@ class AndroidWhoopBleClient(
         send(CommandNumber.SEND_HISTORICAL_DATA, byteArrayOf(0), withResponse = true)
     }
 
+    /** #228: when the last offload kick actually began (unix seconds), feeding [BackfillPolicy]'s
+     *  floors. null until the first kick of the process; NOT cleared on disconnect — the floor is
+     *  about strap/battery cadence, and the CONNECT trigger's own 90s floor absorbs reconnect flaps. */
+    private var lastBackfillKickAtSec: Double? = null
+
     /**
      * The single gated entry point for every historical-offload kick. Runs only when connected +
-     * bonded and NOT already mid-backfill. Port of `requestSync` minus the BackfillPolicy
-     * rate-limiter (see FLAG: the policy gate isn't ported here — the only triggers wired are the
-     * once-per-connect kick and the 900s periodic timer, which is itself the coarse rate limit).
+     * bonded and NOT already mid-backfill, AND when [BackfillPolicy.shouldRun] passes for the
+     * [trigger] (#228, upstream 0c552aaf — this was the long-flagged "requestSync minus the
+     * BackfillPolicy rate-limiter" gap). MANUAL/AUTO_CONTINUE are never floored; an empty-sync
+     * streak stretches the automatic floors (EmptySyncTracker feeds [BackfillPolicy.shouldRun]'s
+     * emptyStreak); a future-dated strap clock (#928) skips PERIODIC/STRAP entirely — chasing its
+     * range is near-useless (#1012) while each ~60s offload holds the link.
      */
-    private fun requestSync() {
+    private fun requestSync(trigger: BackfillTrigger = BackfillTrigger.CONNECT) {
         val s = _state.value
         if (!canRequestSync(s.connected, s.bonded, backfilling)) return
+        val nowSec = System.currentTimeMillis() / 1000.0
+        if (!BackfillPolicy.shouldRun(
+                trigger = trigger,
+                nowSeconds = nowSec,
+                lastBackfillAtSeconds = lastBackfillKickAtSec,
+                emptyStreak = emptySyncTracker.consecutiveEmptySyncs,
+                clockUntrusted = isFutureDatedNewest(strapNewestTs, nowSec.toLong()),
+            )
+        ) {
+            log("Backfill: $trigger kick skipped by BackfillPolicy (empty streak ${emptySyncTracker.consecutiveEmptySyncs}) (#228)")
+            return
+        }
+        lastBackfillKickAtSec = nowSec
         beginBackfill()
     }
 
@@ -4705,12 +4748,12 @@ class AndroidWhoopBleClient(
      * thread, and every other timer/GATT path is pinned to this handler (see connectGatt(..., handler)).
      */
     fun syncNow() {
-        handler.post { requestSync() }
+        handler.post { requestSync(BackfillTrigger.MANUAL) }   // #228: user-tapped — never floored
     }
 
     /** Periodic-timer callback: re-runs the type-47 offload (the primary metric sync). */
     private fun triggerPeriodicBackfill() {
-        requestSync()
+        requestSync(BackfillTrigger.PERIODIC)   // #228: empty-streak backoff + future-clock skip apply
         // Re-arm regardless so the cadence continues for the life of the connection.
         handler.postDelayed(periodicBackfillRunnable, BACKFILL_INTERVAL_MS)
     }
@@ -4780,7 +4823,7 @@ class AndroidWhoopBleClient(
             handler.removeCallbacks(backfillTimeoutRunnable)
             backfillFrameQueue.clear()
             log("Backfill: no history frames arrived — retrying request (attempt ${whoop5HistoryAttempts + 1})")
-            handler.postDelayed({ requestSync() }, WHOOP5_HISTORY_RETRY_DELAY_MS)
+            handler.postDelayed({ requestSync(BackfillTrigger.AUTO_CONTINUE) }, WHOOP5_HISTORY_RETRY_DELAY_MS)   // #228: bounded retry, un-floored
             return
         }
         backfiller.timeoutFired()
@@ -5067,7 +5110,7 @@ class AndroidWhoopBleClient(
                         "${newest ?: "?"}); re-kicking offload $consecutiveAutoContinues/$MAX_AUTO_CONTINUES " +
                         "without waiting the 15-min floor.",
                 )
-                requestSync()
+                requestSync(BackfillTrigger.AUTO_CONTINUE)   // #228: un-floored by design (capped above)
             }
         }
     }

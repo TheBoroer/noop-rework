@@ -294,8 +294,28 @@ for our tree, at the risk level it actually carries:
   gained an `enabled` param) + persisted `batteryRuntimeAlerted` gate.
   `BatteryRuntimeAlertTest` (7, commonTest — JVM + iosSimulatorArm64) with upstream's exact
   fixtures. Shared 1663/1667 (the 4 pre-existing locale fails), app suite green.
-- [ ] Android keep-alive / battery (#386, #228) — check vs our rewritten dataSync FGS
-  service layer; may be already-fixed or inapplicable
+- [x] Android keep-alive / battery (#386, #228): checked against our FGS layer — NOT
+  already-fixed; all three upstream commits applied and ported.
+  - `05c2d867` "Keep NOOP alive overnight" battery-whitelist toggle — rework had zero
+    `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` plumbing. New `BackgroundHealth` (ONE canonical
+    dontkillmyapp vendor set; `AndroidDiagnostics.oemKillHeuristic` now delegates), Settings
+    sub-toggle under "Keep connected in the background" with the full popup discipline
+    (ON_RESUME live-state refresh, one dialog per ON tap, separate OEM auto-start link),
+    manifest permission + the six OEM security packages in `<queries>` (Android 11+
+    visibility). `BackgroundHealthTest` (5).
+  - `3853c904` resume self-heal — the existing #78 salvage-probe resume callback now kicks
+    the 15-min analyze loop via `Channel(CONFLATED)` (upstream's re-review race fix); the
+    loop's `delay` became `withTimeoutOrNull { analyzeKick.receive() }`. Cheap when healthy
+    (fingerprint gate), a real catch-up after an OEM killed the overnight tick.
+  - `0c552aaf` #228 battery drain — `BackfillPolicy` ported verbatim (the long-flagged
+    "requestSync minus the BackfillPolicy rate-limiter" gap): per-trigger floors (900s
+    periodic / 90s event), empty-streak backoff (×2 per empty past 3, capped ×4 → 1-hr
+    periodic floor), future-clock skip for PERIODIC/STRAP; MANUAL/AUTO_CONTINUE never
+    floored. All six `requestSync` call sites classified. Plus the reconnect dwell-gate:
+    the STATE_CONNECTED backoff reset is deferred behind `connectGeneration` + an 8s
+    survival dwell (`RECONNECT_HEALTHY_DWELL_MS`), so a contended band escalates to
+    PASSIVE autoConnect instead of hammering DIRECT. `BackfillPolicyTest` (7, upstream's
+    exact parity fixtures). App suite green.
 - [ ] Health Connect on Android 13 (#226)
 - [ ] Auto-detected workouts save on Android (#214)
 - [ ] Latest Workouts dedupe / multi-source (#200)
