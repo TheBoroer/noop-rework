@@ -270,7 +270,16 @@ for our tree, at the risk level it actually carries:
     (RTC_LOST/BOOT/SET_RTC) N/A here — rework's EVENT branch corrects rather than kind-drops.
     `BadClockDiagnosticsTest` (5) green; app + shared suites green (1656/1660, the 4
     pre-existing locale fails).
-- [ ] Strap pack voltage in Devices (#592)
+- [x] Strap pack voltage in Devices (#592): `62b28452` ported (the `744ad093` probe-output
+  polish + `03dd8244` iOS twin are N/A — rework has no extended-battery probe UI and the iOS
+  side isn't this tree). The parser decoded `battery_mV` all along; only `battery_pct` was
+  consumed. New `LiveState.batteryMv`, fed from the ~8-min BATTERY_LEVEL event (behind the
+  same `replayedOffload` gate as the charging pill, so a HISTORICAL event's stale voltage
+  never lands) and from any COMMAND_RESPONSE carrying `battery_mV`
+  (GET_EXTENDED_BATTERY_INFO / GET_BATTERY_LEVEL); cleared in `disconnectedLiveState` so it
+  can't outlive the link. DevicesScreen appends " · x.xx V" (Locale.US, 2dp) to the active+
+  connected strap's status line beside the percent tube — purely additive, no new opcode, no
+  automatic sends. App suite green.
 - [ ] Low-battery heads-up (#250)
 - [ ] Android keep-alive / battery (#386, #228) — check vs our rewritten dataSync FGS
   service layer; may be already-fixed or inapplicable

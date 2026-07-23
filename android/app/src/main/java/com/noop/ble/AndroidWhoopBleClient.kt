@@ -115,6 +115,12 @@ data class LiveState(
      *  [withRRIntervals]; emptied by [clearedBiometrics]. Twin of macOS LiveState.rrRecent (PR#191). */
     val rrRecent: List<Int> = emptyList(),
     val batteryPct: Double? = null,
+    /** Strap battery pack VOLTAGE (mV), decoded from the ~8-min BATTERY_LEVEL event (mv@21/@25) and the
+     *  GET_EXTENDED_BATTERY_INFO / GET_BATTERY_LEVEL responses (#592, upstream 62b28452). The parser
+     *  already range-gates and decoded `battery_mV` all along — only `battery_pct` was consumed; this
+     *  surfaces the dropped field. Shown on the Devices card as a "x.xx V" readout beside the percent.
+     *  null until the first battery event lands; cleared with the link. */
+    val batteryMv: Int? = null,
     /** Strap firmware version captured during the connect handshake: WHOOP 4.0 reports `fw_harvard`
      *  (a.b.c.d) via REPORT_VERSION_INFO, WHOOP 5/MG reports `fw_version` via GET_HELLO. Shown on the
      *  Devices card. Null until the handshake response decodes. The Swift WhoopProtocol decodes the
@@ -771,6 +777,8 @@ class AndroidWhoopBleClient(
             previous.clearedBiometrics().copy(
                 connected = false, bonded = false, encryptedBond = false,
                 backfilling = false, syncChunksThisSession = 0, charging = null,
+                // #592: a stale pack-voltage readout must not outlive the dropped link either.
+                batteryMv = null,
                 // A stale firmware version must not outlive the dropped link.
                 strapFirmware = null,
                 // #580: the 5/MG "history experimental" note is per-link — a fresh connect re-derives it
@@ -3618,6 +3626,8 @@ class AndroidWhoopBleClient(
 
             "COMMAND_RESPONSE" -> {
                 doubleValue(parsed.parsed["battery_pct"])?.let { setBattery(it) }
+                // #592: GET_EXTENDED_BATTERY_INFO / GET_BATTERY_LEVEL responses may carry pack voltage.
+                (parsed.parsed["battery_mV"] as? Int)?.let { mv -> _state.update { it.copy(batteryMv = mv) } }
                 // Firmware version from the handshake: 4.0 reports fw_harvard (REPORT_VERSION_INFO),
                 // 5/MG reports fw_version (GET_HELLO). Keyed on whichever field decoded rather than
                 // resp_cmd, so a single branch covers both families. Stable for the connection, so we
@@ -3719,6 +3729,12 @@ class AndroidWhoopBleClient(
                         if (ev.startsWith("BATTERY_LEVEL") && shouldApplyChargingFromBatteryEvent(replayedOffload)) {
                             (parsed.parsed["battery_charging"] as? Int)?.let {
                                 _state.update { s -> s.copy(charging = it != 0) }
+                            }
+                            // #592: the same battery event carries pack voltage (mv@21/@25) — surface it
+                            // on the Devices card. Range-gated by the parser already; the replayedOffload
+                            // gate above keeps a HISTORICAL event's stale voltage out of the live state.
+                            (parsed.parsed["battery_mV"] as? Int)?.let { mv ->
+                                _state.update { s -> s.copy(batteryMv = mv) }
                             }
                         }
                         // PR #577: the strap fired its firmware smart alarm (STRAP_DRIVEN_ALARM_EXECUTED,

@@ -161,6 +161,9 @@ fun DevicesScreen(
                 // strap, or an FTMS machine all funnel into live.batteryPct). null otherwise.
                 liveBatteryPct = if (device.status == DeviceStatus.active.name && live.connected)
                     live.batteryPct?.let { Math.round(it).toInt() } else null,
+                // #592: pack voltage rides the same active+connected gate as the percent tube.
+                liveBatteryMv = if (device.status == DeviceStatus.active.name && live.connected)
+                    live.batteryMv else null,
                 // Firmware version from the connect handshake: only for the active, connected strap.
                 liveFirmware = if (device.status == DeviceStatus.active.name && live.connected)
                     live.strapFirmware else null,
@@ -322,6 +325,8 @@ private fun DeviceCard(
     /** The active+connected device's live battery percent (0–100) — surfaced the same way for WHOOP, a
      *  generic strap, or an FTMS machine. null when not active/connected or no battery was reported. */
     liveBatteryPct: Int? = null,
+    /** #592: the active+connected strap's battery pack voltage (mV). null until reported. */
+    liveBatteryMv: Int? = null,
     /** The active+connected strap's firmware version (from the connect handshake). null when not
      *  active/connected, or for a source that reports no firmware (e.g. a non-WHOOP strap). */
     liveFirmware: String? = null,
@@ -413,7 +418,13 @@ private fun DeviceCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     lastSeenLine(device, isLiveConnected) +
-                        (liveFirmware?.let { " · FW $it" } ?: ""),
+                        (liveFirmware?.let { " · FW $it" } ?: "") +
+                        // #592: strap pack voltage (mV → volts, 2dp) beside the percent tube, when the
+                        // ~8-min BATTERY_LEVEL event has reported it. Purely additive; null until the
+                        // first battery event lands.
+                        (liveBatteryMv?.let {
+                            " · " + String.format(java.util.Locale.US, "%.2f V", it / 1000.0)
+                        } ?: ""),
                     style = NoopType.footnote,
                     color = Palette.textTertiary,
                     modifier = Modifier.weight(1f),
