@@ -356,7 +356,25 @@ for our tree, at the risk level it actually carries:
     "Last Workouts" → "Latest Workouts". `LastWorkoutsFeedTest` (3, upstream verbatim —
     `WorkoutRow` constructor matches exactly). App suite green; shared 1663/1667 (the 4
     pre-existing locale fails).
-- [ ] Imported rides count toward Effort (#137)
+- [x] Imported rides count toward Effort (#137): rework ALREADY carried `2665c9f2` (the
+  under-sampled manual-workout re-score — `IntelligenceEngine` + `ManualWorkoutRescoreTest`);
+  the missing half was `80025cf9` (light day Effort from an imported ride's HR on a
+  strap-less day), now ported:
+  - (A) `ActivityFileImporter` carries the REAL per-sample HR through (`HrPoint` +
+    `Activity.hrSamples`, shared extractor for GPX/TCX/FIT — byte-identical stream across
+    formats; kept only when a sample has BOTH a timestamp and valid HR, 2100-01-01 epoch
+    ceiling) and `importExport` persists it under the `activity-file` source
+    ((deviceId, ts)-keyed REPLACE → idempotent re-import; a pure GPS track persists nothing,
+    leaving day Effort honestly dark).
+  - (B1) `SourceKind.activityFile` added; on a successful import DataSourcesScreen registers
+    the `activity-file` device (status `paired`, never active; capability `hr`), and
+    `RegistryDayOwnerSource` ranks it at priority 3 — below whole-day imports (2) — so a
+    full-day WHOOP import always wins a day it has HR for; on a genuinely strap-less day the
+    ride's measured HR is the sole candidate with data and lights the Effort ring. Measured
+    data, not fabricated strain (the WorkoutRow `strain = null` guard is untouched).
+  Tests: GPX hrSamples assertions + `hrSamplesRequireBothTimestampAndHr` + FIT stream parity
+  in `ActivityFileImporterTest`; `activityFileRideRanksBelowWholeDayImport` tie-break in
+  `RegistryDayOwnerSourceTest`. All green; app suite green.
 - [ ] Manual workouts get HR + calories (#510)
 - [ ] Journal import "answered yes" header fix (#631)
 - [ ] Smart wake alarm arms more reliably (#34)

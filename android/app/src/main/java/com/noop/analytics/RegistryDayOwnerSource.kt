@@ -28,6 +28,11 @@ class RegistryDayOwnerSource(private val registry: DeviceRegistry) : Intelligenc
                     d.sourceKind == SourceKind.fileImport.name
                 val priority = when {
                     d.id == activeId -> 0
+                    // #137: the activity-file workout lane ranks BELOW whole-day imports (2), so a
+                    // full-day WHOOP export import always wins a day it has HR for; on a genuinely
+                    // strap-less day the imported ride's persisted HR is the sole candidate with data
+                    // and lights the day Effort ring.
+                    d.sourceKind == SourceKind.activityFile.name -> 3
                     isImport -> 2
                     else -> 1
                 }

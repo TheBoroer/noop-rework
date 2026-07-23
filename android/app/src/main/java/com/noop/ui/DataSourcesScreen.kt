@@ -299,7 +299,36 @@ fun DataSourcesScreen(vm: AppViewModel) {
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         if (uri != null) runImport {
-            ActivityFileImporter.importExport(context, uri, vm.repo).also { vm.loadWorkouts() }
+            ActivityFileImporter.importExport(context, uri, vm.repo).also { summary ->
+                vm.loadWorkouts()
+                // #137 (B1): on a SUCCESSFUL import, register `activity-file` as an `activityFile`
+                // device so the per-day owner resolver can pick it as the day owner on a strap-less
+                // day (it iterates the registry's paired devices — an unregistered source is
+                // invisible to it). The distinct kind ranks it at priority 3 — below whole-day
+                // imports (2) — so a full-day WHOOP import always wins a day it has HR for. status
+                // `paired`, NEVER `active` (makeActive = false), so it can never displace the live
+                // strap; capability `hr` marks what the source CAN provide (per-day presence is
+                // still gated by an actual HR read in the resolver). Idempotent (OnConflict.REPLACE).
+                // See ActivityFileImporter (A) for the matching per-sample HR persist.
+                if (summary.totalRows > 0) {
+                    val nowRegistered = System.currentTimeMillis() / 1000
+                    vm.registerDevice(
+                        com.noop.data.PairedDeviceRow(
+                            id = ActivityFileImporter.SOURCE_ID,
+                            brand = "Workout files",
+                            model = "",
+                            nickname = null,
+                            peripheralId = null,
+                            sourceKind = com.noop.data.SourceKind.activityFile.name,
+                            capabilities = com.noop.data.Metric.hr.name,
+                            status = com.noop.data.DeviceStatus.paired.name,
+                            addedAt = nowRegistered,
+                            lastSeenAt = nowRegistered,
+                        ),
+                        makeActive = false,
+                    )
+                }
+            }
         }
     }
 

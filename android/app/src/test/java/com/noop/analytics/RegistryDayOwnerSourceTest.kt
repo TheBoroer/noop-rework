@@ -124,6 +124,28 @@ class RegistryDayOwnerSourceTest {
         return DayOwnerResolver.resolve(day, lockedOwner = null, candidates = candidates)
     }
 
+    @Test
+    fun activityFileRideRanksBelowWholeDayImport() = runBlocking {
+        // #137: a whole-day WHOOP import (priority 2) and an activity-file ride (priority 3) both have HR
+        // for the same strap-less day. The whole-day import must OWN it — a 90-minute ride can never
+        // displace a full-day source. Parity with the upstream tie-break test.
+        val dao = FakeDao().apply {
+            devices["my-whoop"] = device("my-whoop", "WHOOP", SourceKind.liveBLE, DeviceStatus.active)
+            devices["whoop-import"] = device("whoop-import", "WHOOP", SourceKind.fileImport, DeviceStatus.paired)
+            devices["activity-file"] = device("activity-file", "Workout files", SourceKind.activityFile, DeviceStatus.paired)
+        }
+        val src = RegistryDayOwnerSource(registry(dao))
+
+        val priorities = src.candidatePriorities().toMap()
+        assertEquals(2, priorities["whoop-import"])   // whole-day import
+        assertEquals(3, priorities["activity-file"])  // partial ride, ranked below
+
+        // Strap-less day, both imports have data → the whole-day import wins, not the ride.
+        val owner = resolveWith(src, "2026-06-15",
+            mapOf("my-whoop" to false, "whoop-import" to true, "activity-file" to true))
+        assertEquals("whoop-import", owner)
+    }
+
     // ── #716/#938: skin-temp family resolves from the registry model string ─────────────────────────
 
     @Test

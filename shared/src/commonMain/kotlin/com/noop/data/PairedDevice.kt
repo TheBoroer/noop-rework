@@ -69,8 +69,12 @@ enum class DeviceStatus { active, paired, archived }
  *  scoring, and surfaces an honest "needs pairing" state when the install key is absent (never Oura's
  *  encrypted readiness/sleep scores). Carried on string rawValue "oura"; no DB migration (the column is
  *  free-text and existing rows never carry it).
- *  Additive: existing rows never carry [ftms]/[huami]/[oura]; only the respective wizard paths write them. */
-enum class SourceKind { liveBLE, historyBLE, cloudImport, fileImport, ftms, huami, oura }
+ *  [activityFile] = the `activity-file` workout-file lane (GPX/TCX/FIT, #137): registered on a
+ *  successful import so the day-owner resolver can pick its persisted HR as the day source on a
+ *  strap-less day. Distinct from [fileImport] (whole-day export imports) so it ranks BELOW them.
+ *  Additive: existing rows never carry [ftms]/[huami]/[oura]/[activityFile]; only the respective
+ *  wizard/import paths write them. */
+enum class SourceKind { liveBLE, historyBLE, cloudImport, fileImport, ftms, huami, oura, activityFile }
 
 /** A canonical metric a source can provide — drives capability-aware UI + the day-owner resolver.
  *  Stored as the enum name (Swift `Metric` rawValue) inside the comma-joined `capabilities` string. */
