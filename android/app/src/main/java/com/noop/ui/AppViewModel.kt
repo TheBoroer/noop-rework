@@ -48,6 +48,7 @@ import com.noop.protocol.CommandNumber
 import com.noop.widget.WidgetSnapshot
 import com.noop.widget.WidgetSnapshotStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /**
@@ -501,9 +503,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Application (no lifecycle-process dependency needed); unregistered in [onCleared]. The iOS twin
      * observes didBecomeActive inside BLEManager itself.
      */
+    /** #386 (upstream 3853c904): app-resume kick for the 15-min analyze loop. Channel(CONFLATED), not
+     *  a SharedFlow — upstream's re-review race: a replay-0 SharedFlow kick fired while the loop is
+     *  busy inside analyzeRecent (outside its collect window) is DROPPED, silently missing the
+     *  open-app-after-overnight catch-up this exists for. A conflated channel RETAINS a kick sent
+     *  while busy and delivers it on the next receive(); rapid resumes coalesce; trySend never
+     *  suspends the main-thread callback; and receive() empties the buffer, so the loop can't spin. */
+    private val analyzeKick = Channel<Unit>(Channel.CONFLATED)
+
     private val salvageProbeLifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: android.app.Activity) {
             ble.salvageProbeIfBondLoopPaused()
+            // #386: self-heal the Today card — wake the analyze loop early so a killed overnight
+            // re-score is caught up NOW (fingerprint-gated: a healthy resume is one cheap
+            // hrFingerprint() and no rescore).
+            analyzeKick.trySend(Unit)
         }
         override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
         override fun onActivityStarted(activity: android.app.Activity) {}
@@ -680,6 +694,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // import. IntelligenceEngine computes, persists under "my-whoop-noop", and the
         // merged daysMergedFlow above republishes the freshly computed scores to the UI.
         // Mirrors macOS AppModel's launch + 15-min analyze loop.
+        // #386 (3853c904): the loop's sleep is a `withTimeoutOrNull { analyzeKick.receive() }`, so an
+        // app-resume kick wakes it early — see [onAppResumed].
         viewModelScope.launch {
             delay(FIRST_OFFLOAD_GRACE_MS) // give the first offload a moment
             // One-shot on-upgrade #547 timestamp heal: a bad strap clock/flash (pikapik) wrote raw +
@@ -859,7 +875,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (_hcWriteback.value) {
                     runCatching { HealthConnectWriter.write(appContext, repository) }
                 }
-                delay(ANALYZE_INTERVAL_MS) // 15 min, matches the offload cadence
+                // #386 (upstream 3853c904): the 15-min sleep is interruptible by an app-resume kick, so
+                // opening NOOP after an OEM killed the overnight tick re-runs the fingerprint-gated
+                // analyzeRecent NOW instead of up to 15 min later. A healthy resume costs one
+                // hrFingerprint() (COUNT + indexed MAX) and no rescore — the gate above skips when the
+                // HR stream is unchanged since the last COMPLETED run; a killed overnight run left
+                // fp != watermark, so the catch-up is a real score. recentDays is a reactive Room flow,
+                // so caught-up rows refresh the Today card on their own. Cancellation preserved
+                // (withTimeoutOrNull/receive are cancellable, so onCleared still stops the loop).
+                withTimeoutOrNull(ANALYZE_INTERVAL_MS) { analyzeKick.receive() } // 15 min, matches the offload cadence
             }
         }
 
